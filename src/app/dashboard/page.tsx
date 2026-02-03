@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer,
@@ -491,14 +493,29 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
       <div className="mx-auto max-w-7xl px-5 py-8">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Finance Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-300">
-              CFO view: P&amp;L analytics + bank/cash (native currency) + latest transactions + retained earning.
-            </p>
-          </div>
+          <div className="flex items-center gap-4">
+  {/* Logo */}
+  <div className="relative h-12 w-12 shrink-0">
+    <Image
+      src="/logo.png"
+      alt="RTC League Logo"
+      fill
+      className="object-contain"
+      priority
+    />
+  </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+  {/* Title */}
+  <div>
+    <h1 className="text-3xl font-semibold tracking-tight">
+      Finance Dashboard
+    </h1>
+    <p className="mt-1 text-sm text-slate-300">
+      CFO view: P&amp;L analytics + bank/cash (native currency) + latest transactions + retained earning.
+    </p>
+  </div>
+</div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
             <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
               <div className="font-medium text-slate-200">
                 Company: {data?.companyName ?? "—"} ({data?.currency ?? "PKR"})
