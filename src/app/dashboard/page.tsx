@@ -212,14 +212,20 @@ const DONUT_COLORS = [
 
 type TabKey = "pnl" | "cash" | "retained";
 
-function displayTxnAmount(txn: AccountTxnsResp["transactions"][number]) {
+function displayTxnAmount(
+  txn: AccountTxnsResp["transactions"][number],
+  homeCurrency: string | null | undefined
+) {
   if (txn.amountForeign != null && txn.foreignCurrency) {
     return {
       main: formatMoneyByCurrency(txn.foreignCurrency, txn.amountForeign),
-      sub: txn.amountHome != null ? `PKR eq. ${formatMoneyByCurrency("PKR", txn.amountHome)}` : null,
+      sub: txn.amountHome != null
+        ? `${homeCurrency ?? "PKR"} eq. ${formatMoneyByCurrency(homeCurrency ?? "PKR", txn.amountHome)}`
+        : null,
     };
   }
-  const cur = txn.homeCurrency || "PKR";
+
+  const cur = homeCurrency ?? "PKR";
   return { main: formatMoneyByCurrency(cur, txn.amountHome ?? 0), sub: null };
 }
 
@@ -762,7 +768,7 @@ export default function DashboardPage() {
                           </tr>
                         ) : txns?.transactions?.length ? (
                           txns.transactions.map((t, i) => {
-                            const amt = displayTxnAmount(t);
+                            const amt = displayTxnAmount(t, txns?.homeCurrency);
                             return (
                               <tr key={i} className="border-t border-white/10">
                                 <td className="py-2 pr-3">{t.date || "—"}</td>
