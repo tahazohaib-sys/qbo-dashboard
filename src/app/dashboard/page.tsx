@@ -386,7 +386,10 @@ export default function DashboardPage() {
       .map((k) => ({ currency: k, total: t[k] }));
   }, [cashBanks?.totalsByCurrency]);
 
-  const accounts = cashBanks?.accounts ?? [];
+  const accounts =
+  (cashBanks?.accounts ?? []).filter(
+    (a) => Math.abs(a.currentBalance ?? 0) > 0
+  );
 
   /* ---------------- retained normalized values ---------------- */
 
