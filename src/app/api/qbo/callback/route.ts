@@ -34,10 +34,8 @@ export async function GET(req: Request) {
     expiresAt,
   });
 
-  // ✅ Always redirect to the correct base URL
-  // - In ngrok/prod: set APP_BASE_URL=https://<your-ngrok-or-domain>
-  // - Locally: fallback to current request origin (http://localhost:3000)
-  const base = process.env.APP_BASE_URL || url.origin;
-
-  return NextResponse.redirect(new URL("/dashboard", base));
+  // ✅ Always redirect back to the same host that received the callback
+  // - Vercel: https://qbo-dashboard.vercel.app
+  // - Local:  http://localhost:3000
+  return NextResponse.redirect(new URL("/dashboard", url.origin));
 }
