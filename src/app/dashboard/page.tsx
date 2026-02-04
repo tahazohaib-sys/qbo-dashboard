@@ -663,8 +663,8 @@ export default function DashboardPage() {
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <Tooltip content={<MoneyTooltip />} />
                       <Legend />
-                      <Bar dataKey="revenue" name="Income" fill="#60a5fa" radius={[8, 8, 0, 0]} />
-                      <Bar dataKey="expenses" name="Expenses" fill="#2563eb" radius={[8, 8, 0, 0]} />
+                      <Bar dataKey="revenue" name="Income" fill="#22c55e" radius={[8, 8, 0, 0]} />   // Green
+                      <Bar dataKey="expenses" name="Expenses" fill="#ef4444" radius={[8, 8, 0, 0]} /> // Red
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -841,7 +841,14 @@ export default function DashboardPage() {
                       <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <Tooltip content={<MoneyTooltip single />} />
-                      <Bar dataKey="value" name="PKR" fill="#60a5fa" radius={[10, 10, 0, 0]} />
+                      <Bar dataKey="value" radius={[10, 10, 0, 0]}>
+                     {investmentBarData.map((entry, i) => (
+                     <Cell
+                     key={`cell-${i}`}
+                    fill={entry.name === "Investments" ? "#ef4444" : "#22c55e"}
+                    />
+                    ))}
+                   </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -887,8 +894,8 @@ export default function DashboardPage() {
             </div>
 
             {/* ✅ NEW: Net Investments Detail */}
-            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Panel title="Net Investments Detail" subtitle="Period movement (end snapshot − prior snapshot)">
+            <div className="mt-4 grid grid-cols-1 gap-4">
+            <Panel title="Net Investments Detail" subtitle="Period movement (end snapshot − prior snapshot)">
                 {retainedLoading ? (
                   <div className="py-3 text-slate-300">Loading…</div>
                 ) : invDetail.length ? (
@@ -927,33 +934,7 @@ export default function DashboardPage() {
                 )}
               </Panel>
 
-              {/* ✅ Long-term Assets summary totals */}
-              <Panel title="Long-term Assets Snapshot" subtitle="End vs prior snapshot totals">
-                {retainedLoading ? (
-                  <div className="py-3 text-slate-300">Loading…</div>
-                ) : retained?.longTermAssets ? (
-                  <div className="mt-2 space-y-2 text-sm">
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span>End (as of end_date)</span>
-                      <span className="font-semibold text-slate-100">{formatPKRCompact(retained.longTermAssets.end ?? 0)}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span>Prior (as of day before start)</span>
-                      <span className="font-semibold text-slate-100">{formatPKRCompact(retained.longTermAssets.prior ?? 0)}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span>Movement</span>
-                      <span className="font-semibold text-slate-100">{formatPKRCompact(reLongTermAssets)}</span>
-                    </div>
-                    {retained.longTermAssets.method ? (
-                      <div className="text-xs text-slate-400 mt-1">{retained.longTermAssets.method}</div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="py-3 text-slate-300">No long-term assets snapshot found.</div>
-                )}
-              </Panel>
-            </div>
+              </div>
 
             {/* ✅ Long-term Assets Detail table */}
             <div className="mt-4">
