@@ -1,6 +1,8 @@
+// src/app/dashboard/page.tsx
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -85,9 +87,7 @@ type AccountTxnsResp = {
   error?: string;
 };
 
-/**
- * ✅ Retained earning API shape (kept as-is for the Retained tab)
- */
+/** ✅ Retained earning API shape (kept as-is for the Retained tab) */
 type RetainedResp = {
   ok: boolean;
   currency: string;
@@ -96,10 +96,7 @@ type RetainedResp = {
   prior_as_of_date?: string;
   accounting_method?: "Accrual" | "Cash";
 
-  // Profit
   netProfit?: number;
-
-  // Long-term assets movement (end snapshot - prior snapshot)
   longTermAssetsMovement?: number;
 
   longTermAssets?: {
@@ -146,9 +143,7 @@ type RetainedResp = {
   error?: string;
 };
 
-/**
- * ✅ CFO Forecast API response (OPEX ONLY)
- */
+/** ✅ CFO Forecast API response (OPEX ONLY) */
 type ForecastApiResp = {
   ok: boolean;
   horizon: number;
@@ -200,6 +195,72 @@ type AiInsightsResp =
       actions: string[];
     }
   | { ok: false; error: string };
+
+/** ✅ AR/AP response */
+type ArApResp = {
+  ok: boolean;
+  asOf: string;
+  currency: string;
+
+  payables: {
+    current: {
+      payrollPayable: number;
+      withHoldingTaxPayableVendors: number;
+      accountsPayable: number;
+      totalCurrentPayables: number;
+      vendorBills?: number; // (your API sends this)
+    };
+    longTerm: {
+      sirAatifLoanToCompany: number;
+      payrollWithHoldingTaxPayable: number;
+      totalLongTermPayables: number;
+    };
+    totalPayables: number;
+  };
+
+  receivables: {
+    loanAgainstSalary: number;
+    taxWithheld: number;
+    totalReceivables: number;
+  };
+
+  apAging: {
+    totalAP: number;
+    vendors: Array<{
+      vendor: string;
+      current: number;
+      "1_30": number;
+      "31_60": number;
+      "61_90": number;
+      "91_plus": number;
+      total: number;
+    }>;
+    source: string;
+  };
+
+  error?: string;
+};
+
+/* ---------------------- helpers ---------------------- */
+
+// Local YYYY-MM-DD (prevents UTC shifting)
+function formatLocalYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Build last N month-end dates ending at selected (year, month)
+function monthEndDatesFrom(endY: number, endM: number, months = 6) {
+  const dates: string[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    // month-end of (endM - i)
+    const d = new Date(endY, endM - i, 0);
+    dates.push(formatLocalYMD(d));
+  }
+  return dates;
+}
 
 function formatMoneyByCurrency(currency: string, n: number) {
   const sign = n < 0 ? "-" : "";
@@ -267,7 +328,7 @@ const DONUT_COLORS = [
   "#94a3b8",
 ];
 
-type TabKey = "pnl" | "cash" | "retained" | "forecast";
+type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
 
 function displayTxnAmount(
   txn: AccountTxnsResp["transactions"][number],
@@ -299,6 +360,16 @@ function trendLabelFromMoM(mom: number): "Increasing" | "Decreasing" | "Stable" 
   if (mom > 0.01) return "Increasing";
   if (mom < -0.01) return "Decreasing";
   return "Stable";
+}
+
+function fmtAxisPKR(v: any) {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return "0";
+  // compact ticks for readability
+  if (Math.abs(n) >= 1_000_000_000) return `${Math.round(n / 1_000_000_000)}B`;
+  if (Math.abs(n) >= 1_000_000) return `${Math.round(n / 1_000_000)}M`;
+  if (Math.abs(n) >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return `${Math.round(n)}`;
 }
 
 export default function DashboardPage() {
@@ -335,6 +406,11 @@ export default function DashboardPage() {
   const [aiErr, setAiErr] = useState<string>("");
   const [ai, setAi] = useState<AiInsightsResp | null>(null);
 
+  // ✅ AR/AP
+  const [arApLoading, setArApLoading] = useState(false);
+  const [arAp, setArAp] = useState<ArApResp | null>(null);
+  const [monthlyArAp, setMonthlyArAp] = useState<Array<{ month: string; payables: number; receivables: number }>>([]);
+
   const [err, setErr] = useState<string>("");
 
   function buildStartEnd(fy: number, fm: number, ty: number, tm: number) {
@@ -362,45 +438,79 @@ export default function DashboardPage() {
   }
 
   async function fetchAiInsights(start: string, end: string, accounting_method: "Accrual" | "Cash") {
-  setAiLoading(true);
-  setAiErr("");
+    setAiLoading(true);
+    setAiErr("");
 
-  try {
-    const res = await fetch(
-      `/api/ai/insights?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(
-        accounting_method
-      )}`,
-      { cache: "no-store" }
-    );
-
-    const raw = await res.text(); // ✅ read text first
-    if (!raw || !raw.trim()) {
-      throw new Error(`AI insights returned empty response (status ${res.status}).`);
-    }
-
-    let json: any;
     try {
-      json = JSON.parse(raw);
-    } catch {
-      // If server ever returns HTML/error page, show a clean message
-      const preview = raw.slice(0, 200).replace(/\s+/g, " ");
-      throw new Error(`AI insights returned non-JSON (status ${res.status}): ${preview}`);
-    }
+      const res = await fetch(
+        `/api/ai/insights?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(
+          end
+        )}&accounting_method=${encodeURIComponent(accounting_method)}`,
+        { cache: "no-store" }
+      );
 
-    if (!json?.ok) {
-      throw new Error(json?.error || "AI insights failed");
-    }
+      const raw = await res.text();
+      if (!raw || !raw.trim()) throw new Error(`AI insights returned empty response (status ${res.status}).`);
 
-    setAi(json);
-  } catch (e: any) {
-    setAiErr(e?.message ?? "AI insights failed");
-    setAi(null);
-  } finally {
-    setAiLoading(false);
+      let json: any;
+      try {
+        json = JSON.parse(raw);
+      } catch {
+        const preview = raw.slice(0, 200).replace(/\s+/g, " ");
+        throw new Error(`AI insights returned non-JSON (status ${res.status}): ${preview}`);
+      }
+
+      if (!json?.ok) throw new Error(json?.error || "AI insights failed");
+      setAi(json);
+    } catch (e: any) {
+      setAiErr(e?.message ?? "AI insights failed");
+      setAi(null);
+    } finally {
+      setAiLoading(false);
+    }
   }
-}
 
- async function fetchAll() {
+  async function fetchArAp(asOfYmd: string) {
+    const res = await fetch(`/api/qbo/ar-ap?asOf=${encodeURIComponent(asOfYmd)}`, { cache: "no-store" });
+    const json: ArApResp = await res.json();
+    if (!json.ok) throw new Error(json.error || "AR/AP API failed");
+    return json;
+  }
+
+  async function loadArApAndMonthly(endYmd: string) {
+    setArApLoading(true);
+    try {
+      const one = await fetchArAp(endYmd);
+      setArAp(one);
+
+      // IMPORTANT: build proper month-ends in local time (no UTC shift)
+      const endDate = new Date(`${endYmd}T12:00:00`); // noon avoids DST/UTC edge
+      const endY = endDate.getFullYear();
+      const endM = endDate.getMonth() + 1;
+
+      const dates = monthEndDatesFrom(endY, endM, 6);
+
+      const rows: Array<{ month: string; payables: number; receivables: number }> = [];
+      // sequential fetch (safe & predictable)
+      for (const d of dates) {
+        const j = await fetchArAp(d);
+        rows.push({
+          month: d.slice(0, 7),
+          payables: j.payables.totalPayables,
+          receivables: j.receivables.totalReceivables,
+        });
+      }
+
+      setMonthlyArAp(rows);
+    } catch {
+      setArAp(null);
+      setMonthlyArAp([]);
+    } finally {
+      setArApLoading(false);
+    }
+  }
+
+  async function fetchAll() {
     setLoading(true);
     setErr("");
 
@@ -416,6 +526,9 @@ export default function DashboardPage() {
 
       const { start, end } = buildStartEnd(fy, fm, ty, tm);
 
+      // ✅ AR/AP uses end date as "asOf"
+      loadArApAndMonthly(end).catch(() => {});
+
       const dashUrl =
         `/api/dashboard?start_date=${encodeURIComponent(start)}` +
         `&end_date=${encodeURIComponent(end)}` +
@@ -426,10 +539,8 @@ export default function DashboardPage() {
       if (!dashJson.ok) throw new Error(dashJson.error || "Dashboard API failed");
       setData(dashJson);
 
-      // ✅ AI Insights (uses same selected range)
       fetchAiInsights(start, end, method).catch(() => {});
 
-      // ✅ Forecast (Opex-only): run for ANY selected range (no minimum months)
       if (dashJson?.series?.length) {
         await fetchForecast(dashJson.series, forecastHorizon);
       } else {
@@ -445,7 +556,6 @@ export default function DashboardPage() {
       const pnlJson: PnlTableResp = await pnlRes.json();
       if (!pnlJson.ok) throw new Error(pnlJson.error || "P&L table API failed");
 
-      // IMPORTANT: include Salary Expenses subtree too so Salary shows in donut
       const expenseRows = pnlJson.rows.filter((r) => {
         if (r.rowType !== "Data") return false;
         const p = r.path || "";
@@ -469,7 +579,6 @@ export default function DashboardPage() {
       if (!cbJson.ok) throw new Error(cbJson.error || "Cash-banks API failed");
       setCashBanks(cbJson);
 
-      // Retained earning tab data (kept for retained tab only)
       setRetainedLoading(true);
       try {
         const reRes = await fetch(
@@ -495,9 +604,10 @@ export default function DashboardPage() {
   async function fetchTransactions(accountId: string) {
     setTxnLoading(true);
     try {
-      const res = await fetch(`/api/qbo/account-transactions?accountId=${encodeURIComponent(accountId)}&limit=5`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/qbo/account-transactions?accountId=${encodeURIComponent(accountId)}&limit=5`,
+        { cache: "no-store" }
+      );
       const json: AccountTxnsResp = await res.json();
       setTxns(json.ok ? json : null);
     } finally {
@@ -532,20 +642,12 @@ export default function DashboardPage() {
   /* ---------------- retained normalized values ---------------- */
 
   const reOk = !!retained?.ok;
-
   const reProfit = (retained?.netProfit ?? retained?.profit ?? 0) || 0;
-
-  const reLongTermAssets =
-    (retained?.longTermAssetsMovement ?? retained?.longTermAssetsAdditions ?? 0) || 0;
-
+  const reLongTermAssets = (retained?.longTermAssetsMovement ?? retained?.longTermAssetsAdditions ?? 0) || 0;
   const reInvestments = retained?.investments ?? null;
-
   const reTotalInvestments = (reInvestments?.totalInvestments ?? retained?.totalInvestments ?? 0) || 0;
-
   const reContribution = (reInvestments?.contribution ?? retained?.contributionReceived ?? 0) || 0;
-
   const reNetInvestments = (reInvestments?.netInvestments ?? retained?.netInvestments ?? 0) || 0;
-
   const reRetained = (retained?.retainedEarning ?? 0) || 0;
 
   const retainedBreakdown = useMemo(() => {
@@ -610,7 +712,6 @@ export default function DashboardPage() {
   /* ---------------- forecast derived values (UI-safe) ---------------- */
 
   const fcOk = !!forecastData?.ok;
-
   const fcMonthsUsed = forecastData?.meta?.monthsUsed ?? (data?.series?.length ?? 0);
 
   const fcAvgRevenue = forecastData?.averages?.avgMonthlyRevenue ?? 0;
@@ -623,7 +724,6 @@ export default function DashboardPage() {
   const fcRevLabel = forecastData?.trends?.revenueTrendLabel ?? trendLabelFromMoM(fcRevMoM);
   const fcExpLabel = forecastData?.trends?.expenseTrendLabel ?? trendLabelFromMoM(fcExpMoM);
 
-  // Break-even is Opex only (Operating break-even)
   const fcBreakeven = forecastData?.benchmarks?.breakevenRevenue ?? fcAvgOpex;
   const fcGap = fcAvgRevenue - fcBreakeven;
   const fcMeetsBE = fcAvgRevenue >= fcBreakeven;
@@ -646,17 +746,12 @@ export default function DashboardPage() {
       <div className="mx-auto max-w-7xl px-5 py-8">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div className="flex items-center gap-4">
-            {/* Logo */}
             <div className="relative h-12 w-12 shrink-0">
               <Image src="/logo.png" alt="RTC League Logo" fill className="object-contain" priority />
             </div>
 
-            {/* Title */}
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">Finance Dashboard</h1>
-              <p className="mt-1 text-sm text-slate-300">
-                CFO view: P&amp;L analytics + bank/cash (native currency) + latest transactions + retained earning + operating forecast.
-              </p>
             </div>
           </div>
 
@@ -678,6 +773,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* Tabs */}
         <div className="mt-6 flex gap-2 flex-wrap">
           <TabButton active={tab === "pnl"} onClick={() => setTab("pnl")}>
             Profit & Loss
@@ -685,12 +781,19 @@ export default function DashboardPage() {
           <TabButton active={tab === "cash"} onClick={() => setTab("cash")}>
             Bank & Cash Balances
           </TabButton>
+          <TabButton active={tab === "arAp"} onClick={() => setTab("arAp")}>
+            AR/AP
+          </TabButton>
           <TabButton active={tab === "retained"} onClick={() => setTab("retained")}>
             Retained Earning
           </TabButton>
           <TabButton active={tab === "forecast"} onClick={() => setTab("forecast")}>
             CFO Forecast
           </TabButton>
+
+          <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" onActivate={() => setTab("revenue")}>
+            Revenue Analytics
+          </TabLinkButton>
         </div>
 
         {/* Filters */}
@@ -780,47 +883,271 @@ export default function DashboardPage() {
           </div>
 
           {err ? (
-            <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-              {err}
-            </div>
+            <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{err}</div>
           ) : null}
         </div>
+
+        {/* Revenue route helper */}
+        {tab === "revenue" ? (
+          <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5">
+            <div className="text-sm font-semibold">Revenue Analytics</div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link
+                href="/dashboard/revenue-analytics"
+                className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20"
+              >
+                Open Revenue Analytics
+              </Link>
+
+              <button
+                onClick={() => setTab("pnl")}
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold hover:bg-white/10"
+              >
+                Back
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* AR/AP TAB */}
+        {tab === "arAp" ? (
+          <div className="mt-6">
+            <Panel title="AR/AP Overview">
+              {arApLoading ? (
+                <div className="py-3 text-slate-300">Loading…</div>
+              ) : !arAp?.ok ? (
+                <div className="py-3 text-slate-300">No AR/AP data.</div>
+              ) : (
+                <>
+                  {/* ✅ KPIs: remove Current/Long-term. Show just Total Payables */}
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                    <KpiCard title="Total Payables" value={formatPKRCompact(arAp.payables.totalPayables)} highlight="bad" />
+                    <KpiCard title="Total Receivables" value={formatPKRCompact(arAp.receivables.totalReceivables)} highlight="good" />
+                    <KpiCard
+                      title="Net (Receivables - Payables)"
+                      value={formatPKRCompact(arAp.receivables.totalReceivables - arAp.payables.totalPayables)}
+                      highlight={arAp.receivables.totalReceivables - arAp.payables.totalPayables >= 0 ? "good" : "bad"}
+                    />
+                    <KpiCard
+                      title="AR/AP Gap"
+                      value={formatPKRCompact(Math.abs(arAp.payables.totalPayables - arAp.receivables.totalReceivables))}
+                    />
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <Panel title={`Payables vs Receivables (As of ${arAp.asOf})`}>
+                      <div className="h-[320px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Tooltip content={<MoneyTooltip pie />} />
+                            <Legend />
+                            <Pie
+                              data={[
+                                { name: "Payables", value: arAp.payables.totalPayables },
+                                { name: "Receivables", value: arAp.receivables.totalReceivables },
+                              ]}
+                              dataKey="value"
+                              nameKey="name"
+                              innerRadius={75}
+                              outerRadius={115}
+                              paddingAngle={2}
+                            >
+                              <Cell fill="#ef4444" />
+                              <Cell fill="#22c55e" />
+                            </Pie>
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </Panel>
+
+                    <Panel title="Monthly Payables & Receivables Growth (Month-end)">
+                      <div className="h-[320px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={monthlyArAp} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                            <CartesianGrid {...GRID} />
+                            <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                            <YAxis
+                              tick={AXIS_TICK}
+                              axisLine={AXIS_LINE}
+                              tickLine={TICK_LINE}
+                              tickFormatter={fmtAxisPKR}
+                            />
+                            <Tooltip content={<MoneyTooltip />} />
+                            <Legend />
+                            <Line type="monotone" dataKey="payables" name="Total Payables" stroke="#ef4444" strokeWidth={3} dot={false} />
+                            <Line type="monotone" dataKey="receivables" name="Total Receivables" stroke="#22c55e" strokeWidth={3} dot={false} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </Panel>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    {/* ✅ Payables Detail without Current/Long-term sections */}
+                    <Panel title="Payables Detail">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="text-left text-xs text-slate-300">
+                            <tr>
+                              <th className="py-2 pr-3">Category</th>
+                              <th className="py-2 text-right">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-t border-white/10">
+                              <td className="py-2 pr-3 text-slate-200 font-medium">Payroll Payable</td>
+                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.current.payrollPayable)}</td>
+                            </tr>
+
+                            <tr className="border-t border-white/10">
+                              <td className="py-2 pr-3 text-slate-200 font-medium">With Holding Tax Payable Vendors</td>
+                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.current.withHoldingTaxPayableVendors)}</td>
+                            </tr>
+
+                            <tr className="border-t border-white/10">
+                              <td className="py-2 pr-3 text-slate-200 font-medium">Vendor Bills</td>
+                              <td className="py-2 text-right font-semibold">
+                                {formatPKRCompact(
+                                  Number(
+                                    (arAp.payables.current as any).vendorBills ??
+                                      arAp.payables.current.accountsPayable ??
+                                      0
+                                  )
+                                )}
+                              </td>
+                            </tr>
+
+                            <tr className="border-t border-white/10">
+                              <td className="py-2 pr-3 text-slate-200 font-medium">Sir Aatif Loan to Company</td>
+                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.longTerm.sirAatifLoanToCompany)}</td>
+                            </tr>
+
+                            <tr className="border-t border-white/10">
+                              <td className="py-2 pr-3 text-slate-200 font-medium">Payroll With Holding Tax Payable</td>
+                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.longTerm.payrollWithHoldingTaxPayable)}</td>
+                            </tr>
+
+                            <tr className="border-t-2 border-white/15 bg-rose-500/10">
+                              <td className="py-2 pr-3 font-semibold text-slate-100">Total Payables</td>
+                              <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(arAp.payables.totalPayables)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </Panel>
+
+                    <Panel title="Receivables Detail">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="text-left text-xs text-slate-300">
+                            <tr>
+                              <th className="py-2 pr-3">Category</th>
+                              <th className="py-2 text-right">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-t border-white/10">
+                              <td className="py-2 pr-3 text-slate-200 font-medium">Loan Against Salary</td>
+                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.receivables.loanAgainstSalary)}</td>
+                            </tr>
+
+                            <tr className="border-t border-white/10">
+                              <td className="py-2 pr-3 text-slate-200 font-medium">Tax Withheld</td>
+                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.receivables.taxWithheld)}</td>
+                            </tr>
+
+                            <tr className="border-t-2 border-white/15 bg-emerald-500/10">
+                              <td className="py-2 pr-3 font-semibold text-slate-100">Total Receivables</td>
+                              <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(arAp.receivables.totalReceivables)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </Panel>
+                  </div>
+
+                  <div className="mt-4">
+                    {/* ✅ Rename title exactly as requested */}
+                    <Panel title="Vendor Payables Breakdown">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="text-left text-xs text-slate-300">
+                            <tr>
+                              <th className="py-2 pr-3">Vendor</th>
+                              <th className="py-2 text-right">Current</th>
+                              <th className="py-2 text-right">1–30</th>
+                              <th className="py-2 text-right">31–60</th>
+                              <th className="py-2 text-right">61–90</th>
+                              <th className="py-2 text-right">91+</th>
+                              <th className="py-2 text-right">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {arAp.apAging.vendors?.length ? (
+                              <>
+                                {arAp.apAging.vendors.map((v, i) => (
+                                  <tr key={i} className="border-t border-white/10">
+                                    <td className="py-2 pr-3 font-medium text-slate-200">{v.vendor}</td>
+                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v.current)}</td>
+                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v["1_30"])}</td>
+                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v["31_60"])}</td>
+                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v["61_90"])}</td>
+                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v["91_plus"])}</td>
+                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v.total)}</td>
+                                  </tr>
+                                ))}
+                                <tr className="border-t-2 border-white/15 bg-white/5">
+                                  <td className="py-2 pr-3 font-semibold text-slate-100">Total AP</td>
+                                  <td colSpan={5}></td>
+                                  <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(arAp.apAging.totalAP)}</td>
+                                </tr>
+                              </>
+                            ) : (
+                              <tr className="border-t border-white/10">
+                                <td colSpan={7} className="py-3 text-slate-300">
+                                  No vendor aging data found.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </Panel>
+                  </div>
+                </>
+              )}
+            </Panel>
+          </div>
+        ) : null}
 
         {/* PNL TAB */}
         {tab === "pnl" ? (
           <>
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-              <KpiCard title="Total Income" value={formatPKRCompact(kpi.revenue)} sub="Selected period" />
-              <KpiCard title="Total Expenses" value={formatPKRCompact(kpi.expenses)} sub="Selected period" />
+              <KpiCard title="Total Income" value={formatPKRCompact(kpi.revenue)} />
+              <KpiCard title="Total Expenses" value={formatPKRCompact(kpi.expenses)} />
               <KpiCard
                 title="Net Profit (Loss)"
                 value={formatPKRCompact(kpi.profit)}
-                sub={`Net margin: ${formatPct(margin)}`}
                 highlight={kpi.profit < 0 ? "bad" : "good"}
               />
-              <KpiCard title="Months" value={`${series.length}`} sub="In selected range" />
+              <KpiCard title="Months" value={`${series.length}`} />
             </div>
 
-            {/* ✅ AI Insights Panel */}
             <div className="mt-4">
-              <Panel
-                title="AI Insights"
-                subtitle="CFO summary + highlights + risks + recommended actions (based on selected range)"
-              >
+              <Panel title="AI Insights">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="text-sm text-slate-200">
                     {aiLoading ? (
-                      <div className="text-slate-300">Generating insights…</div>
+                      <div className="text-slate-300">Generating…</div>
                     ) : ai && (ai as any).ok === true ? (
                       <div className="space-y-3">
                         <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                          <div className="text-xs text-slate-300 mb-1">Summary</div>
                           <div className="font-medium">{(ai as any).summary || "—"}</div>
                         </div>
 
                         <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
                           <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-xs text-slate-300 mb-2">Highlights</div>
                             {(ai as any).highlights?.length ? (
                               <ul className="list-disc pl-5 space-y-1 text-slate-200">
                                 {(ai as any).highlights.slice(0, 6).map((x: string, i: number) => (
@@ -833,7 +1160,6 @@ export default function DashboardPage() {
                           </div>
 
                           <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-xs text-slate-300 mb-2">Risks</div>
                             {(ai as any).risks?.length ? (
                               <ul className="list-disc pl-5 space-y-1 text-slate-200">
                                 {(ai as any).risks.slice(0, 6).map((x: string, i: number) => (
@@ -846,7 +1172,6 @@ export default function DashboardPage() {
                           </div>
 
                           <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            <div className="text-xs text-slate-300 mb-2">Actions</div>
                             {(ai as any).actions?.length ? (
                               <ul className="list-disc pl-5 space-y-1 text-slate-200">
                                 {(ai as any).actions.slice(0, 6).map((x: string, i: number) => (
@@ -860,18 +1185,15 @@ export default function DashboardPage() {
                         </div>
                       </div>
                     ) : aiErr ? (
-                      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
-                        {aiErr}
-                      </div>
+                      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{aiErr}</div>
                     ) : (
-                      <div className="text-slate-400">No insights yet.</div>
+                      <div className="text-slate-400">—</div>
                     )}
                   </div>
 
                   <div className="shrink-0">
                     <button
                       onClick={() => {
-                        // build normalized range same as fetchAll
                         const fromKey = fromYear * 100 + fromMonth;
                         const toKey = toYear * 100 + toMonth;
                         const fy = fromKey <= toKey ? fromYear : toYear;
@@ -887,7 +1209,7 @@ export default function DashboardPage() {
                       className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10 disabled:opacity-60"
                       disabled={aiLoading}
                     >
-                      {aiLoading ? "Generating…" : "Refresh Insights"}
+                      {aiLoading ? "Generating…" : "Refresh"}
                     </button>
                   </div>
                 </div>
@@ -895,13 +1217,13 @@ export default function DashboardPage() {
             </div>
 
             <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Panel title="Income vs Expenses" subtitle="Monthly (selected range)">
+              <Panel title="Income vs Expenses">
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                       <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip />} />
                       <Legend />
                       <Bar dataKey="revenue" name="Income" fill="#22c55e" radius={[8, 8, 0, 0]} />
@@ -911,13 +1233,13 @@ export default function DashboardPage() {
                 </div>
               </Panel>
 
-              <Panel title="Net Profit (Loss)" subtitle="Monthly trend (line)">
+              <Panel title="Net Profit (Loss)">
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                       <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip />} />
                       <Legend />
                       <Line type="monotone" dataKey="profit" name="Net Profit" stroke="#34d399" strokeWidth={3} dot={false} />
@@ -928,7 +1250,7 @@ export default function DashboardPage() {
             </div>
 
             <div className="mt-4">
-              <Panel title="Expense Composition" subtitle="Top accounts (Expenses + Other Expenses)">
+              <Panel title="Expense Composition">
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -962,7 +1284,6 @@ export default function DashboardPage() {
             <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="mb-3">
                 <div className="text-sm font-semibold">Accounts</div>
-                <div className="text-xs text-slate-300">Click a card to view latest 5 transactions.</div>
               </div>
 
               <div className="flex gap-3 overflow-x-auto pb-2">
@@ -994,10 +1315,7 @@ export default function DashboardPage() {
               {selectedAccount ? (
                 <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
                   <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <div className="text-sm font-semibold">Latest 5 transactions — {selectedAccount.name}</div>
-                      <div className="text-xs text-slate-300">Showing account currency when available (else PKR equivalent).</div>
-                    </div>
+                    <div className="text-sm font-semibold">Latest 5 transactions — {selectedAccount.name}</div>
 
                     <button
                       onClick={() => {
@@ -1024,7 +1342,7 @@ export default function DashboardPage() {
                         {txnLoading ? (
                           <tr>
                             <td colSpan={4} className="py-3 text-slate-300">
-                              Loading transactions...
+                              Loading…
                             </td>
                           </tr>
                         ) : txns?.transactions?.length ? (
@@ -1065,21 +1383,17 @@ export default function DashboardPage() {
               <KpiCard title="Net Profit" value={formatPKRCompact(reProfit)} />
               <KpiCard title="Long-term Assets" value={formatPKRCompact(reLongTermAssets)} />
               <KpiCard title="Net Investments" value={formatPKRCompact(reNetInvestments)} />
-              <KpiCard
-                title="Retained Earning"
-                value={formatPKRCompact(reRetained)}
-                highlight={reRetained < 0 ? "bad" : "good"}
-              />
+              <KpiCard title="Retained Earning" value={formatPKRCompact(reRetained)} highlight={reRetained < 0 ? "bad" : "good"} />
             </div>
 
             <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Panel title="Investment Summary" subtitle="Investments vs Contribution Received">
+              <Panel title="Investment Summary">
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={investmentBarData} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                       <CartesianGrid {...GRID} />
                       <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip single />} />
                       <Bar dataKey="value" radius={[10, 10, 0, 0]}>
                         {investmentBarData.map((entry, i) => (
@@ -1089,24 +1403,9 @@ export default function DashboardPage() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-
-                <div className="mt-3 text-sm">
-                  <div className="flex items-center justify-between text-slate-300">
-                    <span>Total Investments</span>
-                    <span className="font-semibold text-slate-100">{formatPKRCompact(reTotalInvestments)}</span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-slate-300">
-                    <span>Contribution Received</span>
-                    <span className="font-semibold text-slate-100">{formatPKRCompact(reContribution)}</span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-slate-300">
-                    <span>Net Investments</span>
-                    <span className="font-semibold text-slate-100">{formatPKRCompact(reNetInvestments)}</span>
-                  </div>
-                </div>
               </Panel>
 
-              <Panel title="Retained Earning Breakdown" subtitle="Where profit is consumed / retained">
+              <Panel title="Retained Earning Breakdown">
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -1131,7 +1430,7 @@ export default function DashboardPage() {
             </div>
 
             <div className="mt-4 grid grid-cols-1 gap-4">
-              <Panel title="Net Investments Detail" subtitle="Period movement (end snapshot − prior snapshot)">
+              <Panel title="Net Investments Detail">
                 {retainedLoading ? (
                   <div className="py-3 text-slate-300">Loading…</div>
                 ) : invDetail.length ? (
@@ -1150,15 +1449,7 @@ export default function DashboardPage() {
                             <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(x.amount ?? 0))}</td>
                           </tr>
                         ))}
-                        <tr className="border-t border-white/10">
-                          <td className="py-2 pr-3 font-semibold">Total Investments</td>
-                          <td className="py-2 text-right font-semibold">{formatPKRCompact(reTotalInvestments)}</td>
-                        </tr>
-                        <tr className="border-t border-white/10">
-                          <td className="py-2 pr-3 font-semibold">Contribution Received</td>
-                          <td className="py-2 text-right font-semibold">{formatPKRCompact(reContribution)}</td>
-                        </tr>
-                        <tr className="border-t border-white/10">
+                        <tr className="border-t-2 border-white/15 bg-white/5">
                           <td className="py-2 pr-3 font-semibold">Net Investments</td>
                           <td className="py-2 text-right font-semibold">{formatPKRCompact(reNetInvestments)}</td>
                         </tr>
@@ -1166,13 +1457,13 @@ export default function DashboardPage() {
                     </table>
                   </div>
                 ) : (
-                  <div className="py-3 text-slate-300">No investment movements found in selected period.</div>
+                  <div className="py-3 text-slate-300">No investment movements found.</div>
                 )}
               </Panel>
             </div>
 
             <div className="mt-4">
-              <Panel title="Long-term Assets Detail" subtitle="Fixed asset movement in selected period (End − Before Start)">
+              <Panel title="Long-term Assets Detail">
                 {retainedLoading ? (
                   <div className="py-3 text-slate-300">Loading…</div>
                 ) : ltDetail.length ? (
@@ -1195,7 +1486,7 @@ export default function DashboardPage() {
                             <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(x.movement ?? 0))}</td>
                           </tr>
                         ))}
-                        <tr className="border-t border-white/10">
+                        <tr className="border-t-2 border-white/15 bg-white/5">
                           <td className="py-2 pr-3 font-semibold">Total Movement</td>
                           <td className="py-2 text-right"></td>
                           <td className="py-2 text-right"></td>
@@ -1205,7 +1496,7 @@ export default function DashboardPage() {
                     </table>
                   </div>
                 ) : (
-                  <div className="py-3 text-slate-300">No fixed asset movement found in selected period.</div>
+                  <div className="py-3 text-slate-300">No fixed asset movement found.</div>
                 )}
               </Panel>
             </div>
@@ -1217,12 +1508,7 @@ export default function DashboardPage() {
           <>
             <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="text-sm font-semibold">Operating Forecast (Opex-only)</div>
-                  <div className="text-xs text-slate-300">
-                    Trend analysis on Revenue &amp; Opex from P&amp;L. Break-even and margin targets are based on Opex only (no CapEx).
-                  </div>
-                </div>
+                <div className="text-sm font-semibold">Operating Forecast</div>
 
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-slate-300">Horizon</label>
@@ -1247,107 +1533,34 @@ export default function DashboardPage() {
             ) : fcOk ? (
               <>
                 <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-                  <KpiCard
-                    title="Revenue Trend (Avg MoM)"
-                    value={formatPct(fcRevMoM)}
-                    sub={fcRevLabel}
-                    highlight={fcRevMoM < 0 ? "bad" : "good"}
-                  />
-                  <KpiCard
-                    title="Opex Trend (Avg MoM)"
-                    value={formatPct(fcExpMoM)}
-                    sub={fcExpLabel}
-                    highlight={fcExpMoM > 0 ? "bad" : "good"}
-                  />
-                  <KpiCard title="Avg Monthly Opex" value={formatPKRCompact(fcAvgOpex)} sub="Operating cost base" />
-                  <KpiCard
-                    title="Break-even Revenue"
-                    value={formatPKRCompact(fcBreakeven)}
-                    sub={fcMeetsBE ? "Avg revenue meets break-even" : `Gap: ${formatPKRCompact(fcGap)}`}
-                    highlight={fcMeetsBE ? "good" : "bad"}
-                  />
+                  <KpiCard title="Revenue Trend (Avg MoM)" value={formatPct(fcRevMoM)} highlight={fcRevMoM < 0 ? "bad" : "good"} />
+                  <KpiCard title="Opex Trend (Avg MoM)" value={formatPct(fcExpMoM)} highlight={fcExpMoM > 0 ? "bad" : "good"} />
+                  <KpiCard title="Avg Monthly Opex" value={formatPKRCompact(fcAvgOpex)} />
+                  <KpiCard title="Break-even Revenue" value={formatPKRCompact(fcBreakeven)} highlight={fcMeetsBE ? "good" : "bad"} />
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <Panel title="Selected Range Averages" subtitle={`Months used: ${fcMonthsUsed} (no minimum required)`}>
-                    <div className="text-sm">
-                      <div className="flex items-center justify-between text-slate-300">
-                        <span>Avg Monthly Revenue</span>
-                        <span className="font-semibold text-slate-100">{formatPKRCompact(fcAvgRevenue)}</span>
-                      </div>
-                      <div className="mt-1 flex items-center justify-between text-slate-300">
-                        <span>Avg Monthly Opex</span>
-                        <span className="font-semibold text-slate-100">{formatPKRCompact(fcAvgOpex)}</span>
-                      </div>
-                      <div className="mt-2 border-t border-white/10 pt-2 flex items-center justify-between text-slate-300">
-                        <span className="font-semibold text-slate-200">Avg Monthly Operating Profit</span>
-                        <span className="font-semibold text-slate-100">{formatPKRCompact(fcAvgProfit)}</span>
-                      </div>
-                    </div>
-                  </Panel>
-
-                  <Panel title="Revenue Benchmarks" subtitle="Opex-only break-even and margin targets">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead className="text-left text-xs text-slate-300">
-                          <tr>
-                            <th className="py-2 pr-3">Scenario</th>
-                            <th className="py-2 text-right">Required Monthly Revenue</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr className="border-t border-white/10">
-                            <td className="py-2 pr-3 font-semibold">Break-even (Opex)</td>
-                            <td className="py-2 text-right font-semibold">{formatPKRCompact(fcBreakeven)}</td>
-                          </tr>
-                          <tr className="border-t border-white/10">
-                            <td className="py-2 pr-3">10% Operating Margin</td>
-                            <td className="py-2 text-right font-semibold">
-                              {formatPKRCompact(forecastData?.benchmarks?.margin10 ?? 0)}
-                            </td>
-                          </tr>
-                          <tr className="border-t border-white/10">
-                            <td className="py-2 pr-3">20% Operating Margin</td>
-                            <td className="py-2 text-right font-semibold">
-                              {formatPKRCompact(forecastData?.benchmarks?.margin20 ?? 0)}
-                            </td>
-                          </tr>
-                          <tr className="border-t border-white/10">
-                            <td className="py-2 pr-3">30% Operating Margin</td>
-                            <td className="py-2 text-right font-semibold">
-                              {formatPKRCompact(forecastData?.benchmarks?.margin30 ?? 0)}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </Panel>
-                </div>
-
-                <div className="mt-4">
-                  <Panel title="Benchmark Visual" subtitle="Avg revenue vs Opex break-even and margin targets">
+                  <Panel title="Benchmark Visual">
                     <div className="h-[320px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={benchmarkBars} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                           <CartesianGrid {...GRID} />
                           <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip single />} />
                           <Bar dataKey="value" radius={[10, 10, 0, 0]} fill="#60a5fa" />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
                   </Panel>
-                </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <Panel title="Forecast: Revenue vs Opex" subtitle="Operating forecast (no CapEx)">
+                  <Panel title="Forecast: Revenue vs Opex">
                     <div className="h-[320px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={forecastRows} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                           <CartesianGrid {...GRID} />
                           <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip />} />
                           <Legend />
                           <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#22c55e" strokeWidth={3} dot={false} />
@@ -1356,53 +1569,11 @@ export default function DashboardPage() {
                       </ResponsiveContainer>
                     </div>
                   </Panel>
-
-                  <Panel title="Forecast: Operating Profit" subtitle="Profit = Revenue − Opex">
-                    <div className="h-[320px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={forecastRows} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
-                          <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                          <Tooltip content={<MoneyTooltip />} />
-                          <Legend />
-                          <Line type="monotone" dataKey="profit" name="Operating Profit" stroke="#34d399" strokeWidth={3} dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </Panel>
-                </div>
-
-                <div className="mt-4">
-                  <Panel title="Forecast Table" subtitle="Projected values based on average MoM growth from selected range">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead className="text-left text-xs text-slate-300">
-                          <tr>
-                            <th className="py-2 pr-3">Month</th>
-                            <th className="py-2 text-right">Revenue</th>
-                            <th className="py-2 text-right">Opex</th>
-                            <th className="py-2 text-right">Operating Profit</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {forecastRows.map((x, i) => (
-                            <tr key={i} className="border-t border-white/10">
-                              <td className="py-2 pr-3">{x.month}</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(x.revenue ?? 0))}</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(x.opex ?? 0))}</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(x.profit ?? 0))}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Panel>
                 </div>
               </>
             ) : (
               <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-slate-300">
-                No data available for the selected range. Please adjust dates and click Apply.
+                No data available for the selected range.
               </div>
             )}
           </>
@@ -1434,20 +1605,36 @@ function TabButton({
   );
 }
 
-function Panel({
-  title,
-  subtitle,
+function TabLinkButton({
+  active,
+  href,
+  onActivate,
   children,
 }: {
-  title: string;
-  subtitle?: string;
+  active: boolean;
+  href: string;
+  onActivate?: () => void;
   children: React.ReactNode;
 }) {
+  return (
+    <Link
+      href={href}
+      onClick={() => onActivate?.()}
+      className={[
+        "rounded-xl border px-4 py-2 text-sm font-semibold transition inline-flex items-center",
+        active ? "border-emerald-400/30 bg-emerald-500/10" : "border-white/10 bg-white/5 hover:bg-white/10",
+      ].join(" ")}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
       <div className="mb-3">
         <div className="text-sm font-semibold">{title}</div>
-        {subtitle ? <div className="text-xs text-slate-300">{subtitle}</div> : null}
       </div>
       {children}
     </div>
@@ -1457,12 +1644,10 @@ function Panel({
 function KpiCard({
   title,
   value,
-  sub,
   highlight,
 }: {
   title: string;
   value: string;
-  sub?: string;
   highlight?: "good" | "bad";
 }) {
   const ring =
@@ -1476,7 +1661,6 @@ function KpiCard({
     <div className={`rounded-2xl border ${ring} bg-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)]`}>
       <div className="text-xs text-slate-300">{title}</div>
       <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
-      {sub ? <div className="mt-1 text-xs text-slate-300">{sub}</div> : null}
     </div>
   );
 }
