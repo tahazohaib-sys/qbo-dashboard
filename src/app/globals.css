@@ -14,8 +14,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #090d19;
+    --foreground: #e5e7eb;
   }
 }
 
@@ -23,4 +23,103 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.dashboard-bg {
+  background:
+    radial-gradient(1200px 700px at 15% 8%, rgba(124, 58, 237, 0.22), transparent 55%),
+    radial-gradient(900px 560px at 85% 18%, rgba(34, 211, 238, 0.14), transparent 55%),
+    linear-gradient(180deg, #070b16 0%, #090f1d 45%, #070b16 100%);
+}
+
+.glass-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(145deg, rgba(26, 21, 52, 0.84) 0%, rgba(16, 21, 44, 0.88) 100%),
+    radial-gradient(circle at 15% 0%, rgba(139, 92, 246, 0.18), transparent 40%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 20px 60px rgba(2, 6, 23, 0.6);
+  backdrop-filter: blur(10px);
+}
+
+.premium-surface {
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  background:
+    linear-gradient(145deg, rgba(26, 21, 52, 0.88) 0%, rgba(16, 21, 44, 0.92) 100%),
+    radial-gradient(circle at 10% 0%, rgba(139, 92, 246, 0.2), transparent 40%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 24px 70px rgba(2, 6, 23, 0.55);
+  backdrop-filter: blur(14px);
+}
+
+.premium-input {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(180deg, rgba(15, 20, 42, 0.95), rgba(13, 18, 37, 0.96));
+  color: #f8fafc;
+}
+
+.premium-input:focus {
+  border-color: rgba(167, 139, 250, 0.75);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.22);
+  outline: none;
+}
+
+select.premium-input {
+  color-scheme: dark;
+}
+
+.premium-input option,
+.premium-input optgroup {
+  color: #e2e8f0;
+  background-color: #0f142a;
+}
+
+.premium-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.premium-table thead th {
+  position: sticky;
+  top: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  background-color: rgba(15, 20, 42, 0.88);
+  color: #cbd5e1;
+  font-weight: 700;
+}
+
+.premium-table tbody tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.premium-table tbody tr:hover {
+  background-color: rgba(139, 92, 246, 0.1);
+}
+
+.premium-table tbody td {
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.premium-kpi-value {
+  background: linear-gradient(90deg, #f5f3ff 0%, #c4b5fd 45%, #67e8f9 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
 }

@@ -98,9 +98,10 @@ function fmtPct(n: number) {
 }
 
 const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
-const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
-const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
-const GRID = { strokeDasharray: "3 3", opacity: 0.22 } as const;
+const AXIS_LINE = { stroke: "rgba(125,211,252,0.42)" } as const;
+const TICK_LINE = { stroke: "rgba(125,211,252,0.28)" } as const;
+const GRID = { strokeDasharray: "3 3", stroke: "rgba(148,163,184,0.24)", opacity: 0.24 } as const;
+const LINE_PALETTE = ["#7dd3fc", "#38bdf8", "#60a5fa", "#22d3ee", "#818cf8", "#93c5fd", "#0ea5e9"];
 
 function classDelta(n: number) {
   return n > 0 ? "text-emerald-300" : n < 0 ? "text-rose-300" : "text-slate-200";
@@ -109,7 +110,7 @@ function classDelta(n: number) {
 function MoneyTooltip({ active, payload, label, symbol }: any) {
   if (!active || !payload || !payload.length) return null;
   return (
-    <div className="rounded-xl border border-white/10 bg-black/80 px-3 py-2 text-xs text-slate-100">
+    <div className="premium-surface rounded-xl px-3 py-2 text-xs text-slate-100">
       <div className="font-semibold">{label}</div>
       {payload.map((p: any) => (
         <div key={p.dataKey} className="flex items-center justify-between gap-4">
@@ -131,7 +132,7 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
+    <div className="premium-surface rounded-2xl p-4">
       <div className="mb-3">
         <div className="text-sm font-semibold">{title}</div>
         {subtitle ? <div className="text-xs text-slate-300">{subtitle}</div> : null}
@@ -175,7 +176,7 @@ function MultiSelect({
 
       <button
         onClick={() => setOpen((s) => !s)}
-        className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-left"
+        className="premium-input mt-1 w-full rounded-xl px-3 py-2 text-sm text-left"
         type="button"
       >
         <div className="flex items-center justify-between gap-2">
@@ -187,19 +188,19 @@ function MultiSelect({
       </button>
 
       {open ? (
-        <div className="absolute z-20 mt-2 w-full rounded-2xl border border-white/10 bg-[#050814] shadow-[0_20px_80px_rgba(0,0,0,0.55)]">
+        <div className="premium-surface absolute z-20 mt-2 w-full rounded-2xl">
           <div className="p-3 border-b border-white/10">
             <div className="flex items-center justify-between gap-2">
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search…"
-                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none"
+                className="premium-input w-full rounded-xl px-3 py-2 text-sm"
               />
               <select
                 value={mode}
                 onChange={(e) => setMode(e.target.value as any)}
-                className="rounded-xl border border-white/10 bg-black/40 px-2 py-2 text-sm outline-none"
+                className="premium-input rounded-xl px-2 py-2 text-sm"
                 title="Include / Exclude mode"
               >
                 <option value="include">Include</option>
@@ -209,7 +210,7 @@ function MultiSelect({
 
             <div className="mt-2 flex gap-2 flex-wrap">
               <button
-                className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10"
+                className="premium-surface rounded-lg px-2 py-1 text-xs hover:brightness-110"
                 onClick={() => setSelected([])}
                 type="button"
                 title="Empty selection means ALL"
@@ -217,7 +218,7 @@ function MultiSelect({
                 All
               </button>
               <button
-                className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10"
+                className="premium-surface rounded-lg px-2 py-1 text-xs hover:brightness-110"
                 onClick={() => setSelected(filtered)}
                 type="button"
                 title="Select all currently filtered"
@@ -225,7 +226,7 @@ function MultiSelect({
                 All (filtered)
               </button>
               <button
-                className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10"
+                className="premium-surface rounded-lg px-2 py-1 text-xs hover:brightness-110"
                 onClick={() => setSelected([])}
                 type="button"
                 title="Same as All"
@@ -246,7 +247,7 @@ function MultiSelect({
                 return (
                   <label
                     key={opt}
-                    className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-white/5 cursor-pointer"
+                    className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 hover:bg-blue-400/10"
                   >
                     <input
                       type="checkbox"
@@ -267,7 +268,7 @@ function MultiSelect({
 
           <div className="p-2 border-t border-white/10">
             <button
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm hover:bg-white/10"
+              className="premium-surface w-full rounded-xl px-3 py-2 text-sm hover:brightness-110"
               onClick={() => setOpen(false)}
               type="button"
             >
@@ -358,7 +359,7 @@ export default function RevenueAnalyticsPage() {
   }, [growthSeries]);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
+    <div className="min-h-screen bg-[radial-gradient(1200px_900px_at_10%_10%,rgba(37,99,235,0.2),transparent_55%),radial-gradient(1200px_900px_at_85%_18%,rgba(14,165,233,0.16),transparent_55%),radial-gradient(1000px_700px_at_58%_95%,rgba(99,102,241,0.14),transparent_55%),linear-gradient(180deg,#040b1f_0%,#071738_45%,#050d24_100%)] text-slate-100">
       <div className="mx-auto max-w-7xl px-5 py-8">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
@@ -369,13 +370,13 @@ export default function RevenueAnalyticsPage() {
           <div className="flex items-center gap-2">
             <Link
               href="/dashboard"
-              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium hover:bg-white/10"
+              className="premium-surface rounded-xl px-4 py-2 text-sm font-medium hover:brightness-110"
             >
               ← Back to Dashboard
             </Link>
             <button
               onClick={fetchData}
-              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20"
+              className="premium-surface rounded-xl px-4 py-2 text-sm font-semibold text-sky-100 hover:brightness-110"
               disabled={loading}
             >
               {loading ? "Refreshing..." : "Refresh"}
@@ -384,7 +385,7 @@ export default function RevenueAnalyticsPage() {
         </div>
 
         {/* Slicers */}
-        <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+        <div className="mt-5 premium-surface rounded-2xl p-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
             <MultiSelect
               label="Month"
@@ -430,7 +431,7 @@ export default function RevenueAnalyticsPage() {
                   setSelectedChurnKey(null);
                   fetchData();
                 }}
-                className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold hover:bg-white/15"
+                className="premium-surface rounded-xl px-4 py-2 text-sm font-semibold hover:brightness-110"
                 disabled={loading}
                 type="button"
               >
@@ -448,17 +449,17 @@ export default function RevenueAnalyticsPage() {
 
         {/* KPI */}
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="premium-surface rounded-2xl p-4">
             <div className="text-xs text-slate-300">Total Revenue (Filtered)</div>
-            <div className="mt-2 text-2xl font-semibold">{fmtMoney(totalRevenueFiltered, symbol)}</div>
+            <div className="premium-kpi-value mt-2 text-2xl font-semibold">{fmtMoney(totalRevenueFiltered, symbol)}</div>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="premium-surface rounded-2xl p-4">
             <div className="text-xs text-slate-300">Selected Months</div>
-            <div className="mt-2 text-xl font-semibold">{months.length ? months.length : "All"}</div>
+            <div className="premium-kpi-value mt-2 text-xl font-semibold">{months.length ? months.length : "All"}</div>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="premium-surface rounded-2xl p-4">
             <div className="text-xs text-slate-300">Selected Companies</div>
-            <div className="mt-2 text-xl font-semibold">{companies.length ? companies.length : "All"}</div>
+            <div className="premium-kpi-value mt-2 text-xl font-semibold">{companies.length ? companies.length : "All"}</div>
           </div>
         </div>
 
@@ -473,9 +474,18 @@ export default function RevenueAnalyticsPage() {
                   <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                   <Tooltip content={<MoneyTooltip symbol={symbol} />} />
                   <Legend />
-                  <Line type="monotone" dataKey="totalRevenue" name="Total Revenue" stroke="#60a5fa" strokeWidth={3} dot={false} />
-                  {growthLineKeys.map((k) => (
-                    <Line key={k} type="monotone" dataKey={k} name={k} strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="totalRevenue" name="Total Revenue" stroke="#93c5fd" strokeWidth={3.4} dot={false} activeDot={{ r: 5 }} />
+                  {growthLineKeys.map((k, idx) => (
+                    <Line
+                      key={k}
+                      type="monotone"
+                      dataKey={k}
+                      name={k}
+                      stroke={LINE_PALETTE[idx % LINE_PALETTE.length]}
+                      strokeWidth={2.2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
                   ))}
                 </LineChart>
               </ResponsiveContainer>
@@ -485,7 +495,7 @@ export default function RevenueAnalyticsPage() {
           <Panel title="Revenue Growth Table" subtitle="Change (Δ) and Change % (green = positive, red = negative)">
             {ok ? (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="premium-table w-full text-sm">
                   <thead className="text-left text-xs text-slate-300">
                     <tr>
                       <th className="py-2 pr-3">Month</th>
@@ -543,7 +553,7 @@ export default function RevenueAnalyticsPage() {
             {ok ? (
               <>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="premium-table w-full text-sm">
                     <thead className="text-left text-xs text-slate-300">
                       <tr>
                         <th className="py-2 pr-3">Company</th>
@@ -568,7 +578,7 @@ export default function RevenueAnalyticsPage() {
                           return (
                             <tr
                               key={i}
-                              className={`border-t border-white/10 cursor-pointer hover:bg-white/5 ${active ? "bg-white/5" : ""}`}
+                              className={`border-t border-white/10 cursor-pointer hover:bg-blue-400/10 ${active ? "bg-blue-400/10" : ""}`}
                               onClick={() => setSelectedChurnKey(key)}
                               title="Click to view customer drill"
                             >
@@ -613,37 +623,37 @@ export default function RevenueAnalyticsPage() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-6">
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                  <div className="premium-surface rounded-xl p-3">
                     <div className="text-[11px] text-slate-300">Net Change (Current - Prev)</div>
                     <div className={`mt-1 text-base font-semibold ${classDelta(Number(churnSelected?.netRevenueDelta ?? 0))}`}>
                       {churnSelected ? fmtMoney(Number(churnSelected.netRevenueDelta ?? 0), symbol) : "—"}
                     </div>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                  <div className="premium-surface rounded-xl p-3">
                     <div className="text-[11px] text-slate-300">Lost (Churned Customers)</div>
                     <div className="mt-1 text-base font-semibold text-rose-300">
                       {churnSelected ? fmtMoney(Number(churnSelected.lostRevenue ?? 0), symbol) : "—"}
                     </div>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                  <div className="premium-surface rounded-xl p-3">
                     <div className="text-[11px] text-slate-300">New (Added Customers)</div>
                     <div className="mt-1 text-base font-semibold text-emerald-300">
                       {churnSelected ? fmtMoney(Number(churnSelected.addedRevenue ?? 0), symbol) : "—"}
                     </div>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                  <div className="premium-surface rounded-xl p-3">
                     <div className="text-[11px] text-slate-300">Existing Customer Net</div>
                     <div className={`mt-1 text-base font-semibold ${classDelta(Number(churnSelected?.existingCustomerDelta ?? 0))}`}>
                       {churnSelected ? fmtMoney(Number(churnSelected.existingCustomerDelta ?? 0), symbol) : "—"}
                     </div>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                  <div className="premium-surface rounded-xl p-3">
                     <div className="text-[11px] text-slate-300">Existing Expansion (↑)</div>
                     <div className="mt-1 text-base font-semibold text-emerald-300">
                       {churnSelected ? fmtMoney(Number(churnSelected.expansionRevenue ?? 0), symbol) : "—"}
                     </div>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                  <div className="premium-surface rounded-xl p-3">
                     <div className="text-[11px] text-slate-300">Existing Contraction (↓)</div>
                     <div className="mt-1 text-base font-semibold text-rose-300">
                       {churnSelected ? fmtMoney(Number(churnSelected.contractionRevenue ?? 0), symbol) : "—"}
@@ -660,7 +670,7 @@ export default function RevenueAnalyticsPage() {
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
                     ) : churnSelected.lostCustomers?.length ? (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="premium-table w-full text-sm">
                           <thead className="text-left text-xs text-slate-300">
                             <tr>
                               <th className="py-2 pr-3">Customer</th>
@@ -692,7 +702,7 @@ export default function RevenueAnalyticsPage() {
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
                     ) : churnSelected.addedCustomers?.length ? (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="premium-table w-full text-sm">
                           <thead className="text-left text-xs text-slate-300">
                             <tr>
                               <th className="py-2 pr-3">Customer</th>
@@ -726,7 +736,7 @@ export default function RevenueAnalyticsPage() {
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
                     ) : churnSelected.expansionCustomers?.length ? (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="premium-table w-full text-sm">
                           <thead className="text-left text-xs text-slate-300">
                             <tr>
                               <th className="py-2 pr-3">Customer</th>
@@ -762,7 +772,7 @@ export default function RevenueAnalyticsPage() {
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
                     ) : churnSelected.contractionCustomers?.length ? (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="premium-table w-full text-sm">
                           <thead className="text-left text-xs text-slate-300">
                             <tr>
                               <th className="py-2 pr-3">Customer</th>
@@ -813,7 +823,7 @@ export default function RevenueAnalyticsPage() {
                           <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <Tooltip content={<MoneyTooltip symbol={symbol} />} />
                           <Legend />
-                          <Bar dataKey="revenue" name="Revenue" fill="#22c55e" radius={[8, 8, 0, 0]} />
+                          <Bar dataKey="revenue" name="Revenue" fill="#38bdf8" radius={[8, 8, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
