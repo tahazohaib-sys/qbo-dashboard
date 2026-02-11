@@ -266,6 +266,13 @@ export async function GET(req: Request) {
 
         const lostCustomers: Array<{ customer: string; lastMonthRevenue: number }> = [];
         const addedCustomers: Array<{ customer: string; currentMonthRevenue: number }> = [];
+        const expansionCustomers: Array<{ customer: string; prevMonthRevenue: number; currentMonthRevenue: number; delta: number }> = [];
+        const contractionCustomers: Array<{
+          customer: string;
+          prevMonthRevenue: number;
+          currentMonthRevenue: number;
+          delta: number;
+        }> = [];
 
         if (prevMonth) {
           for (const [cust, prevRev] of prevCust.entries()) {
@@ -274,13 +281,27 @@ export async function GET(req: Request) {
           for (const [cust, curRev] of curCust.entries()) {
             if (!prevCust.has(cust)) addedCustomers.push({ customer: cust, currentMonthRevenue: curRev });
           }
+          for (const [cust, curRev] of curCust.entries()) {
+            if (!prevCust.has(cust)) continue;
+            const prevRev = prevCust.get(cust) ?? 0;
+            const delta = curRev - prevRev;
+            if (delta > 0) {
+              expansionCustomers.push({ customer: cust, prevMonthRevenue: prevRev, currentMonthRevenue: curRev, delta });
+            } else if (delta < 0) {
+              contractionCustomers.push({ customer: cust, prevMonthRevenue: prevRev, currentMonthRevenue: curRev, delta });
+            }
+          }
         }
 
         const lostRevenue = lostCustomers.reduce((s, x) => s + (x.lastMonthRevenue ?? 0), 0);
         const addedRevenue = addedCustomers.reduce((s, x) => s + (x.currentMonthRevenue ?? 0), 0);
+        const expansionRevenue = expansionCustomers.reduce((s, x) => s + (x.delta ?? 0), 0);
+        const contractionRevenue = contractionCustomers.reduce((s, x) => s + Math.abs(x.delta ?? 0), 0);
+        const existingCustomerDelta = expansionRevenue - contractionRevenue;
+        const netRevenueDelta = currentTotal - prevTotal;
 
         const churnRate = prevTotal ? lostRevenue / prevTotal : 0;
-        const growthRate = prevTotal ? (currentTotal - prevTotal) / prevTotal : 0;
+        const growthRate = prevTotal ? netRevenueDelta / prevTotal : 0;
 
         if (currentTotal === 0 && prevTotal === 0) continue;
 
@@ -292,10 +313,16 @@ export async function GET(req: Request) {
           currentTotal,
           lostRevenue,
           addedRevenue,
+          expansionRevenue,
+          contractionRevenue,
+          existingCustomerDelta,
+          netRevenueDelta,
           churnRate,
           growthRate,
           lostCustomers: lostCustomers.sort((a, b) => (b.lastMonthRevenue ?? 0) - (a.lastMonthRevenue ?? 0)),
           addedCustomers: addedCustomers.sort((a, b) => (b.currentMonthRevenue ?? 0) - (a.currentMonthRevenue ?? 0)),
+          expansionCustomers: expansionCustomers.sort((a, b) => (b.delta ?? 0) - (a.delta ?? 0)),
+          contractionCustomers: contractionCustomers.sort((a, b) => Math.abs(b.delta ?? 0) - Math.abs(a.delta ?? 0)),
         };
 
         churnDetails.push(detailRow);
@@ -307,6 +334,10 @@ export async function GET(req: Request) {
           currentTotal,
           lostRevenue,
           addedRevenue,
+          expansionRevenue,
+          contractionRevenue,
+          existingCustomerDelta,
+          netRevenueDelta,
           churnRate,
           growthRate,
         });
