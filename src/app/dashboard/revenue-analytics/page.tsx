@@ -53,6 +53,10 @@ type ApiResp =
         currentTotal: number;
         lostRevenue: number;
         addedRevenue: number;
+        expansionRevenue: number;
+        contractionRevenue: number;
+        existingCustomerDelta: number;
+        netRevenueDelta: number;
         churnRate: number;
         growthRate: number;
       }>;
@@ -64,10 +68,16 @@ type ApiResp =
         currentTotal: number;
         lostRevenue: number;
         addedRevenue: number;
+        expansionRevenue: number;
+        contractionRevenue: number;
+        existingCustomerDelta: number;
+        netRevenueDelta: number;
         churnRate: number;
         growthRate: number;
         lostCustomers: Array<{ customer: string; lastMonthRevenue: number }>;
         addedCustomers: Array<{ customer: string; currentMonthRevenue: number }>;
+        expansionCustomers: Array<{ customer: string; prevMonthRevenue: number; currentMonthRevenue: number; delta: number }>;
+        contractionCustomers: Array<{ customer: string; prevMonthRevenue: number; currentMonthRevenue: number; delta: number }>;
       }>;
       teamRevenue: Array<{ team: string; revenue: number }>;
     }
@@ -528,7 +538,7 @@ export default function RevenueAnalyticsPage() {
         <div className="mt-4">
           <Panel
             title="Monthly Revenue Churn Rate vs Growth Rate (Company-wise)"
-            subtitle="Click a row to view Lost/New customer lists (still fully driven by slicers)."
+            subtitle="Click a row to see revenue bridge: lost/new customers + expansion/contraction from existing customers."
           >
             {ok ? (
               <>
@@ -542,6 +552,10 @@ export default function RevenueAnalyticsPage() {
                         <th className="py-2 text-right">Current Total</th>
                         <th className="py-2 text-right">Lost Revenue</th>
                         <th className="py-2 text-right">Added Revenue</th>
+                        <th className="py-2 text-right">Existing ↑</th>
+                        <th className="py-2 text-right">Existing ↓</th>
+                        <th className="py-2 text-right">Existing Net</th>
+                        <th className="py-2 text-right">Net Δ</th>
                         <th className="py-2 text-right">Churn Rate</th>
                         <th className="py-2 text-right">Growth Rate</th>
                       </tr>
@@ -568,6 +582,18 @@ export default function RevenueAnalyticsPage() {
                               <td className="py-2 text-right font-semibold text-emerald-300">
                                 {fmtMoney(Number(r.addedRevenue ?? 0), symbol)}
                               </td>
+                              <td className="py-2 text-right font-semibold text-emerald-300">
+                                {fmtMoney(Number(r.expansionRevenue ?? 0), symbol)}
+                              </td>
+                              <td className="py-2 text-right font-semibold text-rose-300">
+                                {fmtMoney(Number(r.contractionRevenue ?? 0), symbol)}
+                              </td>
+                              <td className={`py-2 text-right font-semibold ${classDelta(Number(r.existingCustomerDelta ?? 0))}`}>
+                                {fmtMoney(Number(r.existingCustomerDelta ?? 0), symbol)}
+                              </td>
+                              <td className={`py-2 text-right font-semibold ${classDelta(Number(r.netRevenueDelta ?? 0))}`}>
+                                {fmtMoney(Number(r.netRevenueDelta ?? 0), symbol)}
+                              </td>
                               <td className="py-2 text-right">{fmtPct(Number(r.churnRate ?? 0))}</td>
                               <td className={`py-2 text-right font-semibold ${classDelta(Number(r.growthRate ?? 0))}`}>
                                 {fmtPct(Number(r.growthRate ?? 0))}
@@ -577,13 +603,52 @@ export default function RevenueAnalyticsPage() {
                         })
                       ) : (
                         <tr>
-                          <td colSpan={8} className="py-3 text-slate-300">
+                          <td colSpan={12} className="py-3 text-slate-300">
                             No churn rows for selected slicers.
                           </td>
                         </tr>
                       )}
                     </tbody>
                   </table>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-6">
+                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                    <div className="text-[11px] text-slate-300">Net Change (Current - Prev)</div>
+                    <div className={`mt-1 text-base font-semibold ${classDelta(Number(churnSelected?.netRevenueDelta ?? 0))}`}>
+                      {churnSelected ? fmtMoney(Number(churnSelected.netRevenueDelta ?? 0), symbol) : "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                    <div className="text-[11px] text-slate-300">Lost (Churned Customers)</div>
+                    <div className="mt-1 text-base font-semibold text-rose-300">
+                      {churnSelected ? fmtMoney(Number(churnSelected.lostRevenue ?? 0), symbol) : "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                    <div className="text-[11px] text-slate-300">New (Added Customers)</div>
+                    <div className="mt-1 text-base font-semibold text-emerald-300">
+                      {churnSelected ? fmtMoney(Number(churnSelected.addedRevenue ?? 0), symbol) : "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                    <div className="text-[11px] text-slate-300">Existing Customer Net</div>
+                    <div className={`mt-1 text-base font-semibold ${classDelta(Number(churnSelected?.existingCustomerDelta ?? 0))}`}>
+                      {churnSelected ? fmtMoney(Number(churnSelected.existingCustomerDelta ?? 0), symbol) : "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                    <div className="text-[11px] text-slate-300">Existing Expansion (↑)</div>
+                    <div className="mt-1 text-base font-semibold text-emerald-300">
+                      {churnSelected ? fmtMoney(Number(churnSelected.expansionRevenue ?? 0), symbol) : "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                    <div className="text-[11px] text-slate-300">Existing Contraction (↓)</div>
+                    <div className="mt-1 text-base font-semibold text-rose-300">
+                      {churnSelected ? fmtMoney(Number(churnSelected.contractionRevenue ?? 0), symbol) : "—"}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -648,6 +713,80 @@ export default function RevenueAnalyticsPage() {
                       </div>
                     ) : (
                       <div className="text-sm text-slate-300">No new customers for this selection.</div>
+                    )}
+                  </Panel>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <Panel
+                    title="Existing Customers: Revenue Increased"
+                    subtitle="Customers present in both months with higher current revenue"
+                  >
+                    {!churnSelected ? (
+                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
+                    ) : churnSelected.expansionCustomers?.length ? (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="text-left text-xs text-slate-300">
+                            <tr>
+                              <th className="py-2 pr-3">Customer</th>
+                              <th className="py-2 text-right">Prev</th>
+                              <th className="py-2 text-right">Current</th>
+                              <th className="py-2 text-right">Δ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {churnSelected.expansionCustomers.slice(0, 30).map((x: any, i: number) => (
+                              <tr key={i} className="border-t border-white/10">
+                                <td className="py-2 pr-3">{x.customer}</td>
+                                <td className="py-2 text-right">{fmtMoney(Number(x.prevMonthRevenue ?? 0), symbol)}</td>
+                                <td className="py-2 text-right">{fmtMoney(Number(x.currentMonthRevenue ?? 0), symbol)}</td>
+                                <td className="py-2 text-right font-semibold text-emerald-300">
+                                  {fmtMoney(Number(x.delta ?? 0), symbol)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-slate-300">No existing-customer revenue increases for this selection.</div>
+                    )}
+                  </Panel>
+
+                  <Panel
+                    title="Existing Customers: Revenue Decreased"
+                    subtitle="Customers present in both months with lower current revenue"
+                  >
+                    {!churnSelected ? (
+                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
+                    ) : churnSelected.contractionCustomers?.length ? (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="text-left text-xs text-slate-300">
+                            <tr>
+                              <th className="py-2 pr-3">Customer</th>
+                              <th className="py-2 text-right">Prev</th>
+                              <th className="py-2 text-right">Current</th>
+                              <th className="py-2 text-right">Δ</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {churnSelected.contractionCustomers.slice(0, 30).map((x: any, i: number) => (
+                              <tr key={i} className="border-t border-white/10">
+                                <td className="py-2 pr-3">{x.customer}</td>
+                                <td className="py-2 text-right">{fmtMoney(Number(x.prevMonthRevenue ?? 0), symbol)}</td>
+                                <td className="py-2 text-right">{fmtMoney(Number(x.currentMonthRevenue ?? 0), symbol)}</td>
+                                <td className="py-2 text-right font-semibold text-rose-300">
+                                  {fmtMoney(Number(x.delta ?? 0), symbol)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-slate-300">No existing-customer revenue decreases for this selection.</div>
                     )}
                   </Panel>
                 </div>
