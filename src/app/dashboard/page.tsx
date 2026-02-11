@@ -252,13 +252,9 @@ type ArApCustomRow = {
   created_at: string;
 };
 
-type ArApCustomListResp =
-  | { ok: true; asOf: string; rows: ArApCustomRow[] }
-  | { ok: false; error: string };
+type ArApCustomListResp = | { ok: true; asOf: string; rows: ArApCustomRow[] } | { ok: false; error: string };
 
-type ArApCustomCreateResp =
-  | { ok: true; row: ArApCustomRow }
-  | { ok: false; error: string };
+type ArApCustomCreateResp = | { ok: true; row: ArApCustomRow } | { ok: false; error: string };
 
 /* ---------------------- helpers ---------------------- */
 
@@ -336,23 +332,11 @@ const MONTHS = [
   { v: 12, label: "Dec" },
 ];
 
-const DONUT_COLORS = [
-  "#60a5fa",
-  "#34d399",
-  "#fbbf24",
-  "#a78bfa",
-  "#fb7185",
-  "#22d3ee",
-  "#f97316",
-  "#94a3b8",
-];
+const DONUT_COLORS = ["#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#fb7185", "#22d3ee", "#f97316", "#94a3b8"];
 
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
 
-function displayTxnAmount(
-  txn: AccountTxnsResp["transactions"][number],
-  homeCurrency: string | null | undefined
-) {
+function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurrency: string | null | undefined) {
   if (txn.amountForeign != null && txn.foreignCurrency) {
     return {
       main: formatMoneyByCurrency(txn.foreignCurrency, txn.amountForeign),
@@ -373,6 +357,14 @@ const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
 const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
 const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
 const GRID = { strokeDasharray: "3 3", opacity: 0.22 } as const;
+
+const CHART_COLORS = {
+  positive: "#22d3ee",
+  positiveSoft: "#67e8f9",
+  caution: "#f59e0b",
+  negative: "#f87171",
+  profit: "#34d399",
+} as const;
 
 function trendLabelFromMoM(mom: number): "Increasing" | "Decreasing" | "Stable" {
   if (!Number.isFinite(mom)) return "Stable";
@@ -571,61 +563,57 @@ export default function DashboardPage() {
   }
 
   async function loadArApAndMonthly(endYmd: string) {
-  setArApLoading(true);
-  try {
-    // ✅ ONE call only (backend returns monthlySeries)
-    const res = await fetch(
-      `/api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=6`,
-      { cache: "no-store" }
-    );
-    const one: any = await res.json();
-    if (!one?.ok) throw new Error(one?.error || "AR/AP API failed");
+    setArApLoading(true);
+    try {
+      // ✅ ONE call only (backend returns monthlySeries)
+      const res = await fetch(`/api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=6`, { cache: "no-store" });
+      const one: any = await res.json();
+      if (!one?.ok) throw new Error(one?.error || "AR/AP API failed");
 
-    setArAp(one);
+      setArAp(one);
 
-    // ---------- Build monthly rows (from backend series) ----------
-    const series: Array<{ asOf: string; month: string; payables: number; receivables: number }> =
-      (one.monthlySeries ?? []).map((r: any) => ({
-        asOf: r.asOf ?? `${r.month}-01`,
-        month: r.month,
-        payables: Number(r.payables ?? 0),
-        receivables: Number(r.receivables ?? 0),
-      }));
+      // ---------- Build monthly rows (from backend series) ----------
+      const series: Array<{ asOf: string; month: string; payables: number; receivables: number }> = (one.monthlySeries ?? []).map(
+        (r: any) => ({
+          asOf: r.asOf ?? `${r.month}-01`,
+          month: r.month,
+          payables: Number(r.payables ?? 0),
+          receivables: Number(r.receivables ?? 0),
+        })
+      );
 
-    // ---------- Overlay custom rows for each month-end ----------
-    const finalRows: Array<{ month: string; payables: number; receivables: number }> = [];
+      // ---------- Overlay custom rows for each month-end ----------
+      const finalRows: Array<{ month: string; payables: number; receivables: number }> = [];
 
-    for (const s of series) {
-      let customRows: ArApCustomRow[] = [];
-      try {
-        customRows = await fetchArApCustom(s.asOf);
-      } catch {
-        customRows = [];
+      for (const s of series) {
+        let customRows: ArApCustomRow[] = [];
+        try {
+          customRows = await fetchArApCustom(s.asOf);
+        } catch {
+          customRows = [];
+        }
+
+        const addPay = customRows.filter((r) => r.section === "payables").reduce((sum, r) => sum + Number((r as any).amount ?? 0), 0);
+
+        const addRec = customRows
+          .filter((r) => r.section === "receivables")
+          .reduce((sum, r) => sum + Number((r as any).amount ?? 0), 0);
+
+        finalRows.push({
+          month: s.month,
+          payables: s.payables + addPay,
+          receivables: s.receivables + addRec,
+        });
       }
 
-      const addPay = customRows
-        .filter((r) => r.section === "payables")
-        .reduce((sum, r) => sum + Number((r as any).amount ?? 0), 0);
-
-      const addRec = customRows
-        .filter((r) => r.section === "receivables")
-        .reduce((sum, r) => sum + Number((r as any).amount ?? 0), 0);
-
-      finalRows.push({
-        month: s.month,
-        payables: s.payables + addPay,
-        receivables: s.receivables + addRec,
-      });
+      setMonthlyArAp(finalRows);
+    } catch {
+      setArAp(null);
+      setMonthlyArAp([]);
+    } finally {
+      setArApLoading(false);
     }
-
-    setMonthlyArAp(finalRows);
-  } catch {
-    setArAp(null);
-    setMonthlyArAp([]);
-  } finally {
-    setArApLoading(false);
   }
-}
 
   async function fetchAll() {
     setLoading(true);
@@ -721,10 +709,9 @@ export default function DashboardPage() {
   async function fetchTransactions(accountId: string) {
     setTxnLoading(true);
     try {
-      const res = await fetch(
-        `/api/qbo/account-transactions?accountId=${encodeURIComponent(accountId)}&limit=5`,
-        { cache: "no-store" }
-      );
+      const res = await fetch(`/api/qbo/account-transactions?accountId=${encodeURIComponent(accountId)}&limit=5`, {
+        cache: "no-store",
+      });
       const json: AccountTxnsResp = await res.json();
       setTxns(json.ok ? json : null);
     } finally {
@@ -851,19 +838,13 @@ export default function DashboardPage() {
   const forecastRows = forecastData?.forecast ?? [];
 
   // ✅ compute custom sums for CURRENT asOf (used in AR/AP UI totals)
-  const arApCustomPayables = useMemo(
-    () => arApCustomRows.filter((r) => r.section === "payables"),
-    [arApCustomRows]
-  );
+  const arApCustomPayables = useMemo(() => arApCustomRows.filter((r) => r.section === "payables"), [arApCustomRows]);
   const arApCustomReceivables = useMemo(
     () => arApCustomRows.filter((r) => r.section === "receivables"),
     [arApCustomRows]
   );
 
-  const customPayablesSum = useMemo(
-    () => arApCustomPayables.reduce((s, r) => s + Number(r.amount ?? 0), 0),
-    [arApCustomPayables]
-  );
+  const customPayablesSum = useMemo(() => arApCustomPayables.reduce((s, r) => s + Number(r.amount ?? 0), 0), [arApCustomPayables]);
   const customReceivablesSum = useMemo(
     () => arApCustomReceivables.reduce((s, r) => s + Number(r.amount ?? 0), 0),
     [arApCustomReceivables]
@@ -883,7 +864,10 @@ export default function DashboardPage() {
   }, [fromYear, fromMonth, toYear, toMonth]);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
+    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
+      <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
+
       <div className="mx-auto max-w-7xl px-5 py-8">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div className="flex items-center gap-4">
@@ -1069,10 +1053,7 @@ export default function DashboardPage() {
                       value={formatPKRCompact(receivablesAdjTotal - payablesAdjTotal)}
                       highlight={receivablesAdjTotal - payablesAdjTotal >= 0 ? "good" : "bad"}
                     />
-                    <KpiCard
-                      title="AR/AP Gap"
-                      value={formatPKRCompact(Math.abs(payablesAdjTotal - receivablesAdjTotal))}
-                    />
+                    <KpiCard title="AR/AP Gap" value={formatPKRCompact(Math.abs(payablesAdjTotal - receivablesAdjTotal))} />
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1107,157 +1088,171 @@ export default function DashboardPage() {
                           <LineChart data={monthlyArAp} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                             <CartesianGrid {...GRID} />
                             <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                            <YAxis
-                              tick={AXIS_TICK}
-                              axisLine={AXIS_LINE}
-                              tickLine={TICK_LINE}
-                              tickFormatter={fmtAxisPKR}
-                            />
+                            <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                             <Tooltip content={<MoneyTooltip />} />
                             <Legend />
-                            <Line type="monotone" dataKey="payables" name="Total Payables" stroke="#ef4444" strokeWidth={3} dot={false} />
-                            <Line type="monotone" dataKey="receivables" name="Total Receivables" stroke="#22c55e" strokeWidth={3} dot={false} />
+                            <Line
+                              type="monotone"
+                              dataKey="payables"
+                              name="Total Payables"
+                              stroke={CHART_COLORS.negative}
+                              strokeWidth={3}
+                              dot={false}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="receivables"
+                              name="Total Receivables"
+                              stroke={CHART_COLORS.profit}
+                              strokeWidth={3}
+                              dot={false}
+                            />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
                     </Panel>
-                  </div>  
-              <div className="flex justify-end mb-3">
-              <button
-              onClick={() => setShowManualAdjustments((p) => !p)}
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
-               >
-             {showManualAdjustments ? "Hide Manual Adjustments" : "Show Manual Adjustments"}
-             </button>
-             </div>
+                  </div>
+
+                  <div className="flex justify-end mb-3">
+                    <button
+                      onClick={() => setShowManualAdjustments((p) => !p)}
+                      className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
+                    >
+                      {showManualAdjustments ? "Hide Manual Adjustments" : "Show Manual Adjustments"}
+                    </button>
+                  </div>
 
                   {/* ✅ Manual Adjustments panel */}
                   <div className="mt-4">
-                  <div className="mt-2">
-                  <Collapse show={showManualAdjustments}>
-                  <Panel title={`Manual Adjustments (As of ${arAp.asOf})`}>
-                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                          <div className="text-sm font-semibold">Add Adjustment</div>
+                    <div className="mt-2">
+                      <Collapse show={showManualAdjustments}>
+                        <Panel title={`Manual Adjustments (As of ${arAp.asOf})`}>
+                          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                              <div className="text-sm font-semibold">Add Adjustment</div>
 
-                          <div className="mt-3 grid grid-cols-1 gap-3">
-                            <div>
-                              <label className="text-xs text-slate-300">Section</label>
-                              <select
-                                value={customSection}
-                                onChange={(e) => setCustomSection(e.target.value as any)}
-                                className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
-                              >
-                                <option value="receivables">Receivables</option>
-                                <option value="payables">Payables</option>
-                              </select>
-                            </div>
+                              <div className="mt-3 grid grid-cols-1 gap-3">
+                                <div>
+                                  <label className="text-xs text-slate-300">Section</label>
+                                  <select
+                                    value={customSection}
+                                    onChange={(e) => setCustomSection(e.target.value as any)}
+                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                                  >
+                                    <option value="receivables">Receivables</option>
+                                    <option value="payables">Payables</option>
+                                  </select>
+                                </div>
 
-                            <div>
-                              <label className="text-xs text-slate-300">Label</label>
-                              <input
-                                value={customLabel}
-                                onChange={(e) => setCustomLabel(e.target.value)}
-                                placeholder="e.g. Customer Deposit (Manual)"
-                                className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
-                              />
-                            </div>
+                                <div>
+                                  <label className="text-xs text-slate-300">Label</label>
+                                  <input
+                                    value={customLabel}
+                                    onChange={(e) => setCustomLabel(e.target.value)}
+                                    placeholder="e.g. Customer Deposit (Manual)"
+                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                                  />
+                                </div>
 
-                            <div>
-                              <label className="text-xs text-slate-300">Amount (PKR)</label>
-                              <input
-                                value={customAmount}
-                                onChange={(e) => setCustomAmount(e.target.value)}
-                                placeholder="e.g. 150000"
-                                className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
-                              />
-                              <div className="mt-1 text-[11px] text-slate-400">
-                                Tip: you can enter negative value if you want to reduce totals.
+                                <div>
+                                  <label className="text-xs text-slate-300">Amount (PKR)</label>
+                                  <input
+                                    value={customAmount}
+                                    onChange={(e) => setCustomAmount(e.target.value)}
+                                    placeholder="e.g. 150000"
+                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                                  />
+                                  <div className="mt-1 text-[11px] text-slate-400">
+                                    Tip: you can enter negative value if you want to reduce totals.
+                                  </div>
+                                </div>
+
+                                <button
+                                  onClick={() => addArApCustom(currentAsOfYmd)}
+                                  className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20"
+                                >
+                                  Add
+                                </button>
+
+                                {arApCustomErr ? (
+                                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+                                    {arApCustomErr}
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
 
-                            <button
-                              onClick={() => addArApCustom(currentAsOfYmd)}
-                              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20"
-                            >
-                              Add
-                            </button>
-
-                            {arApCustomErr ? (
-                              <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
-                                {arApCustomErr}
+                            <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-black/20 p-4">
+                              <div className="flex items-center justify-between">
+                                <div className="text-sm font-semibold">Saved Adjustments</div>
+                                <button
+                                  onClick={() => reloadArApCustom(currentAsOfYmd)}
+                                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
+                                  disabled={arApCustomLoading}
+                                >
+                                  {arApCustomLoading ? "Refreshing…" : "Refresh"}
+                                </button>
                               </div>
-                            ) : null}
-                          </div>
-                        </div>
 
-                        <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-black/20 p-4">
-                          <div className="flex items-center justify-between">
-                            <div className="text-sm font-semibold">Saved Adjustments</div>
-                            <button
-                              onClick={() => reloadArApCustom(currentAsOfYmd)}
-                              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
-                              disabled={arApCustomLoading}
-                            >
-                              {arApCustomLoading ? "Refreshing…" : "Refresh"}
-                            </button>
-                          </div>
-
-                          <div className="mt-3 overflow-x-auto">
-                            <table className="w-full text-sm">
-                              <thead className="text-left text-xs text-slate-300">
-                                <tr>
-                                  <th className="py-2 pr-3">Section</th>
-                                  <th className="py-2 pr-3">Label</th>
-                                  <th className="py-2 text-right">Amount</th>
-                                  <th className="py-2 text-right">Action</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {arApCustomLoading ? (
-                                  <tr>
-                                    <td colSpan={4} className="py-3 text-slate-300">Loading…</td>
-                                  </tr>
-                                ) : arApCustomRows.length ? (
-                                  arApCustomRows.map((r) => (
-                                    <tr key={r.id} className="border-t border-white/10">
-                                      <td className="py-2 pr-3 capitalize text-slate-200">{r.section}</td>
-                                      <td className="py-2 pr-3">{r.label}</td>
-                                      <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
-                                      <td className="py-2 text-right">
-                                        <button
-                                          onClick={() => deleteArApCustom(r.id, currentAsOfYmd)}
-                                          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-200 hover:bg-rose-500/15"
-                                        >
-                                          Delete
-                                        </button>
-                                      </td>
+                              <div className="mt-3 overflow-x-auto">
+                                <table className="w-full text-sm">
+                                  <thead className="text-left text-xs text-slate-300">
+                                    <tr>
+                                      <th className="py-2 pr-3">Section</th>
+                                      <th className="py-2 pr-3">Label</th>
+                                      <th className="py-2 text-right">Amount</th>
+                                      <th className="py-2 text-right">Action</th>
                                     </tr>
-                                  ))
-                                ) : (
-                                  <tr>
-                                    <td colSpan={4} className="py-3 text-slate-300">No manual adjustments for this As-Of date.</td>
-                                  </tr>
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
+                                  </thead>
+                                  <tbody>
+                                    {arApCustomLoading ? (
+                                      <tr>
+                                        <td colSpan={4} className="py-3 text-slate-300">
+                                          Loading…
+                                        </td>
+                                      </tr>
+                                    ) : arApCustomRows.length ? (
+                                      arApCustomRows.map((r) => (
+                                        <tr key={r.id} className="border-t border-white/10">
+                                          <td className="py-2 pr-3 capitalize text-slate-200">{r.section}</td>
+                                          <td className="py-2 pr-3">{r.label}</td>
+                                          <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
+                                          <td className="py-2 text-right">
+                                            <button
+                                              onClick={() => deleteArApCustom(r.id, currentAsOfYmd)}
+                                              className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-200 hover:bg-rose-500/15"
+                                            >
+                                              Delete
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))
+                                    ) : (
+                                      <tr>
+                                        <td colSpan={4} className="py-3 text-slate-300">
+                                          No manual adjustments for this As-Of date.
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
 
-                          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                            <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                              <div className="text-xs text-slate-300">Payables Adjustments</div>
-                              <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customPayablesSum)}</div>
-                            </div>
-                            <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                              <div className="text-xs text-slate-300">Receivables Adjustments</div>
-                              <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customReceivablesSum)}</div>
+                              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                                  <div className="text-xs text-slate-300">Payables Adjustments</div>
+                                  <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customPayablesSum)}</div>
+                                </div>
+                                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                                  <div className="text-xs text-slate-300">Receivables Adjustments</div>
+                                  <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customReceivablesSum)}</div>
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </div>
-                     </Panel>
-                   </Collapse>
-                  </div>
+                        </Panel>
+                      </Collapse>
+                    </div>
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1279,30 +1274,32 @@ export default function DashboardPage() {
 
                             <tr className="border-t border-white/10">
                               <td className="py-2 pr-3 text-slate-200 font-medium">With Holding Tax Payable Vendors</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.current.withHoldingTaxPayableVendors)}</td>
+                              <td className="py-2 text-right font-semibold">
+                                {formatPKRCompact(arAp.payables.current.withHoldingTaxPayableVendors)}
+                              </td>
                             </tr>
 
                             <tr className="border-t border-white/10">
                               <td className="py-2 pr-3 text-slate-200 font-medium">Vendor Bills</td>
                               <td className="py-2 text-right font-semibold">
                                 {formatPKRCompact(
-                                  Number(
-                                    (arAp.payables.current as any).vendorBills ??
-                                      arAp.payables.current.accountsPayable ??
-                                      0
-                                  )
+                                  Number((arAp.payables.current as any).vendorBills ?? arAp.payables.current.accountsPayable ?? 0)
                                 )}
                               </td>
                             </tr>
 
                             <tr className="border-t border-white/10">
                               <td className="py-2 pr-3 text-slate-200 font-medium">Sir Aatif Loan to Company</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.longTerm.sirAatifLoanToCompany)}</td>
+                              <td className="py-2 text-right font-semibold">
+                                {formatPKRCompact(arAp.payables.longTerm.sirAatifLoanToCompany)}
+                              </td>
                             </tr>
 
                             <tr className="border-t border-white/10">
                               <td className="py-2 pr-3 text-slate-200 font-medium">Payroll With Holding Tax Payable</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.longTerm.payrollWithHoldingTaxPayable)}</td>
+                              <td className="py-2 text-right font-semibold">
+                                {formatPKRCompact(arAp.payables.longTerm.payrollWithHoldingTaxPayable)}
+                              </td>
                             </tr>
 
                             {/* manual payables rows */}
@@ -1428,11 +1425,7 @@ export default function DashboardPage() {
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
               <KpiCard title="Total Income" value={formatPKRCompact(kpi.revenue)} />
               <KpiCard title="Total Expenses" value={formatPKRCompact(kpi.expenses)} />
-              <KpiCard
-                title="Net Profit (Loss)"
-                value={formatPKRCompact(kpi.profit)}
-                highlight={kpi.profit < 0 ? "bad" : "good"}
-              />
+              <KpiCard title="Net Profit (Loss)" value={formatPKRCompact(kpi.profit)} highlight={kpi.profit < 0 ? "bad" : "good"} />
               <KpiCard title="Months" value={`${series.length}`} />
             </div>
 
@@ -1528,8 +1521,8 @@ export default function DashboardPage() {
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip />} />
                       <Legend />
-                      <Bar dataKey="revenue" name="Income" fill="#22c55e" radius={[8, 8, 0, 0]} />
-                      <Bar dataKey="expenses" name="Expenses" fill="#ef4444" radius={[8, 8, 0, 0]} />
+                      <Bar dataKey="revenue" name="Income" fill={CHART_COLORS.profit} radius={[8, 8, 0, 0]} />
+                      <Bar dataKey="expenses" name="Expenses" fill={CHART_COLORS.negative} radius={[8, 8, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1544,7 +1537,7 @@ export default function DashboardPage() {
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip />} />
                       <Legend />
-                      <Line type="monotone" dataKey="profit" name="Net Profit" stroke="#34d399" strokeWidth={3} dot={false} />
+                      <Line type="monotone" dataKey="profit" name="Net Profit" stroke={CHART_COLORS.profit} strokeWidth={3} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -1685,7 +1678,11 @@ export default function DashboardPage() {
               <KpiCard title="Net Profit" value={formatPKRCompact(reProfit)} />
               <KpiCard title="Long-term Assets" value={formatPKRCompact(reLongTermAssets)} />
               <KpiCard title="Net Investments" value={formatPKRCompact(reNetInvestments)} />
-              <KpiCard title="Retained Earning" value={formatPKRCompact(reRetained)} highlight={reRetained < 0 ? "bad" : "good"} />
+              <KpiCard
+                title="Retained Earning"
+                value={formatPKRCompact(reRetained)}
+                highlight={reRetained < 0 ? "bad" : "good"}
+              />
             </div>
 
             <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1699,7 +1696,7 @@ export default function DashboardPage() {
                       <Tooltip content={<MoneyTooltip single />} />
                       <Bar dataKey="value" radius={[10, 10, 0, 0]}>
                         {investmentBarData.map((entry, i) => (
-                          <Cell key={`cell-${i}`} fill={entry.name === "Investments" ? "#ef4444" : "#22c55e"} />
+                          <Cell key={`cell-${i}`} fill={entry.name === "Investments" ? CHART_COLORS.negative : CHART_COLORS.profit} />
                         ))}
                       </Bar>
                     </BarChart>
@@ -1713,14 +1710,7 @@ export default function DashboardPage() {
                     <PieChart>
                       <Tooltip content={<MoneyTooltip pie />} />
                       <Legend />
-                      <Pie
-                        data={donutData.length ? donutData : retainedBreakdown}
-                        dataKey="value"
-                        nameKey="name"
-                        innerRadius={70}
-                        outerRadius={110}
-                        paddingAngle={2}
-                      >
+                      <Pie data={donutData.length ? donutData : retainedBreakdown} dataKey="value" nameKey="name" innerRadius={70} outerRadius={110} paddingAngle={2}>
                         {(donutData.length ? donutData : retainedBreakdown).map((_, i) => (
                           <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
                         ))}
@@ -1850,7 +1840,7 @@ export default function DashboardPage() {
                           <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip single />} />
-                          <Bar dataKey="value" radius={[10, 10, 0, 0]} fill="#60a5fa" />
+                          <Bar dataKey="value" radius={[10, 10, 0, 0]} fill={CHART_COLORS.positive} />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
@@ -1865,8 +1855,8 @@ export default function DashboardPage() {
                           <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip />} />
                           <Legend />
-                          <Line type="monotone" dataKey="revenue" name="Revenue" stroke="#22c55e" strokeWidth={3} dot={false} />
-                          <Line type="monotone" dataKey="opex" name="Opex" stroke="#ef4444" strokeWidth={3} dot={false} />
+                          <Line type="monotone" dataKey="revenue" name="Revenue" stroke={CHART_COLORS.profit} strokeWidth={3} dot={false} />
+                          <Line type="monotone" dataKey="opex" name="Opex" stroke={CHART_COLORS.negative} strokeWidth={3} dot={false} />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
@@ -1874,9 +1864,7 @@ export default function DashboardPage() {
                 </div>
               </>
             ) : (
-              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-slate-300">
-                No data available for the selected range.
-              </div>
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-slate-300">No data available for the selected range.</div>
             )}
           </>
         ) : null}
@@ -1884,13 +1872,8 @@ export default function DashboardPage() {
     </div>
   );
 }
-function Collapse({
-  show,
-  children,
-}: {
-  show: boolean;
-  children: React.ReactNode;
-}) {
+
+function Collapse({ show, children }: { show: boolean; children: React.ReactNode }) {
   return (
     <div
       className={[
@@ -1903,21 +1886,15 @@ function Collapse({
   );
 }
 
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       onClick={onClick}
       className={[
-        "rounded-xl border px-4 py-2 text-sm font-semibold transition",
-        active ? "border-emerald-400/30 bg-emerald-500/10" : "border-white/10 bg-white/5 hover:bg-white/10",
+        "rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200",
+        active
+          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
+          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
       ].join(" ")}
     >
       {children}
@@ -1941,8 +1918,10 @@ function TabLinkButton({
       href={href}
       onClick={() => onActivate?.()}
       className={[
-        "rounded-xl border px-4 py-2 text-sm font-semibold transition inline-flex items-center",
-        active ? "border-emerald-400/30 bg-emerald-500/10" : "border-white/10 bg-white/5 hover:bg-white/10",
+        "inline-flex items-center rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200",
+        active
+          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
+          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
       ].join(" ")}
     >
       {children}
@@ -1952,33 +1931,28 @@ function TabLinkButton({
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
+    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-sm">
       <div className="mb-3">
-        <div className="text-sm font-semibold">{title}</div>
+        <div className="text-sm font-semibold text-slate-100">{title}</div>
       </div>
       {children}
     </div>
   );
 }
 
-function KpiCard({
-  title,
-  value,
-  highlight,
-}: {
-  title: string;
-  value: string;
-  highlight?: "good" | "bad";
-}) {
+function KpiCard({ title, value, highlight }: { title: string; value: string; highlight?: "good" | "bad" }) {
   const ring =
+    highlight === "good" ? "border-emerald-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
+
+  const glow =
     highlight === "good"
-      ? "border-emerald-400/20"
+      ? "shadow-[0_16px_45px_rgba(16,185,129,0.2)]"
       : highlight === "bad"
-      ? "border-rose-400/20"
-      : "border-white/10";
+      ? "shadow-[0_16px_45px_rgba(244,63,94,0.18)]"
+      : "shadow-[0_20px_80px_rgba(0,0,0,0.35)]";
 
   return (
-    <div className={`rounded-2xl border ${ring} bg-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)]`}>
+    <div className={`rounded-2xl border ${ring} ${glow} bg-gradient-to-b from-white/10 to-white/5 p-4 backdrop-blur-sm`}>
       <div className="text-xs text-slate-300">{title}</div>
       <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
     </div>
@@ -1991,7 +1965,7 @@ function MoneyTooltip({ active, payload, label, pie, single }: any) {
   if (pie) {
     const p = payload[0];
     return (
-      <div className="rounded-xl border border-white/10 bg-black/80 px-3 py-2 text-xs text-slate-100">
+      <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
         <div className="font-semibold">{p?.name ?? ""}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
       </div>
@@ -2001,7 +1975,7 @@ function MoneyTooltip({ active, payload, label, pie, single }: any) {
   if (single) {
     const p = payload[0];
     return (
-      <div className="rounded-xl border border-white/10 bg-black/80 px-3 py-2 text-xs text-slate-100">
+      <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
         <div className="font-semibold">{label}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
       </div>
@@ -2009,7 +1983,7 @@ function MoneyTooltip({ active, payload, label, pie, single }: any) {
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-black/80 px-3 py-2 text-xs text-slate-100">
+    <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
       <div className="font-semibold">{label}</div>
       {payload.map((p: any) => (
         <div key={p.dataKey} className="flex items-center justify-between gap-4">
