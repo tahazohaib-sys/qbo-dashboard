@@ -241,6 +241,25 @@ type ArApResp = {
   error?: string;
 };
 
+/** ✅ Custom Field rows for AR/AP (as-of specific) */
+type ArApCustomRow = {
+  id: string;
+  module: string;
+  section: "payables" | "receivables";
+  as_of_date: string; // YYYY-MM-DD
+  label: string;
+  amount: number; // PKR
+  created_at: string;
+};
+
+type ArApCustomListResp =
+  | { ok: true; asOf: string; rows: ArApCustomRow[] }
+  | { ok: false; error: string };
+
+type ArApCustomCreateResp =
+  | { ok: true; row: ArApCustomRow }
+  | { ok: false; error: string };
+
 /* ---------------------- helpers ---------------------- */
 
 // Local YYYY-MM-DD (prevents UTC shifting)
@@ -409,7 +428,16 @@ export default function DashboardPage() {
   // ✅ AR/AP
   const [arApLoading, setArApLoading] = useState(false);
   const [arAp, setArAp] = useState<ArApResp | null>(null);
+  const [showManualAdjustments, setShowManualAdjustments] = useState(true);
   const [monthlyArAp, setMonthlyArAp] = useState<Array<{ month: string; payables: number; receivables: number }>>([]);
+
+  // ✅ AR/AP Custom Fields (As-Of specific)
+  const [arApCustomLoading, setArApCustomLoading] = useState(false);
+  const [arApCustomErr, setArApCustomErr] = useState("");
+  const [arApCustomRows, setArApCustomRows] = useState<ArApCustomRow[]>([]);
+  const [customSection, setCustomSection] = useState<"payables" | "receivables">("receivables");
+  const [customLabel, setCustomLabel] = useState("");
+  const [customAmount, setCustomAmount] = useState<string>("");
 
   const [err, setErr] = useState<string>("");
 
@@ -477,11 +505,79 @@ export default function DashboardPage() {
     return json;
   }
 
+  // ✅ Custom Fields fetch (as-of specific)
+  async function fetchArApCustom(asOfYmd: string): Promise<ArApCustomRow[]> {
+    const res = await fetch(`/api/custom-fields/ar-ap?asOf=${encodeURIComponent(asOfYmd)}`, { cache: "no-store" });
+    const json: ArApCustomListResp = await res.json();
+    if (!json || (json as any).ok !== true) throw new Error((json as any)?.error || "Custom fields API failed");
+    return (json as any).rows ?? [];
+  }
+
+  async function reloadArApCustom(asOfYmd: string) {
+    setArApCustomLoading(true);
+    setArApCustomErr("");
+    try {
+      const rows = await fetchArApCustom(asOfYmd);
+      setArApCustomRows(rows);
+    } catch (e: any) {
+      setArApCustomErr(e?.message ?? "Failed to load manual adjustments");
+      setArApCustomRows([]);
+    } finally {
+      setArApCustomLoading(false);
+    }
+  }
+
+  async function addArApCustom(asOfYmd: string) {
+    setArApCustomErr("");
+
+    const label = customLabel.trim();
+    if (!label) {
+      setArApCustomErr("Label is required.");
+      return;
+    }
+
+    const amt = Number(String(customAmount).replace(/,/g, "").trim());
+    if (!Number.isFinite(amt)) {
+      setArApCustomErr("Amount is invalid.");
+      return;
+    }
+
+    const res = await fetch(`/api/custom-fields/ar-ap`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        asOf: asOfYmd,
+        section: customSection,
+        label,
+        amount: Math.round(amt),
+      }),
+    });
+
+    const json: ArApCustomCreateResp = await res.json();
+    if (!json || (json as any).ok !== true) {
+      setArApCustomErr((json as any)?.error || "Failed to add manual adjustment.");
+      return;
+    }
+
+    setCustomLabel("");
+    setCustomAmount("");
+    await reloadArApCustom(asOfYmd);
+  }
+
+  async function deleteArApCustom(id: string, asOfYmd: string) {
+    setArApCustomErr("");
+    await fetch(`/api/custom-fields/ar-ap?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    await reloadArApCustom(asOfYmd);
+  }
+
   async function loadArApAndMonthly(endYmd: string) {
     setArApLoading(true);
     try {
       const one = await fetchArAp(endYmd);
       setArAp(one);
+
+      // load as-of manual rows for CURRENT asOf
+      reloadArApCustom(endYmd).catch(() => {});
 
       // IMPORTANT: build proper month-ends in local time (no UTC shift)
       const endDate = new Date(`${endYmd}T12:00:00`); // noon avoids DST/UTC edge
@@ -494,10 +590,27 @@ export default function DashboardPage() {
       // sequential fetch (safe & predictable)
       for (const d of dates) {
         const j = await fetchArAp(d);
+
+        // fetch custom rows for THAT month-end (A: as-of specific)
+        let customRows: ArApCustomRow[] = [];
+        try {
+          customRows = await fetchArApCustom(d);
+        } catch {
+          customRows = [];
+        }
+
+        const addPay = customRows
+          .filter((r) => r.section === "payables")
+          .reduce((s, r) => s + Number(r.amount ?? 0), 0);
+
+        const addRec = customRows
+          .filter((r) => r.section === "receivables")
+          .reduce((s, r) => s + Number(r.amount ?? 0), 0);
+
         rows.push({
           month: d.slice(0, 7),
-          payables: j.payables.totalPayables,
-          receivables: j.receivables.totalReceivables,
+          payables: j.payables.totalPayables + addPay,
+          receivables: j.receivables.totalReceivables + addRec,
         });
       }
 
@@ -505,6 +618,7 @@ export default function DashboardPage() {
     } catch {
       setArAp(null);
       setMonthlyArAp([]);
+      setArApCustomRows([]);
     } finally {
       setArApLoading(false);
     }
@@ -623,8 +737,6 @@ export default function DashboardPage() {
   const series = data?.series ?? [];
   const kpi = data?.kpis?.ytd ?? { revenue: 0, expenses: 0, profit: 0 };
 
-  const margin = useMemo(() => (kpi.revenue ? kpi.profit / kpi.revenue : 0), [kpi.profit, kpi.revenue]);
-
   const headerAsOf = useMemo(() => {
     if (!data?.asOf) return "";
     return new Date(data.asOf).toLocaleString();
@@ -712,20 +824,14 @@ export default function DashboardPage() {
   /* ---------------- forecast derived values (UI-safe) ---------------- */
 
   const fcOk = !!forecastData?.ok;
-  const fcMonthsUsed = forecastData?.meta?.monthsUsed ?? (data?.series?.length ?? 0);
 
   const fcAvgRevenue = forecastData?.averages?.avgMonthlyRevenue ?? 0;
   const fcAvgOpex = forecastData?.averages?.avgMonthlyOpex ?? 0;
-  const fcAvgProfit = forecastData?.averages?.avgMonthlyProfit ?? (fcAvgRevenue - fcAvgOpex);
 
   const fcRevMoM = forecastData?.trends?.revenueMoM ?? 0;
   const fcExpMoM = forecastData?.trends?.expensesMoM ?? 0;
 
-  const fcRevLabel = forecastData?.trends?.revenueTrendLabel ?? trendLabelFromMoM(fcRevMoM);
-  const fcExpLabel = forecastData?.trends?.expenseTrendLabel ?? trendLabelFromMoM(fcExpMoM);
-
   const fcBreakeven = forecastData?.benchmarks?.breakevenRevenue ?? fcAvgOpex;
-  const fcGap = fcAvgRevenue - fcBreakeven;
   const fcMeetsBE = fcAvgRevenue >= fcBreakeven;
 
   const benchmarkBars = useMemo(() => {
@@ -740,6 +846,38 @@ export default function DashboardPage() {
   }, [fcOk, fcAvgRevenue, fcBreakeven, forecastData?.benchmarks?.margin10, forecastData?.benchmarks?.margin20, forecastData?.benchmarks?.margin30]);
 
   const forecastRows = forecastData?.forecast ?? [];
+
+  // ✅ compute custom sums for CURRENT asOf (used in AR/AP UI totals)
+  const arApCustomPayables = useMemo(
+    () => arApCustomRows.filter((r) => r.section === "payables"),
+    [arApCustomRows]
+  );
+  const arApCustomReceivables = useMemo(
+    () => arApCustomRows.filter((r) => r.section === "receivables"),
+    [arApCustomRows]
+  );
+
+  const customPayablesSum = useMemo(
+    () => arApCustomPayables.reduce((s, r) => s + Number(r.amount ?? 0), 0),
+    [arApCustomPayables]
+  );
+  const customReceivablesSum = useMemo(
+    () => arApCustomReceivables.reduce((s, r) => s + Number(r.amount ?? 0), 0),
+    [arApCustomReceivables]
+  );
+
+  const payablesAdjTotal = (arAp?.payables?.totalPayables ?? 0) + customPayablesSum;
+  const receivablesAdjTotal = (arAp?.receivables?.totalReceivables ?? 0) + customReceivablesSum;
+
+  // endYmd for current selected period (used by add/delete)
+  const currentAsOfYmd = useMemo(() => {
+    const fromKey = fromYear * 100 + fromMonth;
+    const toKey = toYear * 100 + toMonth;
+    const ty = fromKey <= toKey ? toYear : fromYear;
+    const tm = fromKey <= toKey ? toMonth : fromMonth;
+    const endDate = new Date(ty, tm, 0);
+    return `${ty}-${String(tm).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")}`;
+  }, [fromYear, fromMonth, toYear, toMonth]);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
@@ -919,18 +1057,18 @@ export default function DashboardPage() {
                 <div className="py-3 text-slate-300">No AR/AP data.</div>
               ) : (
                 <>
-                  {/* ✅ KPIs: remove Current/Long-term. Show just Total Payables */}
+                  {/* ✅ KPIs: show totals + include manual adjustments */}
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                    <KpiCard title="Total Payables" value={formatPKRCompact(arAp.payables.totalPayables)} highlight="bad" />
-                    <KpiCard title="Total Receivables" value={formatPKRCompact(arAp.receivables.totalReceivables)} highlight="good" />
+                    <KpiCard title="Total Payables" value={formatPKRCompact(payablesAdjTotal)} highlight="bad" />
+                    <KpiCard title="Total Receivables" value={formatPKRCompact(receivablesAdjTotal)} highlight="good" />
                     <KpiCard
                       title="Net (Receivables - Payables)"
-                      value={formatPKRCompact(arAp.receivables.totalReceivables - arAp.payables.totalPayables)}
-                      highlight={arAp.receivables.totalReceivables - arAp.payables.totalPayables >= 0 ? "good" : "bad"}
+                      value={formatPKRCompact(receivablesAdjTotal - payablesAdjTotal)}
+                      highlight={receivablesAdjTotal - payablesAdjTotal >= 0 ? "good" : "bad"}
                     />
                     <KpiCard
                       title="AR/AP Gap"
-                      value={formatPKRCompact(Math.abs(arAp.payables.totalPayables - arAp.receivables.totalReceivables))}
+                      value={formatPKRCompact(Math.abs(payablesAdjTotal - receivablesAdjTotal))}
                     />
                   </div>
 
@@ -943,8 +1081,8 @@ export default function DashboardPage() {
                             <Legend />
                             <Pie
                               data={[
-                                { name: "Payables", value: arAp.payables.totalPayables },
-                                { name: "Receivables", value: arAp.receivables.totalReceivables },
+                                { name: "Payables", value: payablesAdjTotal },
+                                { name: "Receivables", value: receivablesAdjTotal },
                               ]}
                               dataKey="value"
                               nameKey="name"
@@ -980,6 +1118,143 @@ export default function DashboardPage() {
                         </ResponsiveContainer>
                       </div>
                     </Panel>
+                  </div>  
+              <div className="flex justify-end mb-3">
+              <button
+              onClick={() => setShowManualAdjustments((p) => !p)}
+              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
+               >
+             {showManualAdjustments ? "Hide Manual Adjustments" : "Show Manual Adjustments"}
+             </button>
+             </div>
+
+                  {/* ✅ Manual Adjustments panel */}
+                  <div className="mt-4">
+                  <div className="mt-2">
+                  <Collapse show={showManualAdjustments}>
+                  <Panel title={`Manual Adjustments (As of ${arAp.asOf})`}>
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                          <div className="text-sm font-semibold">Add Adjustment</div>
+
+                          <div className="mt-3 grid grid-cols-1 gap-3">
+                            <div>
+                              <label className="text-xs text-slate-300">Section</label>
+                              <select
+                                value={customSection}
+                                onChange={(e) => setCustomSection(e.target.value as any)}
+                                className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                              >
+                                <option value="receivables">Receivables</option>
+                                <option value="payables">Payables</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="text-xs text-slate-300">Label</label>
+                              <input
+                                value={customLabel}
+                                onChange={(e) => setCustomLabel(e.target.value)}
+                                placeholder="e.g. Customer Deposit (Manual)"
+                                className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-xs text-slate-300">Amount (PKR)</label>
+                              <input
+                                value={customAmount}
+                                onChange={(e) => setCustomAmount(e.target.value)}
+                                placeholder="e.g. 150000"
+                                className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                              />
+                              <div className="mt-1 text-[11px] text-slate-400">
+                                Tip: you can enter negative value if you want to reduce totals.
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={() => addArApCustom(currentAsOfYmd)}
+                              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20"
+                            >
+                              Add
+                            </button>
+
+                            {arApCustomErr ? (
+                              <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+                                {arApCustomErr}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-black/20 p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm font-semibold">Saved Adjustments</div>
+                            <button
+                              onClick={() => reloadArApCustom(currentAsOfYmd)}
+                              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
+                              disabled={arApCustomLoading}
+                            >
+                              {arApCustomLoading ? "Refreshing…" : "Refresh"}
+                            </button>
+                          </div>
+
+                          <div className="mt-3 overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead className="text-left text-xs text-slate-300">
+                                <tr>
+                                  <th className="py-2 pr-3">Section</th>
+                                  <th className="py-2 pr-3">Label</th>
+                                  <th className="py-2 text-right">Amount</th>
+                                  <th className="py-2 text-right">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {arApCustomLoading ? (
+                                  <tr>
+                                    <td colSpan={4} className="py-3 text-slate-300">Loading…</td>
+                                  </tr>
+                                ) : arApCustomRows.length ? (
+                                  arApCustomRows.map((r) => (
+                                    <tr key={r.id} className="border-t border-white/10">
+                                      <td className="py-2 pr-3 capitalize text-slate-200">{r.section}</td>
+                                      <td className="py-2 pr-3">{r.label}</td>
+                                      <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
+                                      <td className="py-2 text-right">
+                                        <button
+                                          onClick={() => deleteArApCustom(r.id, currentAsOfYmd)}
+                                          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-200 hover:bg-rose-500/15"
+                                        >
+                                          Delete
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))
+                                ) : (
+                                  <tr>
+                                    <td colSpan={4} className="py-3 text-slate-300">No manual adjustments for this As-Of date.</td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                              <div className="text-xs text-slate-300">Payables Adjustments</div>
+                              <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customPayablesSum)}</div>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                              <div className="text-xs text-slate-300">Receivables Adjustments</div>
+                              <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customReceivablesSum)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                     </Panel>
+                   </Collapse>
+                  </div>
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1027,9 +1302,21 @@ export default function DashboardPage() {
                               <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.longTerm.payrollWithHoldingTaxPayable)}</td>
                             </tr>
 
+                            {/* manual payables rows */}
+                            {arApCustomPayables.length ? (
+                              <>
+                                {arApCustomPayables.map((r) => (
+                                  <tr key={r.id} className="border-t border-white/10">
+                                    <td className="py-2 pr-3 text-slate-200">{r.label}</td>
+                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
+                                  </tr>
+                                ))}
+                              </>
+                            ) : null}
+
                             <tr className="border-t-2 border-white/15 bg-rose-500/10">
                               <td className="py-2 pr-3 font-semibold text-slate-100">Total Payables</td>
-                              <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(arAp.payables.totalPayables)}</td>
+                              <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(payablesAdjTotal)}</td>
                             </tr>
                           </tbody>
                         </table>
@@ -1056,9 +1343,21 @@ export default function DashboardPage() {
                               <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.receivables.taxWithheld)}</td>
                             </tr>
 
+                            {/* manual receivables rows */}
+                            {arApCustomReceivables.length ? (
+                              <>
+                                {arApCustomReceivables.map((r) => (
+                                  <tr key={r.id} className="border-t border-white/10">
+                                    <td className="py-2 pr-3 text-slate-200">{r.label}</td>
+                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
+                                  </tr>
+                                ))}
+                              </>
+                            ) : null}
+
                             <tr className="border-t-2 border-white/15 bg-emerald-500/10">
                               <td className="py-2 pr-3 font-semibold text-slate-100">Total Receivables</td>
-                              <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(arAp.receivables.totalReceivables)}</td>
+                              <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(receivablesAdjTotal)}</td>
                             </tr>
                           </tbody>
                         </table>
@@ -1579,6 +1878,24 @@ export default function DashboardPage() {
           </>
         ) : null}
       </div>
+    </div>
+  );
+}
+function Collapse({
+  show,
+  children,
+}: {
+  show: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={[
+        "grid transition-[grid-template-rows,opacity] duration-300 ease-in-out",
+        show ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+      ].join(" ")}
+    >
+      <div className="overflow-hidden">{children}</div>
     </div>
   );
 }
