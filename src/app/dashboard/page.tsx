@@ -353,17 +353,17 @@ function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurr
 
 /* ------------ chart axis/ticks: clearer visibility ------------ */
 
-const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
-const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
-const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
-const GRID = { strokeDasharray: "3 3", opacity: 0.22 } as const;
+const AXIS_TICK = { fill: "#f1f5f9", fontSize: 12, fontWeight: 600 } as const;
+const AXIS_LINE = { stroke: "rgba(244,114,182,0.45)" } as const;
+const TICK_LINE = { stroke: "rgba(244,114,182,0.3)" } as const;
+const GRID = { strokeDasharray: "3 3", stroke: "rgba(148,163,184,0.25)", opacity: 0.24 } as const;
 
 const CHART_COLORS = {
-  positive: "#22d3ee",
-  positiveSoft: "#67e8f9",
+  positive: "#a855f7",
+  positiveSoft: "#c084fc",
   caution: "#f59e0b",
-  negative: "#f87171",
-  profit: "#34d399",
+  negative: "#fb7185",
+  profit: "#22d3ee",
 } as const;
 
 function trendLabelFromMoM(mom: number): "Increasing" | "Decreasing" | "Stable" {
@@ -864,9 +864,9 @@ export default function DashboardPage() {
   }, [fromYear, fromMonth, toYear, toMonth]);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
-      <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
-      <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
+    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_12%_8%,rgba(236,72,153,0.18),transparent_56%),radial-gradient(1000px_700px_at_88%_15%,rgba(168,85,247,0.15),transparent_55%),radial-gradient(1000px_700px_at_72%_88%,rgba(34,211,238,0.12),transparent_52%),linear-gradient(180deg,#070617_0%,#120b2c_42%,#090817_100%)] text-slate-100">
+      <div className="pointer-events-none absolute -top-20 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-fuchsia-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-violet-400/20 blur-3xl" />
 
       <div className="mx-auto max-w-7xl px-5 py-8">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
@@ -881,7 +881,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
+            <div className="premium-surface rounded-xl px-3 py-2 text-xs text-slate-200">
               <div className="font-medium text-slate-200">
                 Company: {data?.companyName ?? "—"} ({data?.currency ?? "PKR"})
               </div>
@@ -890,7 +890,7 @@ export default function DashboardPage() {
 
             <button
               onClick={fetchAll}
-              className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 active:scale-[0.99]"
+              className="premium-surface rounded-xl px-4 py-2 text-sm font-semibold text-slate-100 hover:brightness-110 active:scale-[0.99]"
               disabled={loading}
             >
               {loading ? "Refreshing..." : "Refresh"}
@@ -930,7 +930,7 @@ export default function DashboardPage() {
                 <select
                   value={fromYear}
                   onChange={(e) => setFromYear(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="premium-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
                 >
                   {years.map((y) => (
                     <option key={y} value={y}>
@@ -945,7 +945,7 @@ export default function DashboardPage() {
                 <select
                   value={fromMonth}
                   onChange={(e) => setFromMonth(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="premium-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
                 >
                   {MONTHS.map((m) => (
                     <option key={m.v} value={m.v}>
@@ -960,7 +960,7 @@ export default function DashboardPage() {
                 <select
                   value={toYear}
                   onChange={(e) => setToYear(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="premium-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
                 >
                   {years.map((y) => (
                     <option key={y} value={y}>
@@ -975,7 +975,7 @@ export default function DashboardPage() {
                 <select
                   value={toMonth}
                   onChange={(e) => setToMonth(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="premium-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
                 >
                   {MONTHS.map((m) => (
                     <option key={m.v} value={m.v}>
@@ -990,7 +990,7 @@ export default function DashboardPage() {
                 <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value as any)}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="premium-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
                 >
                   <option value="Accrual">Accrual</option>
                   <option value="Cash">Cash</option>
@@ -1000,7 +1000,7 @@ export default function DashboardPage() {
 
             <button
               onClick={fetchAll}
-              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
+              className="premium-surface rounded-xl px-4 py-2 text-sm font-semibold text-cyan-100 hover:brightness-110 active:scale-[0.99]"
               disabled={loading}
             >
               Apply
@@ -1026,7 +1026,7 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => setTab("pnl")}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold hover:bg-white/10"
+                className="premium-surface rounded-xl px-4 py-2 text-sm font-semibold text-slate-100 hover:brightness-110"
               >
                 Back
               </button>
@@ -1116,7 +1116,7 @@ export default function DashboardPage() {
                   <div className="flex justify-end mb-3">
                     <button
                       onClick={() => setShowManualAdjustments((p) => !p)}
-                      className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
+                      className="premium-surface rounded-xl px-3 py-2 text-xs text-slate-100 hover:brightness-110"
                     >
                       {showManualAdjustments ? "Hide Manual Adjustments" : "Show Manual Adjustments"}
                     </button>
@@ -1137,7 +1137,7 @@ export default function DashboardPage() {
                                   <select
                                     value={customSection}
                                     onChange={(e) => setCustomSection(e.target.value as any)}
-                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                                    className="premium-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
                                   >
                                     <option value="receivables">Receivables</option>
                                     <option value="payables">Payables</option>
@@ -1150,7 +1150,7 @@ export default function DashboardPage() {
                                     value={customLabel}
                                     onChange={(e) => setCustomLabel(e.target.value)}
                                     placeholder="e.g. Customer Deposit (Manual)"
-                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                                    className="premium-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
                                   />
                                 </div>
 
@@ -1160,7 +1160,7 @@ export default function DashboardPage() {
                                     value={customAmount}
                                     onChange={(e) => setCustomAmount(e.target.value)}
                                     placeholder="e.g. 150000"
-                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                                    className="premium-input mt-1 w-full rounded-xl px-3 py-2 text-sm"
                                   />
                                   <div className="mt-1 text-[11px] text-slate-400">
                                     Tip: you can enter negative value if you want to reduce totals.
@@ -1187,7 +1187,7 @@ export default function DashboardPage() {
                                 <div className="text-sm font-semibold">Saved Adjustments</div>
                                 <button
                                   onClick={() => reloadArApCustom(currentAsOfYmd)}
-                                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
+                                  className="premium-surface rounded-xl px-3 py-2 text-xs text-slate-100 hover:brightness-110"
                                   disabled={arApCustomLoading}
                                 >
                                   {arApCustomLoading ? "Refreshing…" : "Refresh"}
@@ -1195,7 +1195,7 @@ export default function DashboardPage() {
                               </div>
 
                               <div className="mt-3 overflow-x-auto">
-                                <table className="w-full text-sm">
+                                <table className="premium-table w-full text-sm">
                                   <thead className="text-left text-xs text-slate-300">
                                     <tr>
                                       <th className="py-2 pr-3">Section</th>
@@ -1259,7 +1259,7 @@ export default function DashboardPage() {
                     {/* ✅ Payables Detail without Current/Long-term sections */}
                     <Panel title="Payables Detail">
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="premium-table w-full text-sm">
                           <thead className="text-left text-xs text-slate-300">
                             <tr>
                               <th className="py-2 pr-3">Category</th>
@@ -1325,7 +1325,7 @@ export default function DashboardPage() {
 
                     <Panel title="Receivables Detail">
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="premium-table w-full text-sm">
                           <thead className="text-left text-xs text-slate-300">
                             <tr>
                               <th className="py-2 pr-3">Category</th>
@@ -1369,7 +1369,7 @@ export default function DashboardPage() {
                     {/* ✅ Rename title exactly as requested */}
                     <Panel title="Vendor Payables Breakdown">
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="premium-table w-full text-sm">
                           <thead className="text-left text-xs text-slate-300">
                             <tr>
                               <th className="py-2 pr-3">Vendor</th>
@@ -1569,7 +1569,7 @@ export default function DashboardPage() {
           <>
             <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
               {currencyTotals.map((x) => (
-                <div key={x.currency} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div key={x.currency} className="premium-surface rounded-2xl p-4">
                   <div className="text-xs text-slate-300">{x.currency} Total</div>
                   <div className="mt-2 text-xl font-semibold">{formatMoneyByCurrency(x.currency, x.total)}</div>
                 </div>
@@ -1624,7 +1624,7 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="mt-3 overflow-x-auto">
-                    <table className="w-full text-sm">
+                    <table className="premium-table w-full text-sm">
                       <thead className="text-left text-xs text-slate-300">
                         <tr>
                           <th className="py-2 pr-3">Date</th>
@@ -1727,7 +1727,7 @@ export default function DashboardPage() {
                   <div className="py-3 text-slate-300">Loading…</div>
                 ) : invDetail.length ? (
                   <div className="mt-2 overflow-x-auto">
-                    <table className="w-full text-sm">
+                    <table className="premium-table w-full text-sm">
                       <thead className="text-left text-xs text-slate-300">
                         <tr>
                           <th className="py-2 pr-3">Account</th>
@@ -1760,7 +1760,7 @@ export default function DashboardPage() {
                   <div className="py-3 text-slate-300">Loading…</div>
                 ) : ltDetail.length ? (
                   <div className="mt-2 overflow-x-auto">
-                    <table className="w-full text-sm">
+                    <table className="premium-table w-full text-sm">
                       <thead className="text-left text-xs text-slate-300">
                         <tr>
                           <th className="py-2 pr-3">Account</th>
@@ -1891,10 +1891,10 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       onClick={onClick}
       className={[
-        "rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200",
+        "rounded-xl px-4 py-2 text-sm font-semibold transition duration-200",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "premium-surface border-fuchsia-300/45 text-fuchsia-100 shadow-[0_10px_30px_rgba(236,72,153,0.35)]"
+          : "premium-surface text-slate-200 hover:brightness-110",
       ].join(" ")}
     >
       {children}
@@ -1918,10 +1918,10 @@ function TabLinkButton({
       href={href}
       onClick={() => onActivate?.()}
       className={[
-        "inline-flex items-center rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200",
+        "inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold transition duration-200",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "premium-surface border-fuchsia-300/45 text-fuchsia-100 shadow-[0_10px_30px_rgba(236,72,153,0.35)]"
+          : "premium-surface text-slate-200 hover:brightness-110",
       ].join(" ")}
     >
       {children}
@@ -1931,7 +1931,7 @@ function TabLinkButton({
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-sm">
+    <div className="premium-surface rounded-2xl p-4">
       <div className="mb-3">
         <div className="text-sm font-semibold text-slate-100">{title}</div>
       </div>
@@ -1952,9 +1952,9 @@ function KpiCard({ title, value, highlight }: { title: string; value: string; hi
       : "shadow-[0_20px_80px_rgba(0,0,0,0.35)]";
 
   return (
-    <div className={`rounded-2xl border ${ring} ${glow} bg-gradient-to-b from-white/10 to-white/5 p-4 backdrop-blur-sm`}>
+    <div className={`premium-surface rounded-2xl border ${ring} ${glow} p-4`}>
       <div className="text-xs text-slate-300">{title}</div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
+      <div className="mt-2 bg-gradient-to-r from-fuchsia-100 via-violet-100 to-cyan-100 bg-clip-text text-2xl font-semibold tracking-tight text-transparent">{value}</div>
     </div>
   );
 }
@@ -1965,7 +1965,7 @@ function MoneyTooltip({ active, payload, label, pie, single }: any) {
   if (pie) {
     const p = payload[0];
     return (
-      <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+      <div className="premium-surface rounded-xl px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)]">
         <div className="font-semibold">{p?.name ?? ""}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
       </div>
@@ -1975,7 +1975,7 @@ function MoneyTooltip({ active, payload, label, pie, single }: any) {
   if (single) {
     const p = payload[0];
     return (
-      <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+      <div className="premium-surface rounded-xl px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)]">
         <div className="font-semibold">{label}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
       </div>
@@ -1983,7 +1983,7 @@ function MoneyTooltip({ active, payload, label, pie, single }: any) {
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+    <div className="premium-surface rounded-xl px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)]">
       <div className="font-semibold">{label}</div>
       {payload.map((p: any) => (
         <div key={p.dataKey} className="flex items-center justify-between gap-4">
