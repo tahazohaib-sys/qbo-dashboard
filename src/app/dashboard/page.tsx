@@ -571,58 +571,61 @@ export default function DashboardPage() {
   }
 
   async function loadArApAndMonthly(endYmd: string) {
-    setArApLoading(true);
-    try {
-      const one = await fetchArAp(endYmd);
-      setArAp(one);
+  setArApLoading(true);
+  try {
+    // ✅ ONE call only (backend returns monthlySeries)
+    const res = await fetch(
+      `/api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=6`,
+      { cache: "no-store" }
+    );
+    const one: any = await res.json();
+    if (!one?.ok) throw new Error(one?.error || "AR/AP API failed");
 
-      // load as-of manual rows for CURRENT asOf
-      reloadArApCustom(endYmd).catch(() => {});
+    setArAp(one);
 
-      // IMPORTANT: build proper month-ends in local time (no UTC shift)
-      const endDate = new Date(`${endYmd}T12:00:00`); // noon avoids DST/UTC edge
-      const endY = endDate.getFullYear();
-      const endM = endDate.getMonth() + 1;
+    // ---------- Build monthly rows (from backend series) ----------
+    const series: Array<{ asOf: string; month: string; payables: number; receivables: number }> =
+      (one.monthlySeries ?? []).map((r: any) => ({
+        asOf: r.asOf ?? `${r.month}-01`,
+        month: r.month,
+        payables: Number(r.payables ?? 0),
+        receivables: Number(r.receivables ?? 0),
+      }));
 
-      const dates = monthEndDatesFrom(endY, endM, 6);
+    // ---------- Overlay custom rows for each month-end ----------
+    const finalRows: Array<{ month: string; payables: number; receivables: number }> = [];
 
-      const rows: Array<{ month: string; payables: number; receivables: number }> = [];
-      // sequential fetch (safe & predictable)
-      for (const d of dates) {
-        const j = await fetchArAp(d);
-
-        // fetch custom rows for THAT month-end (A: as-of specific)
-        let customRows: ArApCustomRow[] = [];
-        try {
-          customRows = await fetchArApCustom(d);
-        } catch {
-          customRows = [];
-        }
-
-        const addPay = customRows
-          .filter((r) => r.section === "payables")
-          .reduce((s, r) => s + Number(r.amount ?? 0), 0);
-
-        const addRec = customRows
-          .filter((r) => r.section === "receivables")
-          .reduce((s, r) => s + Number(r.amount ?? 0), 0);
-
-        rows.push({
-          month: d.slice(0, 7),
-          payables: j.payables.totalPayables + addPay,
-          receivables: j.receivables.totalReceivables + addRec,
-        });
+    for (const s of series) {
+      let customRows: ArApCustomRow[] = [];
+      try {
+        customRows = await fetchArApCustom(s.asOf);
+      } catch {
+        customRows = [];
       }
 
-      setMonthlyArAp(rows);
-    } catch {
-      setArAp(null);
-      setMonthlyArAp([]);
-      setArApCustomRows([]);
-    } finally {
-      setArApLoading(false);
+      const addPay = customRows
+        .filter((r) => r.section === "payables")
+        .reduce((sum, r) => sum + Number((r as any).amount ?? 0), 0);
+
+      const addRec = customRows
+        .filter((r) => r.section === "receivables")
+        .reduce((sum, r) => sum + Number((r as any).amount ?? 0), 0);
+
+      finalRows.push({
+        month: s.month,
+        payables: s.payables + addPay,
+        receivables: s.receivables + addRec,
+      });
     }
+
+    setMonthlyArAp(finalRows);
+  } catch {
+    setArAp(null);
+    setMonthlyArAp([]);
+  } finally {
+    setArApLoading(false);
   }
+}
 
   async function fetchAll() {
     setLoading(true);

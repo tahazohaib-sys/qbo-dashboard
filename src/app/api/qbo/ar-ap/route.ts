@@ -25,6 +25,30 @@ function parseYMD(s: string): Date | null {
   return new Date(Date.UTC(y, m - 1, d));
 }
 
+function formatUTCYMD(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function monthEndDatesUTC(endYmd: string, months: number): string[] {
+  const end = parseYMD(endYmd);
+  if (!end) return [endYmd];
+
+  const y = end.getUTCFullYear();
+  const m = end.getUTCMonth() + 1; // 1..12 from asOf month
+  const out: string[] = [];
+
+  // Generate month-ends ending at (y,m)
+  for (let i = months - 1; i >= 0; i--) {
+    // month-end of (m - i)
+    const d = new Date(Date.UTC(y, (m - i), 0)); // day 0 => last day of previous month => month-end
+    out.push(formatUTCYMD(d));
+  }
+  return out;
+}
+
 function daysDiffUTC(asOf: string, base: string): number {
   const a = parseYMD(asOf);
   const b = parseYMD(base);
@@ -64,15 +88,45 @@ function pickAccount(bs: any, accountName: string): number {
 }
 
 /**
+ * ---------- LIGHT IN-MEMORY CACHE (reduces repeated QBO hits) ----------
+ * Good enough for dev/prod single instance. If you scale, move to Supabase snapshots later.
+ */
+type CacheItem = { exp: number; value: any };
+const CACHE = new Map<string, CacheItem>();
+const TTL_MS = 2 * 60 * 1000; // 2 minutes
+
+function cacheGet<T>(key: string): T | null {
+  const it = CACHE.get(key);
+  if (!it) return null;
+  if (Date.now() > it.exp) {
+    CACHE.delete(key);
+    return null;
+  }
+  return it.value as T;
+}
+function cacheSet(key: string, value: any, ttl = TTL_MS) {
+  CACHE.set(key, { exp: Date.now() + ttl, value });
+}
+
+/**
  * ---------- FETCHERS ----------
  */
 async function fetchBalanceSheet(asOf: string) {
-  // qboFetch likely already adds base URL + minorversion
-  return qboFetch(`reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}`);
+  const key = `bs:${asOf}`;
+  const hit = cacheGet<any>(key);
+  if (hit) return hit;
+  const v = await qboFetch(`reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}`);
+  cacheSet(key, v);
+  return v;
 }
 
 async function fetchAPAgingSummary(asOf: string) {
-  return qboFetch(`reports/APAgingSummary?report_date=${encodeURIComponent(asOf)}`);
+  const key = `apaging:${asOf}`;
+  const hit = cacheGet<any>(key);
+  if (hit) return hit;
+  const v = await qboFetch(`reports/APAgingSummary?report_date=${encodeURIComponent(asOf)}`);
+  cacheSet(key, v);
+  return v;
 }
 
 /**
@@ -90,7 +144,6 @@ function parseAPAgingReport(json: any) {
     const name = (c[0]?.value ?? "").trim();
     if (!name) continue;
 
-    // Some QBO reports have "Total" rows
     if (name.toUpperCase() === "TOTAL") {
       totalAP = moneyInt(c[c.length - 1]?.value);
       continue;
@@ -122,8 +175,6 @@ function parseAPAgingReport(json: any) {
 
 /**
  * ---------- AP AGING FALLBACK (OPEN BILLS) ----------
- * This fallback returns OPEN balances (current outstanding), not historical,
- * but we keep it for cases where report fails.
  */
 async function queryOpenBills() {
   const all: any[] = [];
@@ -187,9 +238,9 @@ function buildAPAgingFromBills(asOf: string, bills: any[]) {
  * ---------- TRUE MONTH-END VENDOR BILLS (RECONSTRUCT) ----------
  * Vendor Bills as-of date:
  *   sum(Bill.TotalAmt up to asOf) - sum(BillPayment.TotalAmt up to asOf)
+ * NOTE: This is accurate but expensive. We will use it ONLY for the main asOf.
  */
 async function sumBillsTotalAmtUpto(asOf: string): Promise<number> {
-  // QBO Query supports date literals: 'YYYY-MM-DD'
   const q = `SELECT TotalAmt FROM Bill WHERE TxnDate <= '${asOf}'`;
   let start = 1;
   const size = 1000;
@@ -234,12 +285,159 @@ async function sumBillPaymentsTotalAmtUpto(asOf: string): Promise<number> {
 }
 
 async function computeVendorBillsAsOf(asOf: string): Promise<number> {
+  const cacheKey = `vendorBills:${asOf}`;
+  const hit = cacheGet<number>(cacheKey);
+  if (typeof hit === "number") return hit;
+
   const [bills, payments] = await Promise.all([
     sumBillsTotalAmtUpto(asOf),
     sumBillPaymentsTotalAmtUpto(asOf),
   ]);
   const outstanding = bills - payments;
-  return outstanding > 0 ? outstanding : 0;
+  const v = outstanding > 0 ? outstanding : 0;
+
+  cacheSet(cacheKey, v, 5 * 60 * 1000); // 5 min
+  return v;
+}
+
+/**
+ * ---------- CORE COMPUTATION ----------
+ */
+type Computed = {
+  asOf: string;
+  payrollPayable: number;
+  whtVendors: number;
+  accountsPayable: number; // in detailed view this is vendorBills (reconstructed)
+  vendorBills: number;     // reconstructed
+  sirAatifLoanToCompany: number;
+  payrollWithHoldingTaxPayable: number;
+
+  totalPayables: number;
+  loanAgainstSalary: number;
+  taxWithheld: number;
+  totalReceivables: number;
+};
+
+async function computeDetailedAsOf(asOf: string): Promise<{
+  computed: Computed;
+  apAging: { totalAP: number; vendors: any[]; source: string };
+}> {
+  // ===== BALANCE SHEET ACCOUNTS =====
+  const PAYROLL_PAYABLE = "Payroll Payable";
+  const WHT_VENDOR = "With Holding Tax Payable Vendors";
+
+  const AATIF_LOAN = "Sir Aatif Loan to Company";
+  const PAYROLL_WHT = "Payroll With Holding Tax Payable";
+
+  const LOAN_SALARY = "Loan Against Salary";
+  const TAX_WITHHELD = "Tax Withheld";
+
+  const bs = await fetchBalanceSheet(asOf);
+
+  const payrollPayable = pickAccount(bs, PAYROLL_PAYABLE);
+  const whtVendors = pickAccount(bs, WHT_VENDOR);
+
+  // Accurate month-end vendor bills (expensive)
+  const vendorBills = await computeVendorBillsAsOf(asOf);
+  const accountsPayable = vendorBills;
+
+  const sirAatifLoanToCompany = pickAccount(bs, AATIF_LOAN);
+  const payrollWithHoldingTaxPayable = pickAccount(bs, PAYROLL_WHT);
+
+  const totalPayables =
+    payrollPayable +
+    whtVendors +
+    accountsPayable +
+    sirAatifLoanToCompany +
+    payrollWithHoldingTaxPayable;
+
+  const loanAgainstSalary = pickAccount(bs, LOAN_SALARY);
+  const taxWithheld = pickAccount(bs, TAX_WITHHELD);
+  const totalReceivables = loanAgainstSalary + taxWithheld;
+
+  // AP Aging (as-of)
+  let apAging;
+  try {
+    const aging = await fetchAPAgingSummary(asOf);
+    apAging = parseAPAgingReport(aging);
+  } catch {
+    const bills = await queryOpenBills();
+    apAging = buildAPAgingFromBills(asOf, bills);
+  }
+
+  return {
+    computed: {
+      asOf,
+      payrollPayable,
+      whtVendors,
+      accountsPayable,
+      vendorBills,
+      sirAatifLoanToCompany,
+      payrollWithHoldingTaxPayable,
+      totalPayables,
+      loanAgainstSalary,
+      taxWithheld,
+      totalReceivables,
+    },
+    apAging,
+  };
+}
+
+/**
+ * FAST monthly totals for chart:
+ * Use BalanceSheet "Accounts Payable (A/P)" as proxy for vendor bills month-end
+ * (avoids scanning all bills/payments).
+ */
+async function computeFastTotals(asOf: string): Promise<{ asOf: string; totalPayables: number; totalReceivables: number }> {
+  const PAYROLL_PAYABLE = "Payroll Payable";
+  const WHT_VENDOR = "With Holding Tax Payable Vendors";
+  const AP = "Accounts Payable (A/P)"; // fast month-end A/P from BalanceSheet
+
+  const AATIF_LOAN = "Sir Aatif Loan to Company";
+  const PAYROLL_WHT = "Payroll With Holding Tax Payable";
+
+  const LOAN_SALARY = "Loan Against Salary";
+  const TAX_WITHHELD = "Tax Withheld";
+
+  const bs = await fetchBalanceSheet(asOf);
+
+  const payrollPayable = pickAccount(bs, PAYROLL_PAYABLE);
+  const whtVendors = pickAccount(bs, WHT_VENDOR);
+  const accountsPayable = pickAccount(bs, AP);
+
+  const sirAatifLoanToCompany = pickAccount(bs, AATIF_LOAN);
+  const payrollWithHoldingTaxPayable = pickAccount(bs, PAYROLL_WHT);
+
+  const totalPayables =
+    payrollPayable +
+    whtVendors +
+    accountsPayable +
+    sirAatifLoanToCompany +
+    payrollWithHoldingTaxPayable;
+
+  const loanAgainstSalary = pickAccount(bs, LOAN_SALARY);
+  const taxWithheld = pickAccount(bs, TAX_WITHHELD);
+  const totalReceivables = loanAgainstSalary + taxWithheld;
+
+  return { asOf, totalPayables, totalReceivables };
+}
+
+/**
+ * small concurrency runner
+ */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  let idx = 0;
+
+  const workers = Array.from({ length: Math.max(1, limit) }, async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      out[i] = await fn(items[i]);
+    }
+  });
+
+  await Promise.all(workers);
+  return out;
 }
 
 /**
@@ -248,56 +446,34 @@ async function computeVendorBillsAsOf(asOf: string): Promise<number> {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
+
     const asOf = searchParams.get("asOf") ?? new Date().toISOString().slice(0, 10);
 
-    // ===== BALANCE SHEET ACCOUNTS =====
-    // Current Payables
-    const PAYROLL_PAYABLE = "Payroll Payable";
-    const WHT_VENDOR = "With Holding Tax Payable Vendors";
-    const AP = "Accounts Payable (A/P)"; // we'll still read this name from QBO
+    // months=6 will return monthlySeries for chart in the SAME response
+    const monthsRaw = searchParams.get("months");
+    const months = Math.max(1, Math.min(24, Number(monthsRaw ?? "1") || 1)); // 1..24
 
-    // Long Term Payables
-    const AATIF_LOAN = "Sir Aatif Loan to Company";
-    const PAYROLL_WHT = "Payroll With Holding Tax Payable";
+    // 1) Detailed current asOf (accurate)
+    const { computed, apAging } = await computeDetailedAsOf(asOf);
 
-    // Receivables
-    const LOAN_SALARY = "Loan Against Salary";
-    const TAX_WITHHELD = "Tax Withheld";
+    // 2) Optional monthly series (FAST totals)
+    let monthlySeries: Array<{ month: string; asOf: string; payables: number; receivables: number }> | undefined;
 
-    const bs = await fetchBalanceSheet(asOf);
+    if (months > 1) {
+      const dates = monthEndDatesUTC(asOf, months);
 
-    // ---- Current Payables (Balance Sheet)
-    const payrollPayable = pickAccount(bs, PAYROLL_PAYABLE);
-    const whtVendors = pickAccount(bs, WHT_VENDOR);
+      // Concurrency 2 to avoid QBO throttling
+      const series = await mapLimit(dates, 2, async (d) => {
+        const t = await computeFastTotals(d);
+        return {
+          month: d.slice(0, 7),
+          asOf: d,
+          payables: t.totalPayables,
+          receivables: t.totalReceivables,
+        };
+      });
 
-    // ✅ Vendor Bills: reconstructed month-end payable (true growth)
-    const vendorBills = await computeVendorBillsAsOf(asOf);
-
-    // We still keep accountsPayable field for backward compatibility, but it will now reflect vendor bills.
-    const accountsPayable = vendorBills;
-
-    const totalCurrentPayables = payrollPayable + whtVendors + accountsPayable;
-
-    // ---- Long Term Payables (Balance Sheet)
-    const sirAatifLoanToCompany = pickAccount(bs, AATIF_LOAN);
-    const payrollWithHoldingTaxPayable = pickAccount(bs, PAYROLL_WHT);
-    const totalLongTermPayables = sirAatifLoanToCompany + payrollWithHoldingTaxPayable;
-
-    const totalPayables = totalCurrentPayables + totalLongTermPayables;
-
-    // ---- Receivables (Balance Sheet as-of)
-    const loanAgainstSalary = pickAccount(bs, LOAN_SALARY);
-    const taxWithheld = pickAccount(bs, TAX_WITHHELD);
-    const totalReceivables = loanAgainstSalary + taxWithheld;
-
-    // ---- AP Aging (as-of)
-    let apAging;
-    try {
-      const aging = await fetchAPAgingSummary(asOf);
-      apAging = parseAPAgingReport(aging);
-    } catch {
-      const bills = await queryOpenBills();
-      apAging = buildAPAgingFromBills(asOf, bills);
+      monthlySeries = series;
     }
 
     return NextResponse.json({
@@ -306,33 +482,32 @@ export async function GET(req: Request) {
       currency: "PKR",
 
       payables: {
+        // keep old shape for your existing UI
         current: {
-          payrollPayable,
-          withHoldingTaxPayableVendors: whtVendors,
-
-          // keep the field name for your existing UI
-          accountsPayable,
-
-          // extra explicit field (use it in UI label as "Vendor Bills")
-          vendorBills,
-
-          totalCurrentPayables,
+          payrollPayable: computed.payrollPayable,
+          withHoldingTaxPayableVendors: computed.whtVendors,
+          accountsPayable: computed.accountsPayable, // equals vendorBills here
+          vendorBills: computed.vendorBills,
+          totalCurrentPayables: computed.payrollPayable + computed.whtVendors + computed.accountsPayable,
         },
         longTerm: {
-          sirAatifLoanToCompany,
-          payrollWithHoldingTaxPayable,
-          totalLongTermPayables,
+          sirAatifLoanToCompany: computed.sirAatifLoanToCompany,
+          payrollWithHoldingTaxPayable: computed.payrollWithHoldingTaxPayable,
+          totalLongTermPayables: computed.sirAatifLoanToCompany + computed.payrollWithHoldingTaxPayable,
         },
-        totalPayables,
+        totalPayables: computed.totalPayables,
       },
 
       receivables: {
-        loanAgainstSalary,
-        taxWithheld,
-        totalReceivables,
+        loanAgainstSalary: computed.loanAgainstSalary,
+        taxWithheld: computed.taxWithheld,
+        totalReceivables: computed.totalReceivables,
       },
 
       apAging,
+
+      // NEW: month-end series returned from backend (fast)
+      monthlySeries,
     });
   } catch (e: any) {
     return NextResponse.json(
