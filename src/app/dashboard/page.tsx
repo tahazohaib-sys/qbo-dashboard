@@ -177,25 +177,6 @@ type ForecastApiResp = {
   error?: string;
 };
 
-/** ✅ AI Insights response */
-type AiInsightsResp =
-  | {
-      ok: true;
-      meta: {
-        companyName: string;
-        currency: string;
-        start_date: string;
-        end_date: string;
-        accounting_method: "Accrual" | "Cash";
-        generated_at: string;
-      };
-      summary: string;
-      highlights: string[];
-      risks: string[];
-      actions: string[];
-    }
-  | { ok: false; error: string };
-
 /** ✅ AR/AP response */
 type ArApResp = {
   ok: boolean;
@@ -310,6 +291,12 @@ function formatPct(n: number) {
   return `${(n * 100).toFixed(1)}%`;
 }
 
+function formatPKRMillions(n: number, withSign = false) {
+  const sign = n < 0 ? "-" : withSign && n > 0 ? "+" : "";
+  const abs = Math.abs(n);
+  return `${sign}PKR ${(abs / 1_000_000).toFixed(1)}M`;
+}
+
 function ymOptions(lastYears = 6) {
   const now = new Date();
   const years: number[] = [];
@@ -412,11 +399,6 @@ export default function DashboardPage() {
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastData, setForecastData] = useState<ForecastApiResp | null>(null);
 
-  // ✅ AI Insights
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiErr, setAiErr] = useState<string>("");
-  const [ai, setAi] = useState<AiInsightsResp | null>(null);
-
   // ✅ AR/AP
   const [arApLoading, setArApLoading] = useState(false);
   const [arAp, setArAp] = useState<ArApResp | null>(null);
@@ -454,39 +436,6 @@ export default function DashboardPage() {
       setForecastData(null);
     } finally {
       setForecastLoading(false);
-    }
-  }
-
-  async function fetchAiInsights(start: string, end: string, accounting_method: "Accrual" | "Cash") {
-    setAiLoading(true);
-    setAiErr("");
-
-    try {
-      const res = await fetch(
-        `/api/ai/insights?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(
-          end
-        )}&accounting_method=${encodeURIComponent(accounting_method)}`,
-        { cache: "no-store" }
-      );
-
-      const raw = await res.text();
-      if (!raw || !raw.trim()) throw new Error(`AI insights returned empty response (status ${res.status}).`);
-
-      let json: any;
-      try {
-        json = JSON.parse(raw);
-      } catch {
-        const preview = raw.slice(0, 200).replace(/\s+/g, " ");
-        throw new Error(`AI insights returned non-JSON (status ${res.status}): ${preview}`);
-      }
-
-      if (!json?.ok) throw new Error(json?.error || "AI insights failed");
-      setAi(json);
-    } catch (e: any) {
-      setAiErr(e?.message ?? "AI insights failed");
-      setAi(null);
-    } finally {
-      setAiLoading(false);
     }
   }
 
@@ -644,8 +593,6 @@ export default function DashboardPage() {
       if (!dashJson.ok) throw new Error(dashJson.error || "Dashboard API failed");
       setData(dashJson);
 
-      fetchAiInsights(start, end, method).catch(() => {});
-
       if (dashJson?.series?.length) {
         await fetchForecast(dashJson.series, forecastHorizon);
       } else {
@@ -726,6 +673,19 @@ export default function DashboardPage() {
 
   const series = data?.series ?? [];
   const kpi = data?.kpis?.ytd ?? { revenue: 0, expenses: 0, profit: 0 };
+  const netMargin = kpi.revenue !== 0 ? kpi.profit / kpi.revenue : 0;
+  const isProfit = netMargin >= 0;
+  const financialLabel = isProfit ? "Net Profit Margin" : "Net Loss Margin";
+  const marginTone = isProfit ? "text-emerald-300" : "text-rose-300";
+  const marginGlow = isProfit ? "shadow-[0_0_50px_rgba(16,185,129,0.35)]" : "shadow-[0_0_50px_rgba(244,63,94,0.35)]";
+
+  const financialSummary = isProfit
+    ? `The selected period delivered a net profit of ${formatPKRMillions(
+        kpi.profit
+      )}, supported by stronger earnings over operating costs. Keep momentum through disciplined expense control and faster invoice realization.`
+    : `The selected period resulted in a net loss of ${formatPKRMillions(
+        kpi.profit
+      )}, with expenses exceeding revenue. Primary pressure remains in core fixed costs, so immediate focus should be on revenue realization and invoice coverage.`;
 
   const headerAsOf = useMemo(() => {
     if (!data?.asOf) return "";
@@ -1430,82 +1390,21 @@ export default function DashboardPage() {
             </div>
 
             <div className="mt-4">
-              <Panel title="AI Insights">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div className="text-sm text-slate-200">
-                    {aiLoading ? (
-                      <div className="text-slate-300">Generating…</div>
-                    ) : ai && (ai as any).ok === true ? (
-                      <div className="space-y-3">
-                        <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                          <div className="font-medium">{(ai as any).summary || "—"}</div>
-                        </div>
+              <Panel title="Financial Insight">
+                <div className="rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/80 via-[#10243f]/70 to-[#130f2f]/80 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_20px_50px_rgba(2,6,23,0.45)] backdrop-blur-xl md:p-10">
+                  <div className="mx-auto max-w-4xl text-center">
+                    <div className={`mx-auto mb-2 inline-block rounded-3xl px-6 py-2 text-6xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}>
+                      {formatPct(netMargin)}
+                    </div>
+                    <div className="text-base font-semibold uppercase tracking-[0.18em] text-slate-300 md:text-lg">{financialLabel}</div>
 
-                        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            {(ai as any).highlights?.length ? (
-                              <ul className="list-disc pl-5 space-y-1 text-slate-200">
-                                {(ai as any).highlights.slice(0, 6).map((x: string, i: number) => (
-                                  <li key={i}>{x}</li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <div className="text-slate-400">—</div>
-                            )}
-                          </div>
+                    <p className="mx-auto mt-5 max-w-3xl text-sm leading-relaxed text-slate-200/95 md:text-base">{financialSummary}</p>
 
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            {(ai as any).risks?.length ? (
-                              <ul className="list-disc pl-5 space-y-1 text-slate-200">
-                                {(ai as any).risks.slice(0, 6).map((x: string, i: number) => (
-                                  <li key={i}>{x}</li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <div className="text-slate-400">—</div>
-                            )}
-                          </div>
-
-                          <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                            {(ai as any).actions?.length ? (
-                              <ul className="list-disc pl-5 space-y-1 text-slate-200">
-                                {(ai as any).actions.slice(0, 6).map((x: string, i: number) => (
-                                  <li key={i}>{x}</li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <div className="text-slate-400">—</div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ) : aiErr ? (
-                      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{aiErr}</div>
-                    ) : (
-                      <div className="text-slate-400">—</div>
-                    )}
-                  </div>
-
-                  <div className="shrink-0">
-                    <button
-                      onClick={() => {
-                        const fromKey = fromYear * 100 + fromMonth;
-                        const toKey = toYear * 100 + toMonth;
-                        const fy = fromKey <= toKey ? fromYear : toYear;
-                        const fm = fromKey <= toKey ? fromMonth : toMonth;
-                        const ty = fromKey <= toKey ? toYear : fromYear;
-                        const tm = fromKey <= toKey ? toMonth : fromMonth;
-
-                        const start = `${fy}-${String(fm).padStart(2, "0")}-01`;
-                        const endDate = new Date(ty, tm, 0);
-                        const end = `${ty}-${String(tm).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")}`;
-                        fetchAiInsights(start, end, method);
-                      }}
-                      className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10 disabled:opacity-60"
-                      disabled={aiLoading}
-                    >
-                      {aiLoading ? "Generating…" : "Refresh"}
-                    </button>
+                    <div className="mt-8 grid grid-cols-1 gap-2 border-t border-white/10 pt-4 text-xs text-slate-400 sm:grid-cols-3 md:text-sm">
+                      <div>Revenue: {formatPKRMillions(kpi.revenue)}</div>
+                      <div>Expenses: {formatPKRMillions(kpi.expenses)}</div>
+                      <div>Net: {formatPKRMillions(kpi.profit, true)}</div>
+                    </div>
                   </div>
                 </div>
               </Panel>
