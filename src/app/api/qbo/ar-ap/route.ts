@@ -1,6 +1,7 @@
 // src/app/api/qbo/ar-ap/route.ts
 import { NextResponse } from "next/server";
 import { qboFetch } from "@/lib/metrics";
+import { getValidAccessToken } from "@/lib/qbo";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,37 @@ function monthEndDatesUTC(endYmd: string, months: number): string[] {
   return out;
 }
 
+function monthListBetween(fromYear: number, fromMonth: number, toYear: number, toMonth: number): string[] {
+  const startKey = fromYear * 100 + fromMonth;
+  const endKey = toYear * 100 + toMonth;
+
+  const sy = startKey <= endKey ? fromYear : toYear;
+  const sm = startKey <= endKey ? fromMonth : toMonth;
+  const ey = startKey <= endKey ? toYear : fromYear;
+  const em = startKey <= endKey ? toMonth : fromMonth;
+
+  const out: string[] = [];
+  let y = sy;
+  let m = sm;
+
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+
+  return out;
+}
+
+function monthEndFromMonthKeyUTC(monthKey: string): string {
+  const [y, m] = monthKey.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m, 0));
+  return formatUTCYMD(d);
+}
+
 function daysDiffUTC(asOf: string, base: string): number {
   const a = parseYMD(asOf);
   const b = parseYMD(base);
@@ -87,6 +119,78 @@ function pickAccount(bs: any, accountName: string): number {
   return 0;
 }
 
+type RowAmount = { label: string; path: string; amount: number };
+
+function collectBalanceSheetAmounts(rows: QboRow[] | undefined, path: string[] = [], out: RowAmount[] = []): RowAmount[] {
+  for (const r of rows ?? []) {
+    const header = (r as any)?.Header?.ColData?.[0]?.value?.trim?.() ?? "";
+    const summary = (r as any)?.Summary?.ColData;
+
+    if (summary?.length) {
+      const summaryLabel = (summary[0]?.value ?? "").trim() || (header ? `Total ${header}` : "");
+      if (summaryLabel) {
+        out.push({
+          label: summaryLabel,
+          path: [...path, header].filter(Boolean).join(" > "),
+          amount: moneyInt(summary[summary.length - 1]?.value),
+        });
+      }
+    }
+
+    const colData = r.ColData;
+    if (colData?.length && colData[0]?.value) {
+      out.push({
+        label: (colData[0]?.value ?? "").trim(),
+        path: path.join(" > "),
+        amount: moneyInt(colData[colData.length - 1]?.value),
+      });
+    }
+
+    if (r.Rows?.Row?.length) {
+      collectBalanceSheetAmounts(r.Rows.Row, [...path, header].filter(Boolean), out);
+    }
+  }
+
+  return out;
+}
+
+function pickBalanceSheetTotal(entries: RowAmount[], keyword: "accounts receivable" | "accounts payable"): number {
+  const fallbackRegex = keyword === "accounts receivable" ? /(accounts receivable|a\/r)/i : /(accounts payable|a\/p)/i;
+
+  const scored = entries
+    .filter((e) => {
+      const label = e.label.toLowerCase();
+      const path = e.path.toLowerCase();
+      return label.includes(keyword) || path.includes(keyword) || fallbackRegex.test(e.label) || fallbackRegex.test(e.path);
+    })
+    .map((e) => {
+      const label = e.label.toLowerCase();
+      const path = e.path.toLowerCase();
+      let score = 0;
+      if (label.includes(`total ${keyword}`)) score += 5;
+      if (label === keyword) score += 4;
+      if (label.includes(keyword)) score += 3;
+      if (fallbackRegex.test(e.label)) score += 2;
+      if (path.includes(keyword) || fallbackRegex.test(e.path)) score += 1;
+      return { ...e, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  return scored.length ? moneyInt(scored[0].amount) : 0;
+}
+
+function extractArApFromBalanceSheet(bs: any): { receivables: number; payables: number } {
+  const entries = collectBalanceSheetAmounts(bs?.Rows?.Row);
+  const receivables = pickBalanceSheetTotal(entries, "accounts receivable");
+  const payables = pickBalanceSheetTotal(entries, "accounts payable");
+  return { receivables, payables };
+}
+
+function normalizeAccountingMethod(input: string | null): "Accrual" | "Cash" {
+  if ((input ?? "").toLowerCase() === "cash") return "Cash";
+  return "Accrual";
+}
+
 /**
  * ---------- LIGHT IN-MEMORY CACHE (reduces repeated QBO hits) ----------
  * Good enough for dev/prod single instance. If you scale, move to Supabase snapshots later.
@@ -111,11 +215,13 @@ function cacheSet(key: string, value: any, ttl = TTL_MS) {
 /**
  * ---------- FETCHERS ----------
  */
-async function fetchBalanceSheet(asOf: string) {
-  const key = `bs:${asOf}`;
+async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Cash", companyId: string) {
+  const key = `bs:${companyId}:${accountingMethod}:${asOf}`;
   const hit = cacheGet<any>(key);
   if (hit) return hit;
-  const v = await qboFetch(`reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}`);
+  const v = await qboFetch(
+    `reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}&accounting_method=${encodeURIComponent(accountingMethod)}`
+  );
   cacheSet(key, v);
   return v;
 }
@@ -318,7 +424,7 @@ type Computed = {
   totalReceivables: number;
 };
 
-async function computeDetailedAsOf(asOf: string): Promise<{
+async function computeDetailedAsOf(asOf: string, accountingMethod: "Accrual" | "Cash", companyId: string): Promise<{
   computed: Computed;
   apAging: { totalAP: number; vendors: any[]; source: string };
 }> {
@@ -332,7 +438,7 @@ async function computeDetailedAsOf(asOf: string): Promise<{
   const LOAN_SALARY = "Loan Against Salary";
   const TAX_WITHHELD = "Tax Withheld";
 
-  const bs = await fetchBalanceSheet(asOf);
+  const bs = await fetchBalanceSheet(asOf, accountingMethod, companyId);
 
   const payrollPayable = pickAccount(bs, PAYROLL_PAYABLE);
   const whtVendors = pickAccount(bs, WHT_VENDOR);
@@ -388,38 +494,14 @@ async function computeDetailedAsOf(asOf: string): Promise<{
  * Use BalanceSheet "Accounts Payable (A/P)" as proxy for vendor bills month-end
  * (avoids scanning all bills/payments).
  */
-async function computeFastTotals(asOf: string): Promise<{ asOf: string; totalPayables: number; totalReceivables: number }> {
-  const PAYROLL_PAYABLE = "Payroll Payable";
-  const WHT_VENDOR = "With Holding Tax Payable Vendors";
-  const AP = "Accounts Payable (A/P)"; // fast month-end A/P from BalanceSheet
-
-  const AATIF_LOAN = "Sir Aatif Loan to Company";
-  const PAYROLL_WHT = "Payroll With Holding Tax Payable";
-
-  const LOAN_SALARY = "Loan Against Salary";
-  const TAX_WITHHELD = "Tax Withheld";
-
-  const bs = await fetchBalanceSheet(asOf);
-
-  const payrollPayable = pickAccount(bs, PAYROLL_PAYABLE);
-  const whtVendors = pickAccount(bs, WHT_VENDOR);
-  const accountsPayable = pickAccount(bs, AP);
-
-  const sirAatifLoanToCompany = pickAccount(bs, AATIF_LOAN);
-  const payrollWithHoldingTaxPayable = pickAccount(bs, PAYROLL_WHT);
-
-  const totalPayables =
-    payrollPayable +
-    whtVendors +
-    accountsPayable +
-    sirAatifLoanToCompany +
-    payrollWithHoldingTaxPayable;
-
-  const loanAgainstSalary = pickAccount(bs, LOAN_SALARY);
-  const taxWithheld = pickAccount(bs, TAX_WITHHELD);
-  const totalReceivables = loanAgainstSalary + taxWithheld;
-
-  return { asOf, totalPayables, totalReceivables };
+async function computeMonthEndArApPoint(companyId: string, asOf: string, accountingMethod: "Accrual" | "Cash") {
+  try {
+    const bs = await fetchBalanceSheet(asOf, accountingMethod, companyId);
+    const totals = extractArApFromBalanceSheet(bs);
+    return { asOf, payables: totals.payables, receivables: totals.receivables, error: false };
+  } catch {
+    return { asOf, payables: 0, receivables: 0, error: true };
+  }
 }
 
 /**
@@ -448,28 +530,41 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
 
     const asOf = searchParams.get("asOf") ?? new Date().toISOString().slice(0, 10);
+    const accountingMethod = normalizeAccountingMethod(searchParams.get("accounting_method"));
+    const { realmId } = await getValidAccessToken();
 
     // months=6 will return monthlySeries for chart in the SAME response
     const monthsRaw = searchParams.get("months");
     const months = Math.max(1, Math.min(24, Number(monthsRaw ?? "1") || 1)); // 1..24
 
     // 1) Detailed current asOf (accurate)
-    const { computed, apAging } = await computeDetailedAsOf(asOf);
+    const { computed, apAging } = await computeDetailedAsOf(asOf, accountingMethod, realmId);
 
     // 2) Optional monthly series (FAST totals)
-    let monthlySeries: Array<{ month: string; asOf: string; payables: number; receivables: number }> | undefined;
+    let monthlySeries: Array<{ month: string; asOf: string; payables: number; receivables: number; error: boolean }> | undefined;
 
     if (months > 1) {
-      const dates = monthEndDatesUTC(asOf, months);
+      const fromYear = Number(searchParams.get("fromYear") ?? "");
+      const fromMonth = Number(searchParams.get("fromMonth") ?? "");
+      const toYear = Number(searchParams.get("toYear") ?? "");
+      const toMonth = Number(searchParams.get("toMonth") ?? "");
 
-      // Concurrency 2 to avoid QBO throttling
-      const series = await mapLimit(dates, 2, async (d) => {
-        const t = await computeFastTotals(d);
+      const monthKeys =
+        Number.isInteger(fromYear) && Number.isInteger(fromMonth) && Number.isInteger(toYear) && Number.isInteger(toMonth)
+          ? monthListBetween(fromYear, fromMonth, toYear, toMonth)
+          : monthEndDatesUTC(asOf, months).map((d) => d.slice(0, 7));
+
+      const dates = monthKeys.map((mk) => ({ month: mk, asOf: monthEndFromMonthKeyUTC(mk) }));
+
+      // Concurrency 3 to avoid QBO throttling
+      const series = await mapLimit(dates, 3, async (d) => {
+        const point = await computeMonthEndArApPoint(realmId, d.asOf, accountingMethod);
         return {
-          month: d.slice(0, 7),
-          asOf: d,
-          payables: t.totalPayables,
-          receivables: t.totalReceivables,
+          month: d.month,
+          asOf: d.asOf,
+          payables: point.payables,
+          receivables: point.receivables,
+          error: point.error,
         };
       });
 
