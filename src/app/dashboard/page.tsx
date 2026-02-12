@@ -403,7 +403,7 @@ export default function DashboardPage() {
   const [arApLoading, setArApLoading] = useState(false);
   const [arAp, setArAp] = useState<ArApResp | null>(null);
   const [showManualAdjustments, setShowManualAdjustments] = useState(true);
-  const [monthlyArAp, setMonthlyArAp] = useState<Array<{ month: string; payables: number; receivables: number }>>([]);
+  const [monthlyArAp, setMonthlyArAp] = useState<Array<{ month: string; asOf: string; payables: number; receivables: number; error?: boolean }>>([]);
 
   // ✅ AR/AP Custom Fields (As-Of specific)
   const [arApCustomLoading, setArApCustomLoading] = useState(false);
@@ -511,28 +511,38 @@ export default function DashboardPage() {
     await reloadArApCustom(asOfYmd);
   }
 
-  async function loadArApAndMonthly(endYmd: string) {
+  async function loadArApAndMonthly(
+    endYmd: string,
+    fy: number,
+    fm: number,
+    ty: number,
+    tm: number,
+    accountingMethod: "Accrual" | "Cash"
+  ) {
     setArApLoading(true);
     try {
       // ✅ ONE call only (backend returns monthlySeries)
-      const res = await fetch(`/api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=6`, { cache: "no-store" });
+      const res = await fetch(`
+        /api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=6&fromYear=${fy}&fromMonth=${fm}&toYear=${ty}&toMonth=${tm}&accounting_method=${encodeURIComponent(accountingMethod)}
+      `.replace(/\s+/g, ""), { cache: "no-store" });
       const one: any = await res.json();
       if (!one?.ok) throw new Error(one?.error || "AR/AP API failed");
 
       setArAp(one);
 
       // ---------- Build monthly rows (from backend series) ----------
-      const series: Array<{ asOf: string; month: string; payables: number; receivables: number }> = (one.monthlySeries ?? []).map(
+      const series: Array<{ asOf: string; month: string; payables: number; receivables: number; error?: boolean }> = (one.monthlySeries ?? []).map(
         (r: any) => ({
           asOf: r.asOf ?? `${r.month}-01`,
           month: r.month,
           payables: Number(r.payables ?? 0),
           receivables: Number(r.receivables ?? 0),
+          error: Boolean(r.error),
         })
       );
 
       // ---------- Overlay custom rows for each month-end ----------
-      const finalRows: Array<{ month: string; payables: number; receivables: number }> = [];
+      const finalRows: Array<{ month: string; asOf: string; payables: number; receivables: number; error?: boolean }> = [];
 
       for (const s of series) {
         let customRows: ArApCustomRow[] = [];
@@ -551,7 +561,9 @@ export default function DashboardPage() {
         finalRows.push({
           month: s.month,
           payables: s.payables + addPay,
+          asOf: s.asOf,
           receivables: s.receivables + addRec,
+          error: s.error,
         });
       }
 
@@ -581,7 +593,7 @@ export default function DashboardPage() {
       const { start, end } = buildStartEnd(fy, fm, ty, tm);
 
       // ✅ AR/AP uses end date as "asOf"
-      loadArApAndMonthly(end).catch(() => {});
+      loadArApAndMonthly(end, fy, fm, ty, tm, method).catch(() => {});
 
       const dashUrl =
         `/api/dashboard?start_date=${encodeURIComponent(start)}` +
@@ -1049,7 +1061,7 @@ export default function DashboardPage() {
                             <CartesianGrid {...GRID} />
                             <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                             <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                            <Tooltip content={<MoneyTooltip />} />
+                            <Tooltip content={<MoneyTooltip arApMonthEnd />} />
                             <Legend />
                             <Line
                               type="monotone"
@@ -1858,7 +1870,7 @@ function KpiCard({ title, value, highlight }: { title: string; value: string; hi
   );
 }
 
-function MoneyTooltip({ active, payload, label, pie, single }: any) {
+function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any) {
   if (!active || !payload || payload.length === 0) return null;
 
   if (pie) {
@@ -1867,6 +1879,27 @@ function MoneyTooltip({ active, payload, label, pie, single }: any) {
       <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
         <div className="font-semibold">{p?.name ?? ""}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
+      </div>
+    );
+  }
+
+  if (arApMonthEnd) {
+    const row = payload?.[0]?.payload ?? {};
+    const asOf = String(row?.asOf ?? "");
+    const payables = Number(row?.payables ?? 0);
+    const receivables = Number(row?.receivables ?? 0);
+
+    return (
+      <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+        <div className="font-semibold">As of {asOf || label}</div>
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-slate-300">Payables PKR</span>
+          <span className="font-semibold">{formatPKRCompact(payables)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-slate-300">Receivables PKR</span>
+          <span className="font-semibold">{formatPKRCompact(receivables)}</span>
+        </div>
       </div>
     );
   }
