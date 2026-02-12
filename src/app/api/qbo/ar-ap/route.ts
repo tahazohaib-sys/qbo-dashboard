@@ -1,5 +1,5 @@
-// src/app/api/qbo/ar-ap/route.ts
 import { NextResponse } from "next/server";
+import { Pool } from "pg";
 import { qboFetch } from "@/lib/metrics";
 import { getValidAccessToken } from "@/lib/qbo";
 
@@ -38,12 +38,10 @@ function monthEndDatesUTC(endYmd: string, months: number): string[] {
   if (!end) return [endYmd];
 
   const y = end.getUTCFullYear();
-  const m = end.getUTCMonth() + 1; // 1..12 from asOf month
+  const m = end.getUTCMonth() + 1; // 1..12
   const out: string[] = [];
 
-  // Generate month-ends ending at (y,m)
   for (let i = months - 1; i >= 0; i--) {
-    // month-end of (m - i)
     const d = new Date(Date.UTC(y, m - i, 0)); // day 0 => last day of previous month
     out.push(formatUTCYMD(d));
   }
@@ -109,6 +107,24 @@ function daysDiffUTC(asOf: string, base: string): number {
 }
 
 /**
+ * Fiscal year start helper (RTC uses Jul 1 → Jun 30)
+ * Example: asOf=2026-01-31 => start=2025-07-01 (matches your QBO UI)
+ */
+function fiscalYearStartFor(asOf: string): string {
+  const d = parseYMD(asOf);
+  if (!d) return `${new Date().getUTCFullYear()}-07-01`;
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth() + 1; // 1..12
+  const fyStartYear = m >= 7 ? y : y - 1;
+  return `${fyStartYear}-07-01`;
+}
+
+function normalizeAccountingMethod(input: string | null): "Accrual" | "Cash" {
+  if ((input ?? "").toLowerCase() === "cash") return "Cash";
+  return "Accrual";
+}
+
+/**
  * ---------- BALANCE SHEET HELPERS ----------
  */
 type QboRow = {
@@ -127,88 +143,40 @@ function flattenRows(rows?: QboRow[]): QboRow[] {
   return out;
 }
 
-function pickAccount(bs: any, accountName: string): number {
+function normLabel(s: any): string {
+  return String(s ?? "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function pickAccountExact(bs: any, accountName: string): number {
   const flat = flattenRows(bs?.Rows?.Row);
+  const target = normLabel(accountName);
   for (const r of flat) {
     const c = r.ColData;
     if (!c || c.length < 2) continue;
-    if ((c[0]?.value ?? "").trim() === accountName) {
-      return moneyInt(c[1]?.value);
+    if (normLabel(c[0]?.value) === target) {
+      return moneyInt(c[c.length - 1]?.value);
     }
   }
   return 0;
 }
 
-type RowAmount = { label: string; path: string; amount: number };
-
-function collectBalanceSheetAmounts(rows: QboRow[] | undefined, path: string[] = [], out: RowAmount[] = []): RowAmount[] {
-  for (const r of rows ?? []) {
-    const header = (r as any)?.Header?.ColData?.[0]?.value?.trim?.() ?? "";
-    const summary = (r as any)?.Summary?.ColData;
-
-    if (summary?.length) {
-      const summaryLabel = (summary[0]?.value ?? "").trim() || (header ? `Total ${header}` : "");
-      if (summaryLabel) {
-        out.push({
-          label: summaryLabel,
-          path: [...path, header].filter(Boolean).join(" > "),
-          amount: moneyInt(summary[summary.length - 1]?.value),
-        });
-      }
-    }
-
-    const colData = r.ColData;
-    if (colData?.length && colData[0]?.value) {
-      out.push({
-        label: (colData[0]?.value ?? "").trim(),
-        path: path.join(" > "),
-        amount: moneyInt(colData[colData.length - 1]?.value),
-      });
-    }
-
-    if (r.Rows?.Row?.length) {
-      collectBalanceSheetAmounts(r.Rows.Row, [...path, header].filter(Boolean), out);
+function pickAccountFuzzy(bs: any, names: string[]): number {
+  const flat = flattenRows(bs?.Rows?.Row);
+  const targets = names.map((n) => normLabel(n));
+  for (const r of flat) {
+    const c = r.ColData;
+    if (!c || c.length < 2) continue;
+    const label = normLabel(c[0]?.value);
+    if (!label) continue;
+    if (targets.some((t) => label === t || label.includes(t))) {
+      return moneyInt(c[c.length - 1]?.value);
     }
   }
-
-  return out;
-}
-
-function pickBalanceSheetTotal(entries: RowAmount[], keyword: "accounts receivable" | "accounts payable"): number {
-  const fallbackRegex = keyword === "accounts receivable" ? /(accounts receivable|a\/r)/i : /(accounts payable|a\/p)/i;
-
-  const scored = entries
-    .filter((e) => {
-      const label = e.label.toLowerCase();
-      const path = e.path.toLowerCase();
-      return label.includes(keyword) || path.includes(keyword) || fallbackRegex.test(e.label) || fallbackRegex.test(e.path);
-    })
-    .map((e) => {
-      const label = e.label.toLowerCase();
-      const path = e.path.toLowerCase();
-      let score = 0;
-      if (label.includes(`total ${keyword}`)) score += 5;
-      if (label === keyword) score += 4;
-      if (label.includes(keyword)) score += 3;
-      if (fallbackRegex.test(e.label)) score += 2;
-      if (path.includes(keyword) || fallbackRegex.test(e.path)) score += 1;
-      return { ...e, score };
-    })
-    .sort((a, b) => b.score - a.score);
-
-  return scored.length ? moneyInt(scored[0].amount) : 0;
-}
-
-function extractArApFromBalanceSheet(bs: any): { receivables: number; payables: number } {
-  const entries = collectBalanceSheetAmounts(bs?.Rows?.Row);
-  const receivables = pickBalanceSheetTotal(entries, "accounts receivable");
-  const payables = pickBalanceSheetTotal(entries, "accounts payable");
-  return { receivables, payables };
-}
-
-function normalizeAccountingMethod(input: string | null): "Accrual" | "Cash" {
-  if ((input ?? "").toLowerCase() === "cash") return "Cash";
-  return "Accrual";
+  return 0;
 }
 
 /**
@@ -232,28 +200,82 @@ function cacheSet(key: string, value: any, ttl = TTL_MS) {
 }
 
 /**
- * ---------- FETCHERS ----------
+ * ---------- DB (Manual Adjustments) ----------
+ * Using same table you already created: public.dashboard_custom_fields
+ */
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
+type CustomRow = {
+  id: string;
+  company: string;
+  module: string;
+  as_of: string;
+  section: "payables" | "receivables";
+  label: string;
+  amount: number;
+  notes: string | null;
+  created_at: string;
+};
+
+async function fetchAdjustmentsForDates(company: string, module: string, asOfDates: string[]) {
+  if (!asOfDates.length) return new Map<string, { pay: number; rec: number; rows: CustomRow[] }>();
+
+  // Keep it safe: max 24 dates in your API anyway
+  const key = `adj:${company}:${module}:${asOfDates.join("|")}`;
+  const hit = cacheGet<Map<string, any>>(key);
+  if (hit) return hit;
+
+  const r = await pool.query(
+    `
+    SELECT id, company, module, as_of, section, label, amount, notes, created_at
+    FROM public.dashboard_custom_fields
+    WHERE company = $1
+      AND module = $2
+      AND as_of = ANY($3::date[])
+    ORDER BY created_at DESC
+    `,
+    [company, module, asOfDates]
+  );
+
+  const map = new Map<string, { pay: number; rec: number; rows: CustomRow[] }>();
+  for (const d of asOfDates) map.set(d, { pay: 0, rec: 0, rows: [] });
+
+  for (const row of r.rows as CustomRow[]) {
+    const d = String(row.as_of).slice(0, 10);
+    const bucket = map.get(d) ?? { pay: 0, rec: 0, rows: [] };
+    const amt = Number(row.amount ?? 0) || 0;
+    if ((row.section ?? "").toLowerCase() === "payables") bucket.pay += amt;
+    else bucket.rec += amt;
+    bucket.rows.push({ ...row, amount: amt, as_of: d });
+    map.set(d, bucket);
+  }
+
+  cacheSet(key, map);
+  return map;
+}
+
+/**
+ * ---------- QBO FETCHERS ----------
  */
 async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Cash", companyId: string) {
   const key = `bs:${companyId}:${accountingMethod}:${asOf}`;
   const hit = cacheGet<any>(key);
   if (hit) return hit;
-  try {
-    const v = await qboFetch(
-      `reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}` +
-        `&accounting_method=${encodeURIComponent(accountingMethod)}`
-    );
-    cacheSet(key, v);
-    return v;
-  } catch {
-    // Fallback form: some QBO tenants are stricter with date-style params on reports.
-    const v = await qboFetch(
-      `reports/BalanceSheet?start_date=${encodeURIComponent(asOf)}&end_date=${encodeURIComponent(asOf)}` +
-        `&summarize_column_by=Total&accounting_method=${encodeURIComponent(accountingMethod)}`
-    );
-    cacheSet(key, v);
-    return v;
-  }
+
+  const start = fiscalYearStartFor(asOf);
+
+  // ✅ Matches your QBO UI report period behavior
+  const v = await qboFetch(
+    `reports/BalanceSheet?start_date=${encodeURIComponent(start)}` +
+      `&end_date=${encodeURIComponent(asOf)}` +
+      `&summarize_column_by=Total&accounting_method=${encodeURIComponent(accountingMethod)}`
+  );
+
+  cacheSet(key, v);
+  return v;
 }
 
 async function fetchAPAgingSummary(asOf: string) {
@@ -336,12 +358,10 @@ function buildAPAgingFromBills(asOf: string, bills: any[]) {
 
   for (const b of bills) {
     const vendor = (b?.VendorRef?.name ?? b?.VendorRef?.value ?? "Unknown Vendor").toString();
-
     const bal = moneyInt(b?.Balance);
     if (!bal) continue;
 
     const base = b?.DueDate && /^\d{4}-\d{2}-\d{2}$/.test(b.DueDate) ? b.DueDate : b?.TxnDate;
-
     const days = base ? daysDiffUTC(asOf, base) : 0;
 
     const row =
@@ -365,62 +385,89 @@ function buildAPAgingFromBills(asOf: string, bills: any[]) {
 }
 
 /**
- * ---------- TRUE MONTH-END VENDOR BILLS (RECONSTRUCT) ----------
- * Vendor Bills as-of date:
- *   sum(Bill.TotalAmt up to asOf) - sum(BillPayment.TotalAmt up to asOf)
- * NOTE: Accurate but expensive. We use it ONLY for the main asOf.
+ * ---------- VENDOR BILLS (MONTH-WISE, EFFICIENT) ----------
+ * We want Vendor Bills outstanding at each month-end:
+ *   outstanding(asOf) = sum(Bill.TotalAmt where TxnDate <= asOf) - sum(BillPayment.TotalAmt where TxnDate <= asOf)
+ *
+ * Efficient: fetch all bills + bill payments ONCE for the entire window, then compute cumulative per month-end.
  */
-async function sumBillsTotalAmtUpto(asOf: string): Promise<number> {
-  const q = `SELECT TotalAmt FROM Bill WHERE TxnDate <= '${asOf}'`;
+type DatedAmt = { date: string; amt: number };
+
+async function queryDatedAmounts(entity: "Bill" | "BillPayment", startDate: string, endDate: string): Promise<DatedAmt[]> {
+  const out: DatedAmt[] = [];
   let start = 1;
   const size = 1000;
-  let total = 0;
+
+  // Use TxnDate filtering (what QBO uses for aging and most reporting)
+  const q =
+    entity === "Bill"
+      ? `SELECT TxnDate, TotalAmt FROM Bill WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
+      : `SELECT TxnDate, TotalAmt FROM BillPayment WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`;
 
   while (true) {
     const path = `query?query=${encodeURIComponent(q)}` + `&startposition=${start}&maxresults=${size}`;
-
     const res: any = await qboFetch(path);
-    const rows: any[] = res?.QueryResponse?.Bill ?? [];
-    for (const r of rows) total += moneyInt(r?.TotalAmt);
+    const rows: any[] = res?.QueryResponse?.[entity] ?? [];
+
+    for (const r of rows) {
+      const d = String(r?.TxnDate ?? "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+      out.push({ date: d, amt: moneyInt(r?.TotalAmt) });
+    }
 
     if (rows.length < size) break;
     start += size;
   }
 
-  return total;
+  // sort asc for cumulative pointer scan
+  out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return out;
 }
 
-async function sumBillPaymentsTotalAmtUpto(asOf: string): Promise<number> {
-  const q = `SELECT TotalAmt FROM BillPayment WHERE TxnDate <= '${asOf}'`;
-  let start = 1;
-  const size = 1000;
-  let total = 0;
+function cumulativeSumUpto(list: DatedAmt[], upToYmd: string): number {
+  // list is sorted; but we’ll do pointer scan in the builder for performance
+  let sum = 0;
+  for (const x of list) {
+    if (x.date <= upToYmd) sum += x.amt;
+    else break;
+  }
+  return sum;
+}
 
-  while (true) {
-    const path = `query?query=${encodeURIComponent(q)}` + `&startposition=${start}&maxresults=${size}`;
+async function computeVendorBillsOutstandingByMonthEnds(monthEnds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!monthEnds.length) return out;
 
-    const res: any = await qboFetch(path);
-    const rows: any[] = res?.QueryResponse?.BillPayment ?? [];
-    for (const r of rows) total += moneyInt(r?.TotalAmt);
+  const start = fiscalYearStartFor(monthEnds[monthEnds.length - 1]); // FY start for latest monthEnd
+  const end = monthEnds[monthEnds.length - 1];
 
-    if (rows.length < size) break;
-    start += size;
+  const cacheKey = `vb-months:${start}:${end}:${monthEnds.join("|")}`;
+  const hit = cacheGet<Map<string, number>>(cacheKey);
+  if (hit) return hit;
+
+  const [bills, pays] = await Promise.all([queryDatedAmounts("Bill", start, end), queryDatedAmounts("BillPayment", start, end)]);
+
+  // pointer scan (faster than recalculating for each month)
+  let bi = 0;
+  let pi = 0;
+  let billCum = 0;
+  let payCum = 0;
+
+  for (const mEnd of monthEnds) {
+    while (bi < bills.length && bills[bi].date <= mEnd) {
+      billCum += bills[bi].amt;
+      bi++;
+    }
+    while (pi < pays.length && pays[pi].date <= mEnd) {
+      payCum += pays[pi].amt;
+      pi++;
+    }
+    const outstanding = billCum - payCum;
+    out.set(mEnd, outstanding > 0 ? outstanding : 0);
   }
 
-  return total;
-}
-
-async function computeVendorBillsAsOf(asOf: string): Promise<number> {
-  const cacheKey = `vendorBills:${asOf}`;
-  const hit = cacheGet<number>(cacheKey);
-  if (typeof hit === "number") return hit;
-
-  const [bills, payments] = await Promise.all([sumBillsTotalAmtUpto(asOf), sumBillPaymentsTotalAmtUpto(asOf)]);
-  const outstanding = bills - payments;
-  const v = outstanding > 0 ? outstanding : 0;
-
-  cacheSet(cacheKey, v, 5 * 60 * 1000); // 5 min
-  return v;
+  cacheSet(cacheKey, out, 5 * 60 * 1000); // 5 min
+  return out;
 }
 
 /**
@@ -430,7 +477,7 @@ type Computed = {
   asOf: string;
   payrollPayable: number;
   whtVendors: number;
-  accountsPayable: number; // in detailed view this is vendorBills (reconstructed)
+  accountsPayable: number; // equals vendorBills in detailed view
   vendorBills: number; // reconstructed
   sirAatifLoanToCompany: number;
   payrollWithHoldingTaxPayable: number;
@@ -444,38 +491,37 @@ type Computed = {
 async function computeDetailedAsOf(
   asOf: string,
   accountingMethod: "Accrual" | "Cash",
-  companyId: string
+  companyId: string,
+  companyNameForCustom: string
 ): Promise<{
   computed: Computed;
   apAging: { totalAP: number; vendors: any[]; source: string };
+  custom: { payablesAdj: number; receivablesAdj: number; rows: CustomRow[] };
 }> {
-  // ===== BALANCE SHEET ACCOUNTS =====
-  const PAYROLL_PAYABLE = "Payroll Payable";
-  const WHT_VENDOR = "With Holding Tax Payable Vendors";
-
-  const AATIF_LOAN = "Sir Aatif Loan to Company";
-  const PAYROLL_WHT = "Payroll With Holding Tax Payable";
-
-  const LOAN_SALARY = "Loan Against Salary";
-  const TAX_WITHHELD = "Tax Withheld";
-
   const bs = await fetchBalanceSheet(asOf, accountingMethod, companyId);
 
-  const payrollPayable = pickAccount(bs, PAYROLL_PAYABLE);
-  const whtVendors = pickAccount(bs, WHT_VENDOR);
+  const payrollPayable = pickAccountExact(bs, "Payroll Payable");
+  const whtVendors = pickAccountExact(bs, "With Holding Tax Payable Vendors");
+  const sirAatifLoanToCompany = pickAccountExact(bs, "Sir Aatif Loan to Company");
+  const payrollWithHoldingTaxPayable = pickAccountExact(bs, "Payroll With Holding Tax Payable");
 
-  // Accurate month-end vendor bills (expensive)
-  const vendorBills = await computeVendorBillsAsOf(asOf);
+  const loanAgainstSalary = pickAccountExact(bs, "Loan Against Salary");
+  const taxWithheld = pickAccountExact(bs, "Tax Withheld");
+
+  // Accurate vendor bills (expensive) for ONLY current asOf:
+  // We reuse the monthly-window method even for single date to keep one approach.
+  const vbMap = await computeVendorBillsOutstandingByMonthEnds([asOf]);
+  const vendorBills = vbMap.get(asOf) ?? 0;
   const accountsPayable = vendorBills;
 
-  const sirAatifLoanToCompany = pickAccount(bs, AATIF_LOAN);
-  const payrollWithHoldingTaxPayable = pickAccount(bs, PAYROLL_WHT);
+  // Manual adjustments for current asOf
+  const adjMap = await fetchAdjustmentsForDates(companyNameForCustom, "ar_ap", [asOf]);
+  const adj = adjMap.get(asOf) ?? { pay: 0, rec: 0, rows: [] };
 
-  const totalPayables = payrollPayable + whtVendors + accountsPayable + sirAatifLoanToCompany + payrollWithHoldingTaxPayable;
+  const totalPayables =
+    payrollPayable + whtVendors + accountsPayable + sirAatifLoanToCompany + payrollWithHoldingTaxPayable + adj.pay;
 
-  const loanAgainstSalary = pickAccount(bs, LOAN_SALARY);
-  const taxWithheld = pickAccount(bs, TAX_WITHHELD);
-  const totalReceivables = loanAgainstSalary + taxWithheld;
+  const totalReceivables = loanAgainstSalary + taxWithheld + adj.rec;
 
   // AP Aging (as-of)
   let apAging;
@@ -502,21 +548,92 @@ async function computeDetailedAsOf(
       totalReceivables,
     },
     apAging,
+    custom: {
+      payablesAdj: adj.pay,
+      receivablesAdj: adj.rec,
+      rows: adj.rows,
+    },
   };
 }
 
 /**
- * FAST monthly totals for chart:
- * Use BalanceSheet total "Accounts Receivable" / "Accounts Payable" at month-end
- * (avoids scanning all bills/payments for every month).
+ * ✅ Month-end series that matches your Payables/Receivables tables EXACTLY
+ * (everything from QBO + manual adjustments)
  */
-async function computeMonthEndArApPoint(companyId: string, asOf: string, accountingMethod: "Accrual" | "Cash") {
+async function computeMonthEndTotalsPoint(
+  companyId: string,
+  companyNameForCustom: string,
+  asOf: string,
+  accountingMethod: "Accrual" | "Cash",
+  vendorBillsOutstanding: number,
+  adj: { pay: number; rec: number }
+) {
   try {
     const bs = await fetchBalanceSheet(asOf, accountingMethod, companyId);
-    const totals = extractArApFromBalanceSheet(bs);
-    return { asOf, payables: totals.payables, receivables: totals.receivables, error: false };
+
+    const payrollPayable = pickAccountExact(bs, "Payroll Payable");
+    const whtVendors = pickAccountExact(bs, "With Holding Tax Payable Vendors");
+    const sirAatifLoanToCompany = pickAccountExact(bs, "Sir Aatif Loan to Company");
+    const payrollWithHoldingTaxPayable = pickAccountExact(bs, "Payroll With Holding Tax Payable");
+
+    const loanAgainstSalary = pickAccountExact(bs, "Loan Against Salary");
+    const taxWithheld = pickAccountExact(bs, "Tax Withheld");
+
+    const payablesTotal =
+      payrollPayable +
+      whtVendors +
+      vendorBillsOutstanding +
+      sirAatifLoanToCompany +
+      payrollWithHoldingTaxPayable +
+      adj.pay;
+
+    const receivablesTotal =
+      loanAgainstSalary +
+      taxWithheld +
+      adj.rec;
+
+    return {
+      asOf,
+      payables: payablesTotal,
+      receivables: receivablesTotal,
+      // breakdown for debugging / future drill
+      breakdown: {
+        payrollPayable,
+        whtVendors,
+        vendorBills: vendorBillsOutstanding,
+        sirAatifLoanToCompany,
+        payrollWithHoldingTaxPayable,
+        loanAgainstSalary,
+        taxWithheld,
+        manualPayablesAdj: adj.pay,
+        manualReceivablesAdj: adj.rec,
+      },
+      error: false,
+    };
   } catch {
-    return { asOf, payables: 0, receivables: 0, error: true };
+    return { asOf, payables: 0, receivables: 0, breakdown: null as any, error: true };
+  }
+}
+
+/**
+ * Optional reference series: Balance Sheet A/P vs A/R only
+ * (not your custom totals)
+ */
+async function computeMonthEndBalanceSheetArApPoint(companyId: string, asOf: string, accountingMethod: "Accrual" | "Cash") {
+  try {
+    const bs = await fetchBalanceSheet(asOf, accountingMethod, companyId);
+
+    const ap = pickAccountFuzzy(bs, ["Accounts Payable (A/P)", "Accounts Payable"]) || 0;
+    const ar = pickAccountFuzzy(bs, ["Accounts Receivable", "Accounts Receivable (A/R)"]) || 0;
+
+    const debugEndPeriod =
+      bs?.Header?.EndPeriod ??
+      bs?.Header?.Option?.find?.((o: any) => (o?.Name ?? "").toLowerCase() === "end_date")?.Value ??
+      null;
+
+    return { asOf, payables: ap, receivables: ar, error: false, debugEndPeriod };
+  } catch {
+    return { asOf, payables: 0, receivables: 0, error: true, debugEndPeriod: null as any };
   }
 }
 
@@ -549,15 +666,24 @@ export async function GET(req: Request) {
     const accountingMethod = normalizeAccountingMethod(searchParams.get("accounting_method"));
     const { realmId } = await getValidAccessToken();
 
-    // months=... controls whether monthlySeries is returned
+    // Company name used for manual adjustments table (matches your custom-fields route default)
+    const companyNameForCustom = String(searchParams.get("company") ?? "RTC League Pvt LTD").trim() || "RTC League Pvt LTD";
+
+    // months=... controls whether monthly series is returned
     const monthsRaw = searchParams.get("months");
     const months = Math.max(1, Math.min(24, Number(monthsRaw ?? "1") || 1)); // 1..24
 
-    // 1) Detailed current asOf (accurate)
-    const { computed, apAging } = await computeDetailedAsOf(asOf, accountingMethod, realmId);
+    // 1) Detailed current asOf (exact tables + manual adjustments)
+    const { computed, apAging, custom } = await computeDetailedAsOf(asOf, accountingMethod, realmId, companyNameForCustom);
 
-    // 2) Optional monthly series (FAST totals)
-    let monthlySeries: Array<{ month: string; asOf: string; payables: number; receivables: number; error: boolean }> | undefined;
+    // 2) Optional monthly series
+    let monthlySeriesTotals:
+      | Array<{ month: string; asOf: string; payables: number; receivables: number; error: boolean; breakdown?: any }>
+      | undefined;
+
+    let monthlySeriesBalanceSheet:
+      | Array<{ month: string; asOf: string; payables: number; receivables: number; error: boolean; debugEndPeriod?: any }>
+      | undefined;
 
     if (months > 1) {
       const fromYear = parseYearMonthParam(searchParams.get("fromYear"));
@@ -576,21 +702,35 @@ export async function GET(req: Request) {
         ? monthListBetween(fromYear, fromMonth, toYear, toMonth).slice(-24)
         : monthEndDatesUTC(asOf, months).map((d) => d.slice(0, 7));
 
-      const dates = monthKeys.map((mk) => ({ month: mk, asOf: monthEndFromMonthKeyUTC(mk) }));
+      const monthEnds = monthKeys.map((mk) => monthEndFromMonthKeyUTC(mk));
+      const dates = monthKeys.map((mk, i) => ({ month: mk, asOf: monthEnds[i] }));
 
-      // Concurrency 3 to avoid QBO throttling
-      const series = await mapLimit(dates, 3, async (d) => {
-        const point = await computeMonthEndArApPoint(realmId, d.asOf, accountingMethod);
-        return {
-          month: d.month,
-          asOf: d.asOf,
-          payables: point.payables,
-          receivables: point.receivables,
-          error: point.error,
-        };
+      // Precompute vendorBills outstanding for all month-ends in ONE pass
+      const vbByDate = await computeVendorBillsOutstandingByMonthEnds(monthEnds);
+
+      // Preload all manual adjustments for those month-ends in ONE DB call
+      const adjByDate = await fetchAdjustmentsForDates(companyNameForCustom, "ar_ap", monthEnds);
+
+      // Build totals series (this is what you want to show in growth chart)
+      const totals = await mapLimit(dates, 3, async (d) => {
+        const vb = vbByDate.get(d.asOf) ?? 0;
+        const a = adjByDate.get(d.asOf) ?? { pay: 0, rec: 0, rows: [] };
+        const point = await computeMonthEndTotalsPoint(realmId, companyNameForCustom, d.asOf, accountingMethod, vb, {
+          pay: a.pay,
+          rec: a.rec,
+        });
+        return { month: d.month, asOf: d.asOf, payables: point.payables, receivables: point.receivables, error: point.error, breakdown: point.breakdown };
       });
 
-      monthlySeries = series;
+      monthlySeriesTotals = totals;
+
+      // Optional: reference A/P vs A/R series
+      const bsSeries = await mapLimit(dates, 3, async (d) => {
+        const p = await computeMonthEndBalanceSheetArApPoint(realmId, d.asOf, accountingMethod);
+        return { month: d.month, asOf: d.asOf, payables: p.payables, receivables: p.receivables, error: p.error, debugEndPeriod: p.debugEndPeriod };
+      });
+
+      monthlySeriesBalanceSheet = bsSeries;
     }
 
     return NextResponse.json({
@@ -598,31 +738,47 @@ export async function GET(req: Request) {
       asOf,
       currency: "PKR",
 
+      // ✅ These are your exact tables/cards numbers (QBO + manual adjustments)
       payables: {
         current: {
           payrollPayable: computed.payrollPayable,
           withHoldingTaxPayableVendors: computed.whtVendors,
           accountsPayable: computed.accountsPayable, // equals vendorBills here
           vendorBills: computed.vendorBills,
-          totalCurrentPayables: computed.payrollPayable + computed.whtVendors + computed.accountsPayable,
+          totalCurrentPayables: computed.payrollPayable + computed.whtVendors + computed.accountsPayable + custom.payablesAdj,
         },
         longTerm: {
           sirAatifLoanToCompany: computed.sirAatifLoanToCompany,
           payrollWithHoldingTaxPayable: computed.payrollWithHoldingTaxPayable,
           totalLongTermPayables: computed.sirAatifLoanToCompany + computed.payrollWithHoldingTaxPayable,
         },
+        manualAdjustments: custom.payablesAdj,
         totalPayables: computed.totalPayables,
       },
 
       receivables: {
         loanAgainstSalary: computed.loanAgainstSalary,
         taxWithheld: computed.taxWithheld,
+        manualAdjustments: custom.receivablesAdj,
         totalReceivables: computed.totalReceivables,
       },
 
+      // Keep your existing AP Aging
       apAging,
 
-      monthlySeries,
+      // Return raw custom rows too (useful for UI)
+      customFields: {
+        company: companyNameForCustom,
+        module: "ar_ap",
+        asOf,
+        rows: custom.rows,
+      },
+
+      // ✅ Use this for the Growth chart (matches your tables exactly)
+      monthlySeriesTotals,
+
+      // Optional reference series (true Balance Sheet A/P vs A/R)
+      monthlySeriesBalanceSheet,
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
