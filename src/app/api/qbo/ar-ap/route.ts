@@ -238,7 +238,6 @@ async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Ca
   const key = `bs:${companyId}:${accountingMethod}:${asOf}`;
   const hit = cacheGet<any>(key);
   if (hit) return hit;
-
   try {
     const v = await qboFetch(
       `reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}` +
