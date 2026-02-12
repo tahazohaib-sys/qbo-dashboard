@@ -239,14 +239,16 @@ async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Ca
   const hit = cacheGet<any>(key);
   if (hit) return hit;
   try {
+    // Use end_date to force true month-end snapshots. Some tenants ignore as_of_date
+    // and default to current date, which makes monthly points appear flat.
     const v = await qboFetch(
-      `reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}` +
-        `&accounting_method=${encodeURIComponent(accountingMethod)}`
+      `reports/BalanceSheet?end_date=${encodeURIComponent(asOf)}` +
+        `&summarize_column_by=Total&accounting_method=${encodeURIComponent(accountingMethod)}`
     );
     cacheSet(key, v);
     return v;
   } catch {
-    // Fallback form: some QBO tenants are stricter with date-style params on reports.
+    // Fallback form: keep a strict single-day window for compatibility.
     const v = await qboFetch(
       `reports/BalanceSheet?start_date=${encodeURIComponent(asOf)}&end_date=${encodeURIComponent(asOf)}` +
         `&summarize_column_by=Total&accounting_method=${encodeURIComponent(accountingMethod)}`
@@ -507,14 +509,35 @@ async function computeDetailedAsOf(
 
 /**
  * FAST monthly totals for chart:
- * Use BalanceSheet total "Accounts Receivable" / "Accounts Payable" at month-end
- * (avoids scanning all bills/payments for every month).
+ * Use the same AR/AP account buckets as the detailed section, but sourced directly
+ * from month-end Balance Sheet snapshots (avoids scanning bills/payments per month).
  */
 async function computeMonthEndArApPoint(companyId: string, asOf: string, accountingMethod: "Accrual" | "Cash") {
   try {
     const bs = await fetchBalanceSheet(asOf, accountingMethod, companyId);
-    const totals = extractArApFromBalanceSheet(bs);
-    return { asOf, payables: totals.payables, receivables: totals.receivables, error: false };
+
+    const PAYROLL_PAYABLE = "Payroll Payable";
+    const WHT_VENDOR = "With Holding Tax Payable Vendors";
+    const AATIF_LOAN = "Sir Aatif Loan to Company";
+    const PAYROLL_WHT = "Payroll With Holding Tax Payable";
+    const LOAN_SALARY = "Loan Against Salary";
+    const TAX_WITHHELD = "Tax Withheld";
+
+    const { payables: accountsPayable } = extractArApFromBalanceSheet(bs);
+    const payrollPayable = pickAccount(bs, PAYROLL_PAYABLE);
+    const whtVendors = pickAccount(bs, WHT_VENDOR);
+    const sirAatifLoanToCompany = pickAccount(bs, AATIF_LOAN);
+    const payrollWithHoldingTaxPayable = pickAccount(bs, PAYROLL_WHT);
+
+    const loanAgainstSalary = pickAccount(bs, LOAN_SALARY);
+    const taxWithheld = pickAccount(bs, TAX_WITHHELD);
+
+    return {
+      asOf,
+      payables: payrollPayable + whtVendors + accountsPayable + sirAatifLoanToCompany + payrollWithHoldingTaxPayable,
+      receivables: loanAgainstSalary + taxWithheld,
+      error: false,
+    };
   } catch {
     return { asOf, payables: 0, receivables: 0, error: true };
   }
