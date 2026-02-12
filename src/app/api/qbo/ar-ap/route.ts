@@ -84,6 +84,7 @@ function monthEndFromMonthKeyUTC(monthKey: string): string {
 function parseYearMonthParam(v: string | null): number | null {
   if (v == null) return null;
   const t = v.trim();
+  if (!t) return null;
   if (!/^\d+$/.test(t)) return null;
   const n = Number(t);
   if (!Number.isInteger(n)) return null;
@@ -254,6 +255,8 @@ async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Ca
     cacheSet(key, v);
     return v;
   }
+}
+
 async function fetchAPAgingSummary(asOf: string) {
   const key = `apaging:${asOf}`;
   const hit = cacheGet<any>(key);
@@ -572,12 +575,21 @@ export async function GET(req: Request) {
     let monthlySeries: Array<{ month: string; asOf: string; payables: number; receivables: number; error: boolean }> | undefined;
 
     if (months > 1) {
-      const fromYear = parseYearMonthParam(searchParams.get("fromYear"));
-      const fromMonth = parseYearMonthParam(searchParams.get("fromMonth"));
-      const toYear = parseYearMonthParam(searchParams.get("toYear"));
-      const toMonth = parseYearMonthParam(searchParams.get("toMonth"));
+      const fromYearRaw = searchParams.get("fromYear");
+      const fromMonthRaw = searchParams.get("fromMonth");
+      const toYearRaw = searchParams.get("toYear");
+      const toMonthRaw = searchParams.get("toMonth");
+
+      const fromYear = parseYearMonthParam(fromYearRaw);
+      const fromMonth = parseYearMonthParam(fromMonthRaw);
+      const toYear = parseYearMonthParam(toYearRaw);
+      const toMonth = parseYearMonthParam(toMonthRaw);
+
+      const hasAllRangeParams =
+        fromYearRaw != null && fromMonthRaw != null && toYearRaw != null && toMonthRaw != null;
 
       const hasExplicitRange =
+        hasAllRangeParams &&
         fromYear != null &&
         fromMonth != null &&
         toYear != null &&
