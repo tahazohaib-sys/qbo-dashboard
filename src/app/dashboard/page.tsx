@@ -189,7 +189,7 @@ type ArApResp = {
       withHoldingTaxPayableVendors: number;
       accountsPayable: number;
       totalCurrentPayables: number;
-      vendorBills?: number; // (your API sends this)
+      vendorBills?: number;
     };
     longTerm: {
       sirAatifLoanToCompany: number;
@@ -233,9 +233,8 @@ type ArApCustomRow = {
   created_at: string;
 };
 
-type ArApCustomListResp = | { ok: true; asOf: string; rows: ArApCustomRow[] } | { ok: false; error: string };
-
-type ArApCustomCreateResp = | { ok: true; row: ArApCustomRow } | { ok: false; error: string };
+type ArApCustomListResp = { ok: true; asOf: string; rows: ArApCustomRow[] } | { ok: false; error: string };
+type ArApCustomCreateResp = { ok: true; row: ArApCustomRow } | { ok: false; error: string };
 
 /* ---------------------- helpers ---------------------- */
 
@@ -245,17 +244,6 @@ function formatLocalYMD(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
-}
-
-// Build last N month-end dates ending at selected (year, month)
-function monthEndDatesFrom(endY: number, endM: number, months = 6) {
-  const dates: string[] = [];
-  for (let i = months - 1; i >= 0; i--) {
-    // month-end of (endM - i)
-    const d = new Date(endY, endM - i, 0);
-    dates.push(formatLocalYMD(d));
-  }
-  return dates;
 }
 
 function formatMoneyByCurrency(currency: string, n: number) {
@@ -353,17 +341,9 @@ const CHART_COLORS = {
   profit: "#34d399",
 } as const;
 
-function trendLabelFromMoM(mom: number): "Increasing" | "Decreasing" | "Stable" {
-  if (!Number.isFinite(mom)) return "Stable";
-  if (mom > 0.01) return "Increasing";
-  if (mom < -0.01) return "Decreasing";
-  return "Stable";
-}
-
 function fmtAxisPKR(v: any) {
   const n = Number(v ?? 0);
   if (!Number.isFinite(n)) return "0";
-  // compact ticks for readability
   if (Math.abs(n) >= 1_000_000_000) return `${Math.round(n / 1_000_000_000)}B`;
   if (Math.abs(n) >= 1_000_000) return `${Math.round(n / 1_000_000)}M`;
   if (Math.abs(n) >= 1_000) return `${Math.round(n / 1_000)}K`;
@@ -403,7 +383,9 @@ export default function DashboardPage() {
   const [arApLoading, setArApLoading] = useState(false);
   const [arAp, setArAp] = useState<ArApResp | null>(null);
   const [showManualAdjustments, setShowManualAdjustments] = useState(true);
-  const [monthlyArAp, setMonthlyArAp] = useState<Array<{ month: string; asOf: string; payables: number; receivables: number; error?: boolean }>>([]);
+  const [monthlyArAp, setMonthlyArAp] = useState<
+    Array<{ month: string; asOf: string; payables: number; receivables: number; error?: boolean }>
+  >([]);
 
   // ✅ AR/AP Custom Fields (As-Of specific)
   const [arApCustomLoading, setArApCustomLoading] = useState(false);
@@ -422,6 +404,11 @@ export default function DashboardPage() {
     return { start, end };
   }
 
+  function monthSpanInclusive(fy: number, fm: number, ty: number, tm: number) {
+    const span = (ty - fy) * 12 + (tm - fm) + 1;
+    return Math.max(1, Math.min(24, span));
+  }
+
   async function fetchForecast(series: DashboardResp["series"], horizon: 6 | 12) {
     setForecastLoading(true);
     try {
@@ -437,13 +424,6 @@ export default function DashboardPage() {
     } finally {
       setForecastLoading(false);
     }
-  }
-
-  async function fetchArAp(asOfYmd: string) {
-    const res = await fetch(`/api/qbo/ar-ap?asOf=${encodeURIComponent(asOfYmd)}`, { cache: "no-store" });
-    const json: ArApResp = await res.json();
-    if (!json.ok) throw new Error(json.error || "AR/AP API failed");
-    return json;
   }
 
   // ✅ Custom Fields fetch (as-of specific)
@@ -521,53 +501,40 @@ export default function DashboardPage() {
   ) {
     setArApLoading(true);
     try {
-      // ✅ ONE call only (backend returns monthlySeries)
-      const res = await fetch(`
-        /api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=6&fromYear=${fy}&fromMonth=${fm}&toYear=${ty}&toMonth=${tm}&accounting_method=${encodeURIComponent(accountingMethod)}
-      `.replace(/\s+/g, ""), { cache: "no-store" });
+      // ✅ ONE call only (backend returns month-end Balance Sheet monthlySeries)
+      const url = `
+        /api/qbo/ar-ap
+          ?asOf=${encodeURIComponent(endYmd)}
+          &months=${monthSpanInclusive(fy, fm, ty, tm)}
+          &fromYear=${fy}
+          &fromMonth=${fm}
+          &toYear=${ty}
+          &toMonth=${tm}
+          &accounting_method=${encodeURIComponent(accountingMethod)}
+      `.replace(/\s+/g, "");
+
+      const res = await fetch(url, { cache: "no-store" });
       const one: any = await res.json();
       if (!one?.ok) throw new Error(one?.error || "AR/AP API failed");
 
       setArAp(one);
 
+      // ✅ auto-load manual adjustments for the SAME as-of date
+      reloadArApCustom(endYmd).catch(() => {});
+
       // ---------- Build monthly rows (from backend series) ----------
-      const series: Array<{ asOf: string; month: string; payables: number; receivables: number; error?: boolean }> = (one.monthlySeries ?? []).map(
-        (r: any) => ({
-          asOf: r.asOf ?? `${r.month}-01`,
-          month: r.month,
-          payables: Number(r.payables ?? 0),
-          receivables: Number(r.receivables ?? 0),
-          error: Boolean(r.error),
-        })
-      );
+      const series: Array<{ asOf: string; month: string; payables: number; receivables: number; error?: boolean }> = (
+        one.monthlySeries ?? []
+      ).map((r: any) => ({
+        asOf: r.asOf ?? `${r.month}-01`,
+        month: r.month,
+        payables: Number(r.payables ?? 0),
+        receivables: Number(r.receivables ?? 0),
+        error: Boolean(r.error),
+      }));
 
-      // ---------- Overlay custom rows for each month-end ----------
-      const finalRows: Array<{ month: string; asOf: string; payables: number; receivables: number; error?: boolean }> = [];
-
-      for (const s of series) {
-        let customRows: ArApCustomRow[] = [];
-        try {
-          customRows = await fetchArApCustom(s.asOf);
-        } catch {
-          customRows = [];
-        }
-
-        const addPay = customRows.filter((r) => r.section === "payables").reduce((sum, r) => sum + Number((r as any).amount ?? 0), 0);
-
-        const addRec = customRows
-          .filter((r) => r.section === "receivables")
-          .reduce((sum, r) => sum + Number((r as any).amount ?? 0), 0);
-
-        finalRows.push({
-          month: s.month,
-          payables: s.payables + addPay,
-          asOf: s.asOf,
-          receivables: s.receivables + addRec,
-          error: s.error,
-        });
-      }
-
-      setMonthlyArAp(finalRows);
+      // Keep chart strictly on Balance Sheet month-end snapshots (no manual adjustment overlays)
+      setMonthlyArAp(series);
     } catch {
       setArAp(null);
       setMonthlyArAp([]);
@@ -689,7 +656,9 @@ export default function DashboardPage() {
   const isProfit = netMargin >= 0;
   const financialLabel = isProfit ? "Net Profit Margin" : "Net Loss Margin";
   const marginTone = isProfit ? "text-emerald-300" : "text-rose-300";
-  const marginGlow = isProfit ? "shadow-[0_0_50px_rgba(16,185,129,0.35)]" : "shadow-[0_0_50px_rgba(244,63,94,0.35)]";
+  const marginGlow = isProfit
+    ? "shadow-[0_0_50px_rgba(16,185,129,0.35)]"
+    : "shadow-[0_0_50px_rgba(244,63,94,0.35)]";
 
   const financialSummary = isProfit
     ? `The selected period delivered a net profit of ${formatPKRMillions(
@@ -805,18 +774,25 @@ export default function DashboardPage() {
       { name: "20% Margin", value: forecastData?.benchmarks?.margin20 ?? 0 },
       { name: "30% Margin", value: forecastData?.benchmarks?.margin30 ?? 0 },
     ];
-  }, [fcOk, fcAvgRevenue, fcBreakeven, forecastData?.benchmarks?.margin10, forecastData?.benchmarks?.margin20, forecastData?.benchmarks?.margin30]);
+  }, [
+    fcOk,
+    fcAvgRevenue,
+    fcBreakeven,
+    forecastData?.benchmarks?.margin10,
+    forecastData?.benchmarks?.margin20,
+    forecastData?.benchmarks?.margin30,
+  ]);
 
   const forecastRows = forecastData?.forecast ?? [];
 
   // ✅ compute custom sums for CURRENT asOf (used in AR/AP UI totals)
   const arApCustomPayables = useMemo(() => arApCustomRows.filter((r) => r.section === "payables"), [arApCustomRows]);
-  const arApCustomReceivables = useMemo(
-    () => arApCustomRows.filter((r) => r.section === "receivables"),
-    [arApCustomRows]
-  );
+  const arApCustomReceivables = useMemo(() => arApCustomRows.filter((r) => r.section === "receivables"), [arApCustomRows]);
 
-  const customPayablesSum = useMemo(() => arApCustomPayables.reduce((s, r) => s + Number(r.amount ?? 0), 0), [arApCustomPayables]);
+  const customPayablesSum = useMemo(
+    () => arApCustomPayables.reduce((s, r) => s + Number(r.amount ?? 0), 0),
+    [arApCustomPayables]
+  );
   const customReceivablesSum = useMemo(
     () => arApCustomReceivables.reduce((s, r) => s + Number(r.amount ?? 0), 0),
     [arApCustomReceivables]
@@ -888,7 +864,11 @@ export default function DashboardPage() {
             CFO Forecast
           </TabButton>
 
-          <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" onActivate={() => setTab("revenue")}>
+          <TabLinkButton
+            active={tab === "revenue"}
+            href="/dashboard/revenue-analytics"
+            onActivate={() => setTab("revenue")}
+          >
             Revenue Analytics
           </TabLinkButton>
         </div>
@@ -1228,7 +1208,6 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    {/* ✅ Payables Detail without Current/Long-term sections */}
                     <Panel title="Payables Detail">
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
@@ -1274,7 +1253,6 @@ export default function DashboardPage() {
                               </td>
                             </tr>
 
-                            {/* manual payables rows */}
                             {arApCustomPayables.length ? (
                               <>
                                 {arApCustomPayables.map((r) => (
@@ -1315,7 +1293,6 @@ export default function DashboardPage() {
                               <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.receivables.taxWithheld)}</td>
                             </tr>
 
-                            {/* manual receivables rows */}
                             {arApCustomReceivables.length ? (
                               <>
                                 {arApCustomReceivables.map((r) => (
@@ -1338,7 +1315,6 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="mt-4">
-                    {/* ✅ Rename title exactly as requested */}
                     <Panel title="Vendor Payables Breakdown">
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
@@ -1397,7 +1373,11 @@ export default function DashboardPage() {
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
               <KpiCard title="Total Income" value={formatPKRCompact(kpi.revenue)} />
               <KpiCard title="Total Expenses" value={formatPKRCompact(kpi.expenses)} />
-              <KpiCard title="Net Profit (Loss)" value={formatPKRCompact(kpi.profit)} highlight={kpi.profit < 0 ? "bad" : "good"} />
+              <KpiCard
+                title="Net Profit (Loss)"
+                value={formatPKRCompact(kpi.profit)}
+                highlight={kpi.profit < 0 ? "bad" : "good"}
+              />
               <KpiCard title="Months" value={`${series.length}`} />
             </div>
 
@@ -1405,12 +1385,18 @@ export default function DashboardPage() {
               <Panel title="Financial Insight">
                 <div className="rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/80 via-[#10243f]/70 to-[#130f2f]/80 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_20px_50px_rgba(2,6,23,0.45)] backdrop-blur-xl md:p-10">
                   <div className="mx-auto max-w-4xl text-center">
-                    <div className={`mx-auto mb-2 inline-block rounded-3xl px-6 py-2 text-6xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}>
+                    <div
+                      className={`mx-auto mb-2 inline-block rounded-3xl px-6 py-2 text-6xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}
+                    >
                       {formatPct(netMargin)}
                     </div>
-                    <div className="text-base font-semibold uppercase tracking-[0.18em] text-slate-300 md:text-lg">{financialLabel}</div>
+                    <div className="text-base font-semibold uppercase tracking-[0.18em] text-slate-300 md:text-lg">
+                      {financialLabel}
+                    </div>
 
-                    <p className="mx-auto mt-5 max-w-3xl text-sm leading-relaxed text-slate-200/95 md:text-base">{financialSummary}</p>
+                    <p className="mx-auto mt-5 max-w-3xl text-sm leading-relaxed text-slate-200/95 md:text-base">
+                      {financialSummary}
+                    </p>
 
                     <div className="mt-8 grid grid-cols-1 gap-2 border-t border-white/10 pt-4 text-xs text-slate-400 sm:grid-cols-3 md:text-sm">
                       <div>Revenue: {formatPKRMillions(kpi.revenue)}</div>
@@ -1589,11 +1575,7 @@ export default function DashboardPage() {
               <KpiCard title="Net Profit" value={formatPKRCompact(reProfit)} />
               <KpiCard title="Long-term Assets" value={formatPKRCompact(reLongTermAssets)} />
               <KpiCard title="Net Investments" value={formatPKRCompact(reNetInvestments)} />
-              <KpiCard
-                title="Retained Earning"
-                value={formatPKRCompact(reRetained)}
-                highlight={reRetained < 0 ? "bad" : "good"}
-              />
+              <KpiCard title="Retained Earning" value={formatPKRCompact(reRetained)} highlight={reRetained < 0 ? "bad" : "good"} />
             </div>
 
             <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1621,7 +1603,14 @@ export default function DashboardPage() {
                     <PieChart>
                       <Tooltip content={<MoneyTooltip pie />} />
                       <Legend />
-                      <Pie data={donutData.length ? donutData : retainedBreakdown} dataKey="value" nameKey="name" innerRadius={70} outerRadius={110} paddingAngle={2}>
+                      <Pie
+                        data={donutData.length ? donutData : retainedBreakdown}
+                        dataKey="value"
+                        nameKey="name"
+                        innerRadius={70}
+                        outerRadius={110}
+                        paddingAngle={2}
+                      >
                         {(donutData.length ? donutData : retainedBreakdown).map((_, i) => (
                           <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
                         ))}
@@ -1775,7 +1764,9 @@ export default function DashboardPage() {
                 </div>
               </>
             ) : (
-              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-slate-300">No data available for the selected range.</div>
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-slate-300">
+                No data available for the selected range.
+              </div>
             )}
           </>
         ) : null}

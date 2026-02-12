@@ -81,6 +81,25 @@ function monthEndFromMonthKeyUTC(monthKey: string): string {
   return formatUTCYMD(d);
 }
 
+function parseYearMonthParam(v: string | null): number | null {
+  if (v == null) return null;
+  const t = v.trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  if (!Number.isInteger(n)) return null;
+  return n;
+}
+
+function isValidYearMonthRange(fromYear: number, fromMonth: number, toYear: number, toMonth: number): boolean {
+  return (
+    fromYear >= 1900 &&
+    toYear >= 1900 &&
+    fromMonth >= 1 &&
+    fromMonth <= 12 &&
+    toMonth >= 1 &&
+    toMonth <= 12
+  );
+}
 function daysDiffUTC(asOf: string, base: string): number {
   const a = parseYMD(asOf);
   const b = parseYMD(base);
@@ -219,13 +238,22 @@ async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Ca
   const key = `bs:${companyId}:${accountingMethod}:${asOf}`;
   const hit = cacheGet<any>(key);
   if (hit) return hit;
-  const v = await qboFetch(
-    `reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}&accounting_method=${encodeURIComponent(accountingMethod)}`
-  );
-  cacheSet(key, v);
-  return v;
-}
-
+  try {
+    const v = await qboFetch(
+      `reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}` +
+        `&accounting_method=${encodeURIComponent(accountingMethod)}`
+    );
+    cacheSet(key, v);
+    return v;
+  } catch {
+    // Fallback form: some QBO tenants are stricter with date-style params on reports.
+    const v = await qboFetch(
+      `reports/BalanceSheet?start_date=${encodeURIComponent(asOf)}&end_date=${encodeURIComponent(asOf)}` +
+        `&summarize_column_by=Total&accounting_method=${encodeURIComponent(accountingMethod)}`
+    );
+    cacheSet(key, v);
+    return v;
+  }
 async function fetchAPAgingSummary(asOf: string) {
   const key = `apaging:${asOf}`;
   const hit = cacheGet<any>(key);
@@ -544,16 +572,21 @@ export async function GET(req: Request) {
     let monthlySeries: Array<{ month: string; asOf: string; payables: number; receivables: number; error: boolean }> | undefined;
 
     if (months > 1) {
-      const fromYear = Number(searchParams.get("fromYear") ?? "");
-      const fromMonth = Number(searchParams.get("fromMonth") ?? "");
-      const toYear = Number(searchParams.get("toYear") ?? "");
-      const toMonth = Number(searchParams.get("toMonth") ?? "");
+      const fromYear = parseYearMonthParam(searchParams.get("fromYear"));
+      const fromMonth = parseYearMonthParam(searchParams.get("fromMonth"));
+      const toYear = parseYearMonthParam(searchParams.get("toYear"));
+      const toMonth = parseYearMonthParam(searchParams.get("toMonth"));
 
-      const monthKeys =
-        Number.isInteger(fromYear) && Number.isInteger(fromMonth) && Number.isInteger(toYear) && Number.isInteger(toMonth)
-          ? monthListBetween(fromYear, fromMonth, toYear, toMonth)
-          : monthEndDatesUTC(asOf, months).map((d) => d.slice(0, 7));
+      const hasExplicitRange =
+        fromYear != null &&
+        fromMonth != null &&
+        toYear != null &&
+        toMonth != null &&
+        isValidYearMonthRange(fromYear, fromMonth, toYear, toMonth);
 
+      const monthKeys = hasExplicitRange
+        ? monthListBetween(fromYear, fromMonth, toYear, toMonth).slice(-24)
+        : monthEndDatesUTC(asOf, months).map((d) => d.slice(0, 7));
       const dates = monthKeys.map((mk) => ({ month: mk, asOf: monthEndFromMonthKeyUTC(mk) }));
 
       // Concurrency 3 to avoid QBO throttling
