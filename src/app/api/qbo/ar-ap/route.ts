@@ -44,7 +44,7 @@ function monthEndDatesUTC(endYmd: string, months: number): string[] {
   // Generate month-ends ending at (y,m)
   for (let i = months - 1; i >= 0; i--) {
     // month-end of (m - i)
-    const d = new Date(Date.UTC(y, (m - i), 0)); // day 0 => last day of previous month => month-end
+    const d = new Date(Date.UTC(y, m - i, 0)); // day 0 => last day of previous month
     out.push(formatUTCYMD(d));
   }
   return out;
@@ -100,6 +100,7 @@ function isValidYearMonthRange(fromYear: number, fromMonth: number, toYear: numb
     toMonth <= 12
   );
 }
+
 function daysDiffUTC(asOf: string, base: string): number {
   const a = parseYMD(asOf);
   const b = parseYMD(base);
@@ -211,8 +212,7 @@ function normalizeAccountingMethod(input: string | null): "Accrual" | "Cash" {
 }
 
 /**
- * ---------- LIGHT IN-MEMORY CACHE (reduces repeated QBO hits) ----------
- * Good enough for dev/prod single instance. If you scale, move to Supabase snapshots later.
+ * ---------- LIGHT IN-MEMORY CACHE ----------
  */
 type CacheItem = { exp: number; value: any };
 const CACHE = new Map<string, CacheItem>();
@@ -238,6 +238,7 @@ async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Ca
   const key = `bs:${companyId}:${accountingMethod}:${asOf}`;
   const hit = cacheGet<any>(key);
   if (hit) return hit;
+
   try {
     const v = await qboFetch(
       `reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}` +
@@ -254,6 +255,8 @@ async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Ca
     cacheSet(key, v);
     return v;
   }
+}
+
 async function fetchAPAgingSummary(asOf: string) {
   const key = `apaging:${asOf}`;
   const hit = cacheGet<any>(key);
@@ -317,9 +320,7 @@ async function queryOpenBills() {
 
   while (true) {
     const q = `SELECT Id, TxnDate, DueDate, Balance, VendorRef FROM Bill WHERE Balance > '0'`;
-    const path =
-      `query?query=${encodeURIComponent(q)}` +
-      `&startposition=${start}&maxresults=${size}`;
+    const path = `query?query=${encodeURIComponent(q)}` + `&startposition=${start}&maxresults=${size}`;
 
     const res: any = await qboFetch(path);
     const bills: any[] = res?.QueryResponse?.Bill ?? [];
@@ -335,16 +336,12 @@ function buildAPAgingFromBills(asOf: string, bills: any[]) {
   const map = new Map<string, any>();
 
   for (const b of bills) {
-    const vendor =
-      (b?.VendorRef?.name ?? b?.VendorRef?.value ?? "Unknown Vendor").toString();
+    const vendor = (b?.VendorRef?.name ?? b?.VendorRef?.value ?? "Unknown Vendor").toString();
 
     const bal = moneyInt(b?.Balance);
     if (!bal) continue;
 
-    const base =
-      b?.DueDate && /^\d{4}-\d{2}-\d{2}$/.test(b.DueDate)
-        ? b.DueDate
-        : b?.TxnDate;
+    const base = b?.DueDate && /^\d{4}-\d{2}-\d{2}$/.test(b.DueDate) ? b.DueDate : b?.TxnDate;
 
     const days = base ? daysDiffUTC(asOf, base) : 0;
 
@@ -372,7 +369,7 @@ function buildAPAgingFromBills(asOf: string, bills: any[]) {
  * ---------- TRUE MONTH-END VENDOR BILLS (RECONSTRUCT) ----------
  * Vendor Bills as-of date:
  *   sum(Bill.TotalAmt up to asOf) - sum(BillPayment.TotalAmt up to asOf)
- * NOTE: This is accurate but expensive. We will use it ONLY for the main asOf.
+ * NOTE: Accurate but expensive. We use it ONLY for the main asOf.
  */
 async function sumBillsTotalAmtUpto(asOf: string): Promise<number> {
   const q = `SELECT TotalAmt FROM Bill WHERE TxnDate <= '${asOf}'`;
@@ -381,9 +378,7 @@ async function sumBillsTotalAmtUpto(asOf: string): Promise<number> {
   let total = 0;
 
   while (true) {
-    const path =
-      `query?query=${encodeURIComponent(q)}` +
-      `&startposition=${start}&maxresults=${size}`;
+    const path = `query?query=${encodeURIComponent(q)}` + `&startposition=${start}&maxresults=${size}`;
 
     const res: any = await qboFetch(path);
     const rows: any[] = res?.QueryResponse?.Bill ?? [];
@@ -403,9 +398,7 @@ async function sumBillPaymentsTotalAmtUpto(asOf: string): Promise<number> {
   let total = 0;
 
   while (true) {
-    const path =
-      `query?query=${encodeURIComponent(q)}` +
-      `&startposition=${start}&maxresults=${size}`;
+    const path = `query?query=${encodeURIComponent(q)}` + `&startposition=${start}&maxresults=${size}`;
 
     const res: any = await qboFetch(path);
     const rows: any[] = res?.QueryResponse?.BillPayment ?? [];
@@ -423,10 +416,7 @@ async function computeVendorBillsAsOf(asOf: string): Promise<number> {
   const hit = cacheGet<number>(cacheKey);
   if (typeof hit === "number") return hit;
 
-  const [bills, payments] = await Promise.all([
-    sumBillsTotalAmtUpto(asOf),
-    sumBillPaymentsTotalAmtUpto(asOf),
-  ]);
+  const [bills, payments] = await Promise.all([sumBillsTotalAmtUpto(asOf), sumBillPaymentsTotalAmtUpto(asOf)]);
   const outstanding = bills - payments;
   const v = outstanding > 0 ? outstanding : 0;
 
@@ -442,7 +432,7 @@ type Computed = {
   payrollPayable: number;
   whtVendors: number;
   accountsPayable: number; // in detailed view this is vendorBills (reconstructed)
-  vendorBills: number;     // reconstructed
+  vendorBills: number; // reconstructed
   sirAatifLoanToCompany: number;
   payrollWithHoldingTaxPayable: number;
 
@@ -452,7 +442,11 @@ type Computed = {
   totalReceivables: number;
 };
 
-async function computeDetailedAsOf(asOf: string, accountingMethod: "Accrual" | "Cash", companyId: string): Promise<{
+async function computeDetailedAsOf(
+  asOf: string,
+  accountingMethod: "Accrual" | "Cash",
+  companyId: string
+): Promise<{
   computed: Computed;
   apAging: { totalAP: number; vendors: any[]; source: string };
 }> {
@@ -478,12 +472,7 @@ async function computeDetailedAsOf(asOf: string, accountingMethod: "Accrual" | "
   const sirAatifLoanToCompany = pickAccount(bs, AATIF_LOAN);
   const payrollWithHoldingTaxPayable = pickAccount(bs, PAYROLL_WHT);
 
-  const totalPayables =
-    payrollPayable +
-    whtVendors +
-    accountsPayable +
-    sirAatifLoanToCompany +
-    payrollWithHoldingTaxPayable;
+  const totalPayables = payrollPayable + whtVendors + accountsPayable + sirAatifLoanToCompany + payrollWithHoldingTaxPayable;
 
   const loanAgainstSalary = pickAccount(bs, LOAN_SALARY);
   const taxWithheld = pickAccount(bs, TAX_WITHHELD);
@@ -519,8 +508,8 @@ async function computeDetailedAsOf(asOf: string, accountingMethod: "Accrual" | "
 
 /**
  * FAST monthly totals for chart:
- * Use BalanceSheet "Accounts Payable (A/P)" as proxy for vendor bills month-end
- * (avoids scanning all bills/payments).
+ * Use BalanceSheet total "Accounts Receivable" / "Accounts Payable" at month-end
+ * (avoids scanning all bills/payments for every month).
  */
 async function computeMonthEndArApPoint(companyId: string, asOf: string, accountingMethod: "Accrual" | "Cash") {
   try {
@@ -561,7 +550,7 @@ export async function GET(req: Request) {
     const accountingMethod = normalizeAccountingMethod(searchParams.get("accounting_method"));
     const { realmId } = await getValidAccessToken();
 
-    // months=6 will return monthlySeries for chart in the SAME response
+    // months=... controls whether monthlySeries is returned
     const monthsRaw = searchParams.get("months");
     const months = Math.max(1, Math.min(24, Number(monthsRaw ?? "1") || 1)); // 1..24
 
@@ -587,6 +576,7 @@ export async function GET(req: Request) {
       const monthKeys = hasExplicitRange
         ? monthListBetween(fromYear, fromMonth, toYear, toMonth).slice(-24)
         : monthEndDatesUTC(asOf, months).map((d) => d.slice(0, 7));
+
       const dates = monthKeys.map((mk) => ({ month: mk, asOf: monthEndFromMonthKeyUTC(mk) }));
 
       // Concurrency 3 to avoid QBO throttling
@@ -610,7 +600,6 @@ export async function GET(req: Request) {
       currency: "PKR",
 
       payables: {
-        // keep old shape for your existing UI
         current: {
           payrollPayable: computed.payrollPayable,
           withHoldingTaxPayableVendors: computed.whtVendors,
@@ -634,13 +623,9 @@ export async function GET(req: Request) {
 
       apAging,
 
-      // NEW: month-end series returned from backend (fast)
       monthlySeries,
     });
   } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? "Unknown error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
   }
 }

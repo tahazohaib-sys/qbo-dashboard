@@ -189,7 +189,7 @@ type ArApResp = {
       withHoldingTaxPayableVendors: number;
       accountsPayable: number;
       totalCurrentPayables: number;
-      vendorBills?: number;
+      vendorBills?: number; // (your API sends this)
     };
     longTerm: {
       sirAatifLoanToCompany: number;
@@ -244,6 +244,17 @@ function formatLocalYMD(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+// Build last N month-end dates ending at selected (year, month)
+function monthEndDatesFrom(endY: number, endM: number, months = 6) {
+  const dates: string[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    // month-end of (endM - i)
+    const d = new Date(endY, endM - i, 0);
+    dates.push(formatLocalYMD(d));
+  }
+  return dates;
 }
 
 function formatMoneyByCurrency(currency: string, n: number) {
@@ -307,7 +318,16 @@ const MONTHS = [
   { v: 12, label: "Dec" },
 ];
 
-const DONUT_COLORS = ["#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#fb7185", "#22d3ee", "#f97316", "#94a3b8"];
+const DONUT_COLORS = [
+  "#60a5fa",
+  "#34d399",
+  "#fbbf24",
+  "#a78bfa",
+  "#fb7185",
+  "#22d3ee",
+  "#f97316",
+  "#94a3b8",
+];
 
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
 
@@ -340,6 +360,13 @@ const CHART_COLORS = {
   negative: "#f87171",
   profit: "#34d399",
 } as const;
+
+function trendLabelFromMoM(mom: number): "Increasing" | "Decreasing" | "Stable" {
+  if (!Number.isFinite(mom)) return "Stable";
+  if (mom > 0.01) return "Increasing";
+  if (mom < -0.01) return "Decreasing";
+  return "Stable";
+}
 
 function fmtAxisPKR(v: any) {
   const n = Number(v ?? 0);
@@ -426,6 +453,13 @@ export default function DashboardPage() {
     }
   }
 
+  async function fetchArAp(asOfYmd: string) {
+    const res = await fetch(`/api/qbo/ar-ap?asOf=${encodeURIComponent(asOfYmd)}`, { cache: "no-store" });
+    const json: ArApResp = await res.json();
+    if (!json.ok) throw new Error(json.error || "AR/AP API failed");
+    return json;
+  }
+
   // ✅ Custom Fields fetch (as-of specific)
   async function fetchArApCustom(asOfYmd: string): Promise<ArApCustomRow[]> {
     const res = await fetch(`/api/custom-fields/ar-ap?asOf=${encodeURIComponent(asOfYmd)}`, { cache: "no-store" });
@@ -491,7 +525,7 @@ export default function DashboardPage() {
     await reloadArApCustom(asOfYmd);
   }
 
-  async function loadArApAndMonthly(
+    async function loadArApAndMonthly(
     endYmd: string,
     fy: number,
     fm: number,
@@ -502,38 +536,29 @@ export default function DashboardPage() {
     setArApLoading(true);
     try {
       // ✅ ONE call only (backend returns month-end Balance Sheet monthlySeries)
-      const url = `
-        /api/qbo/ar-ap
-          ?asOf=${encodeURIComponent(endYmd)}
-          &months=${monthSpanInclusive(fy, fm, ty, tm)}
-          &fromYear=${fy}
-          &fromMonth=${fm}
-          &toYear=${ty}
-          &toMonth=${tm}
-          &accounting_method=${encodeURIComponent(accountingMethod)}
-      `.replace(/\s+/g, "");
+      const res = await fetch(
+        `
+        /api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=${monthSpanInclusive(fy, fm, ty, tm)}&fromYear=${fy}&fromMonth=${fm}&toYear=${ty}&toMonth=${tm}&accounting_method=${encodeURIComponent(accountingMethod)}
+      `.replace(/\s+/g, ""),
+        { cache: "no-store" }
+      );
 
-      const res = await fetch(url, { cache: "no-store" });
       const one: any = await res.json();
       if (!one?.ok) throw new Error(one?.error || "AR/AP API failed");
 
       setArAp(one);
 
-      // ✅ auto-load manual adjustments for the SAME as-of date
-      reloadArApCustom(endYmd).catch(() => {});
-
       // ---------- Build monthly rows (from backend series) ----------
-      const series: Array<{ asOf: string; month: string; payables: number; receivables: number; error?: boolean }> = (
-        one.monthlySeries ?? []
-      ).map((r: any) => ({
-        asOf: r.asOf ?? `${r.month}-01`,
-        month: r.month,
-        payables: Number(r.payables ?? 0),
-        receivables: Number(r.receivables ?? 0),
-        error: Boolean(r.error),
-      }));
+      const series: Array<{ asOf: string; month: string; payables: number; receivables: number; error?: boolean }> =
+        (one.monthlySeries ?? []).map((r: any) => ({
+          asOf: r.asOf ?? `${r.month}-01`,
+          month: r.month,
+          payables: Number(r.payables ?? 0),
+          receivables: Number(r.receivables ?? 0),
+          error: Boolean(r.error),
+        }));
 
-      // Keep chart strictly on Balance Sheet month-end snapshots (no manual adjustment overlays)
+      // ✅ Keep chart strictly on Balance Sheet month-end snapshots (no manual adjustment overlays)
       setMonthlyArAp(series);
     } catch {
       setArAp(null);
@@ -864,11 +889,7 @@ export default function DashboardPage() {
             CFO Forecast
           </TabButton>
 
-          <TabLinkButton
-            active={tab === "revenue"}
-            href="/dashboard/revenue-analytics"
-            onActivate={() => setTab("revenue")}
-          >
+          <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" onActivate={() => setTab("revenue")}>
             Revenue Analytics
           </TabLinkButton>
         </div>
@@ -1043,22 +1064,8 @@ export default function DashboardPage() {
                             <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                             <Tooltip content={<MoneyTooltip arApMonthEnd />} />
                             <Legend />
-                            <Line
-                              type="monotone"
-                              dataKey="payables"
-                              name="Total Payables"
-                              stroke={CHART_COLORS.negative}
-                              strokeWidth={3}
-                              dot={false}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="receivables"
-                              name="Total Receivables"
-                              stroke={CHART_COLORS.profit}
-                              strokeWidth={3}
-                              dot={false}
-                            />
+                            <Line type="monotone" dataKey="payables" name="Total Payables" stroke={CHART_COLORS.negative} strokeWidth={3} dot={false} />
+                            <Line type="monotone" dataKey="receivables" name="Total Receivables" stroke={CHART_COLORS.profit} strokeWidth={3} dot={false} />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -1114,9 +1121,7 @@ export default function DashboardPage() {
                                     placeholder="e.g. 150000"
                                     className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
                                   />
-                                  <div className="mt-1 text-[11px] text-slate-400">
-                                    Tip: you can enter negative value if you want to reduce totals.
-                                  </div>
+                                  <div className="mt-1 text-[11px] text-slate-400">Tip: you can enter negative value if you want to reduce totals.</div>
                                 </div>
 
                                 <button
@@ -1208,6 +1213,7 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    {/* ✅ Payables Detail without Current/Long-term sections */}
                     <Panel title="Payables Detail">
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
@@ -1225,44 +1231,35 @@ export default function DashboardPage() {
 
                             <tr className="border-t border-white/10">
                               <td className="py-2 pr-3 text-slate-200 font-medium">With Holding Tax Payable Vendors</td>
-                              <td className="py-2 text-right font-semibold">
-                                {formatPKRCompact(arAp.payables.current.withHoldingTaxPayableVendors)}
-                              </td>
+                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.current.withHoldingTaxPayableVendors)}</td>
                             </tr>
 
                             <tr className="border-t border-white/10">
                               <td className="py-2 pr-3 text-slate-200 font-medium">Vendor Bills</td>
                               <td className="py-2 text-right font-semibold">
-                                {formatPKRCompact(
-                                  Number((arAp.payables.current as any).vendorBills ?? arAp.payables.current.accountsPayable ?? 0)
-                                )}
+                                {formatPKRCompact(Number((arAp.payables.current as any).vendorBills ?? arAp.payables.current.accountsPayable ?? 0))}
                               </td>
                             </tr>
 
                             <tr className="border-t border-white/10">
                               <td className="py-2 pr-3 text-slate-200 font-medium">Sir Aatif Loan to Company</td>
-                              <td className="py-2 text-right font-semibold">
-                                {formatPKRCompact(arAp.payables.longTerm.sirAatifLoanToCompany)}
-                              </td>
+                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.longTerm.sirAatifLoanToCompany)}</td>
                             </tr>
 
                             <tr className="border-t border-white/10">
                               <td className="py-2 pr-3 text-slate-200 font-medium">Payroll With Holding Tax Payable</td>
-                              <td className="py-2 text-right font-semibold">
-                                {formatPKRCompact(arAp.payables.longTerm.payrollWithHoldingTaxPayable)}
-                              </td>
+                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.longTerm.payrollWithHoldingTaxPayable)}</td>
                             </tr>
 
-                            {arApCustomPayables.length ? (
-                              <>
-                                {arApCustomPayables.map((r) => (
+                            {/* manual payables rows */}
+                            {arApCustomPayables.length
+                              ? arApCustomPayables.map((r) => (
                                   <tr key={r.id} className="border-t border-white/10">
                                     <td className="py-2 pr-3 text-slate-200">{r.label}</td>
                                     <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
                                   </tr>
-                                ))}
-                              </>
-                            ) : null}
+                                ))
+                              : null}
 
                             <tr className="border-t-2 border-white/15 bg-rose-500/10">
                               <td className="py-2 pr-3 font-semibold text-slate-100">Total Payables</td>
@@ -1293,16 +1290,15 @@ export default function DashboardPage() {
                               <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.receivables.taxWithheld)}</td>
                             </tr>
 
-                            {arApCustomReceivables.length ? (
-                              <>
-                                {arApCustomReceivables.map((r) => (
+                            {/* manual receivables rows */}
+                            {arApCustomReceivables.length
+                              ? arApCustomReceivables.map((r) => (
                                   <tr key={r.id} className="border-t border-white/10">
                                     <td className="py-2 pr-3 text-slate-200">{r.label}</td>
                                     <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
                                   </tr>
-                                ))}
-                              </>
-                            ) : null}
+                                ))
+                              : null}
 
                             <tr className="border-t-2 border-white/15 bg-emerald-500/10">
                               <td className="py-2 pr-3 font-semibold text-slate-100">Total Receivables</td>
@@ -1373,11 +1369,7 @@ export default function DashboardPage() {
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
               <KpiCard title="Total Income" value={formatPKRCompact(kpi.revenue)} />
               <KpiCard title="Total Expenses" value={formatPKRCompact(kpi.expenses)} />
-              <KpiCard
-                title="Net Profit (Loss)"
-                value={formatPKRCompact(kpi.profit)}
-                highlight={kpi.profit < 0 ? "bad" : "good"}
-              />
+              <KpiCard title="Net Profit (Loss)" value={formatPKRCompact(kpi.profit)} highlight={kpi.profit < 0 ? "bad" : "good"} />
               <KpiCard title="Months" value={`${series.length}`} />
             </div>
 
@@ -1385,18 +1377,12 @@ export default function DashboardPage() {
               <Panel title="Financial Insight">
                 <div className="rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/80 via-[#10243f]/70 to-[#130f2f]/80 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_20px_50px_rgba(2,6,23,0.45)] backdrop-blur-xl md:p-10">
                   <div className="mx-auto max-w-4xl text-center">
-                    <div
-                      className={`mx-auto mb-2 inline-block rounded-3xl px-6 py-2 text-6xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}
-                    >
+                    <div className={`mx-auto mb-2 inline-block rounded-3xl px-6 py-2 text-6xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}>
                       {formatPct(netMargin)}
                     </div>
-                    <div className="text-base font-semibold uppercase tracking-[0.18em] text-slate-300 md:text-lg">
-                      {financialLabel}
-                    </div>
+                    <div className="text-base font-semibold uppercase tracking-[0.18em] text-slate-300 md:text-lg">{financialLabel}</div>
 
-                    <p className="mx-auto mt-5 max-w-3xl text-sm leading-relaxed text-slate-200/95 md:text-base">
-                      {financialSummary}
-                    </p>
+                    <p className="mx-auto mt-5 max-w-3xl text-sm leading-relaxed text-slate-200/95 md:text-base">{financialSummary}</p>
 
                     <div className="mt-8 grid grid-cols-1 gap-2 border-t border-white/10 pt-4 text-xs text-slate-400 sm:grid-cols-3 md:text-sm">
                       <div>Revenue: {formatPKRMillions(kpi.revenue)}</div>
@@ -1843,8 +1829,7 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 }
 
 function KpiCard({ title, value, highlight }: { title: string; value: string; highlight?: "good" | "bad" }) {
-  const ring =
-    highlight === "good" ? "border-emerald-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
+  const ring = highlight === "good" ? "border-emerald-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
 
   const glow =
     highlight === "good"
