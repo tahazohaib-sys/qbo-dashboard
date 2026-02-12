@@ -219,13 +219,22 @@ async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Ca
   const key = `bs:${companyId}:${accountingMethod}:${asOf}`;
   const hit = cacheGet<any>(key);
   if (hit) return hit;
-  const v = await qboFetch(
-    `reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}` +
-      `&start_date=${encodeURIComponent(asOf)}&end_date=${encodeURIComponent(asOf)}` +
-      `&summarize_column_by=Total&accounting_method=${encodeURIComponent(accountingMethod)}`
-  );
-  cacheSet(key, v);
-  return v;
+  try {
+    const v = await qboFetch(
+      `reports/BalanceSheet?as_of_date=${encodeURIComponent(asOf)}` +
+        `&accounting_method=${encodeURIComponent(accountingMethod)}`
+    );
+    cacheSet(key, v);
+    return v;
+  } catch {
+    // Fallback form: some QBO tenants are stricter with date-style params on reports.
+    const v = await qboFetch(
+      `reports/BalanceSheet?start_date=${encodeURIComponent(asOf)}&end_date=${encodeURIComponent(asOf)}` +
+        `&summarize_column_by=Total&accounting_method=${encodeURIComponent(accountingMethod)}`
+    );
+    cacheSet(key, v);
+    return v;
+  }
 }
 
 async function fetchAPAgingSummary(asOf: string) {
