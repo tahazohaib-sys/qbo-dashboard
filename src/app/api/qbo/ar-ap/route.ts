@@ -100,7 +100,6 @@ function isValidYearMonthRange(fromYear: number, fromMonth: number, toYear: numb
     toMonth <= 12
   );
 }
-
 function daysDiffUTC(asOf: string, base: string): number {
   const a = parseYMD(asOf);
   const b = parseYMD(base);
@@ -255,8 +254,6 @@ async function fetchBalanceSheet(asOf: string, accountingMethod: "Accrual" | "Ca
     cacheSet(key, v);
     return v;
   }
-}
-
 async function fetchAPAgingSummary(asOf: string) {
   const key = `apaging:${asOf}`;
   const hit = cacheGet<any>(key);
@@ -590,7 +587,6 @@ export async function GET(req: Request) {
       const monthKeys = hasExplicitRange
         ? monthListBetween(fromYear, fromMonth, toYear, toMonth).slice(-24)
         : monthEndDatesUTC(asOf, months).map((d) => d.slice(0, 7));
-
       const dates = monthKeys.map((mk) => ({ month: mk, asOf: monthEndFromMonthKeyUTC(mk) }));
 
       // Concurrency 3 to avoid QBO throttling
