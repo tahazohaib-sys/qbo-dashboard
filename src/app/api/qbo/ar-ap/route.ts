@@ -393,16 +393,17 @@ function buildAPAgingFromBills(asOf: string, bills: any[]) {
  */
 type DatedAmt = { date: string; amt: number };
 
-async function queryDatedAmounts(entity: "Bill" | "BillPayment", startDate: string, endDate: string): Promise<DatedAmt[]> {
+async function queryDatedAmounts(entity: "Bill" | "BillPayment", endDate: string, startDate?: string): Promise<DatedAmt[]> {
   const out: DatedAmt[] = [];
   let start = 1;
   const size = 1000;
 
   // Use TxnDate filtering (what QBO uses for aging and most reporting)
+  const lowerBound = startDate ? `TxnDate >= '${startDate}' AND ` : "";
   const q =
     entity === "Bill"
-      ? `SELECT TxnDate, TotalAmt FROM Bill WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
-      : `SELECT TxnDate, TotalAmt FROM BillPayment WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`;
+      ? `SELECT TxnDate, TotalAmt FROM Bill WHERE ${lowerBound}TxnDate <= '${endDate}'`
+      : `SELECT TxnDate, TotalAmt FROM BillPayment WHERE ${lowerBound}TxnDate <= '${endDate}'`;
 
   while (true) {
     const path = `query?query=${encodeURIComponent(q)}` + `&startposition=${start}&maxresults=${size}`;
@@ -438,14 +439,13 @@ async function computeVendorBillsOutstandingByMonthEnds(monthEnds: string[]): Pr
   const out = new Map<string, number>();
   if (!monthEnds.length) return out;
 
-  const start = fiscalYearStartFor(monthEnds[monthEnds.length - 1]); // FY start for latest monthEnd
   const end = monthEnds[monthEnds.length - 1];
 
-  const cacheKey = `vb-months:${start}:${end}:${monthEnds.join("|")}`;
+  const cacheKey = `vb-months:all-history:${end}:${monthEnds.join("|")}`;
   const hit = cacheGet<Map<string, number>>(cacheKey);
   if (hit) return hit;
 
-  const [bills, pays] = await Promise.all([queryDatedAmounts("Bill", start, end), queryDatedAmounts("BillPayment", start, end)]);
+  const [bills, pays] = await Promise.all([queryDatedAmounts("Bill", end), queryDatedAmounts("BillPayment", end)]);
 
   // pointer scan (faster than recalculating for each month)
   let bi = 0;
@@ -775,6 +775,8 @@ export async function GET(req: Request) {
       },
 
       // ✅ Use this for the Growth chart (matches your tables exactly)
+      // Keep legacy key for dashboard compatibility.
+      monthlySeries: monthlySeriesTotals,
       monthlySeriesTotals,
 
       // Optional reference series (true Balance Sheet A/P vs A/R)
