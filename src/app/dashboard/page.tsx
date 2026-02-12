@@ -423,7 +423,8 @@ export default function DashboardPage() {
   }
 
   function monthSpanInclusive(fy: number, fm: number, ty: number, tm: number) {
-    return (ty - fy) * 12 + (tm - fm) + 1;
+    const span = (ty - fy) * 12 + (tm - fm) + 1;
+    return Math.max(1, Math.min(24, span));
   }
 
   async function fetchForecast(series: DashboardResp["series"], horizon: 6 | 12) {
