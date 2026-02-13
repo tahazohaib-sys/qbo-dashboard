@@ -223,11 +223,7 @@ type CustomRow = {
 async function fetchAdjustmentsForDates(company: string, module: string, asOfDates: string[]) {
   if (!asOfDates.length) return new Map<string, { pay: number; rec: number; rows: CustomRow[] }>();
 
-  // Keep it safe: max 24 dates in your API anyway
-  const key = `adj:${company}:${module}:${asOfDates.join("|")}`;
-  const hit = cacheGet<Map<string, any>>(key);
-  if (hit) return hit;
-
+  // Do not cache manual-adjustment reads: add/delete should reflect immediately in AR/AP cards and growth chart.
   const r = await pool.query(
     `
     SELECT id, company, module, as_of, section, label, amount, notes, created_at
@@ -253,7 +249,6 @@ async function fetchAdjustmentsForDates(company: string, module: string, asOfDat
     map.set(d, bucket);
   }
 
-  cacheSet(key, map);
   return map;
 }
 
@@ -263,10 +258,7 @@ async function fetchCumulativeAdjustmentsByMonthEnd(company: string, module: str
   const sortedMonthEnds = [...monthEnds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const maxMonthEnd = sortedMonthEnds[sortedMonthEnds.length - 1];
 
-  const key = `adj-cumulative:${company}:${module}:${sortedMonthEnds.join("|")}`;
-  const hit = cacheGet<Map<string, { pay: number; rec: number }>>(key);
-  if (hit) return hit;
-
+  // Do not cache cumulative adjustments so backdated entries are visible right after save/delete.
   const r = await pool.query(
     `
     SELECT as_of, section, amount
@@ -305,7 +297,6 @@ async function fetchCumulativeAdjustmentsByMonthEnd(company: string, module: str
     cumulative.set(monthEnd, { pay: payCum, rec: recCum });
   }
 
-  cacheSet(key, cumulative);
   return cumulative;
 }
 
