@@ -220,43 +220,6 @@ type CustomRow = {
   created_at: string;
 };
 
-async function fetchAdjustmentsForDates(company: string, module: string, asOfDates: string[]) {
-  if (!asOfDates.length) return new Map<string, { pay: number; rec: number; rows: CustomRow[] }>();
-
-  // Keep it safe: max 24 dates in your API anyway
-  const key = `adj:${company}:${module}:${asOfDates.join("|")}`;
-  const hit = cacheGet<Map<string, any>>(key);
-  if (hit) return hit;
-
-  const r = await pool.query(
-    `
-    SELECT id, company, module, as_of, section, label, amount, notes, created_at
-    FROM public.dashboard_custom_fields
-    WHERE company = $1
-      AND module = $2
-      AND as_of = ANY($3::date[])
-    ORDER BY created_at DESC
-    `,
-    [company, module, asOfDates]
-  );
-
-  const map = new Map<string, { pay: number; rec: number; rows: CustomRow[] }>();
-  for (const d of asOfDates) map.set(d, { pay: 0, rec: 0, rows: [] });
-
-  for (const row of r.rows as CustomRow[]) {
-    const d = String(row.as_of).slice(0, 10);
-    const bucket = map.get(d) ?? { pay: 0, rec: 0, rows: [] };
-    const amt = Number(row.amount ?? 0) || 0;
-    if ((row.section ?? "").toLowerCase() === "payables") bucket.pay += amt;
-    else bucket.rec += amt;
-    bucket.rows.push({ ...row, amount: amt, as_of: d });
-    map.set(d, bucket);
-  }
-
-  cacheSet(key, map);
-  return map;
-}
-
 async function fetchCumulativeAdjustmentsByMonthEnd(company: string, module: string, monthEnds: string[]) {
   if (!monthEnds.length) return new Map<string, { pay: number; rec: number }>();
 
@@ -307,6 +270,40 @@ async function fetchCumulativeAdjustmentsByMonthEnd(company: string, module: str
 
   cacheSet(key, cumulative);
   return cumulative;
+}
+
+async function fetchCumulativeAdjustmentsAsOf(company: string, module: string, asOf: string) {
+  const key = `adj-cumulative-asof:${company}:${module}:${asOf}`;
+  const hit = cacheGet<{ pay: number; rec: number; rows: CustomRow[] }>(key);
+  if (hit) return hit;
+
+  const r = await pool.query(
+    `
+    SELECT id, company, module, as_of, section, label, amount, notes, created_at
+    FROM public.dashboard_custom_fields
+    WHERE company = $1
+      AND module = $2
+      AND as_of <= $3::date
+    ORDER BY as_of ASC, created_at ASC
+    `,
+    [company, module, asOf]
+  );
+
+  let pay = 0;
+  let rec = 0;
+  const rows: CustomRow[] = [];
+
+  for (const row of r.rows as CustomRow[]) {
+    const amt = Number(row.amount ?? 0) || 0;
+    const normalized = { ...row, amount: amt, as_of: String(row.as_of).slice(0, 10) };
+    if ((row.section ?? "").toLowerCase() === "payables") pay += amt;
+    else if ((row.section ?? "").toLowerCase() === "receivables") rec += amt;
+    rows.push(normalized);
+  }
+
+  const result = { pay, rec, rows };
+  cacheSet(key, result);
+  return result;
 }
 
 
@@ -567,9 +564,8 @@ async function computeDetailedAsOf(
   const vendorBills = vbMap.get(asOf) ?? 0;
   const accountsPayable = vendorBills;
 
-  // Manual adjustments for current asOf
-  const adjMap = await fetchAdjustmentsForDates(companyNameForCustom, "ar_ap", [asOf]);
-  const adj = adjMap.get(asOf) ?? { pay: 0, rec: 0, rows: [] };
+  // Manual adjustments for current asOf (cumulative through asOf to match month-end growth points)
+  const adj = await fetchCumulativeAdjustmentsAsOf(companyNameForCustom, "ar_ap", asOf);
 
   const totalPayables =
     payrollPayable + whtVendors + accountsPayable + sirAatifLoanToCompany + payrollWithHoldingTaxPayable + adj.pay;
