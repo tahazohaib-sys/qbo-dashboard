@@ -257,6 +257,59 @@ async function fetchAdjustmentsForDates(company: string, module: string, asOfDat
   return map;
 }
 
+async function fetchCumulativeAdjustmentsByMonthEnd(company: string, module: string, monthEnds: string[]) {
+  if (!monthEnds.length) return new Map<string, { pay: number; rec: number }>();
+
+  const sortedMonthEnds = [...monthEnds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const maxMonthEnd = sortedMonthEnds[sortedMonthEnds.length - 1];
+
+  const key = `adj-cumulative:${company}:${module}:${sortedMonthEnds.join("|")}`;
+  const hit = cacheGet<Map<string, { pay: number; rec: number }>>(key);
+  if (hit) return hit;
+
+  const r = await pool.query(
+    `
+    SELECT as_of, section, amount
+    FROM public.dashboard_custom_fields
+    WHERE company = $1
+      AND module = $2
+      AND as_of <= $3::date
+    ORDER BY as_of ASC, created_at ASC
+    `,
+    [company, module, maxMonthEnd]
+  );
+
+  const daily = new Map<string, { pay: number; rec: number }>();
+  for (const row of r.rows as Array<{ as_of: string; section: string; amount: number | string }>) {
+    const d = String(row.as_of).slice(0, 10);
+    const amt = Number(row.amount ?? 0) || 0;
+    const bucket = daily.get(d) ?? { pay: 0, rec: 0 };
+    if ((row.section ?? "").toLowerCase() === "payables") bucket.pay += amt;
+    else if ((row.section ?? "").toLowerCase() === "receivables") bucket.rec += amt;
+    daily.set(d, bucket);
+  }
+
+  const cumulative = new Map<string, { pay: number; rec: number }>();
+  const days = Array.from(daily.keys()).sort();
+  let di = 0;
+  let payCum = 0;
+  let recCum = 0;
+
+  for (const monthEnd of sortedMonthEnds) {
+    while (di < days.length && days[di] <= monthEnd) {
+      const dayTotals = daily.get(days[di]);
+      payCum += dayTotals?.pay ?? 0;
+      recCum += dayTotals?.rec ?? 0;
+      di += 1;
+    }
+    cumulative.set(monthEnd, { pay: payCum, rec: recCum });
+  }
+
+  cacheSet(key, cumulative);
+  return cumulative;
+}
+
+
 /**
  * ---------- QBO FETCHERS ----------
  */
@@ -393,16 +446,17 @@ function buildAPAgingFromBills(asOf: string, bills: any[]) {
  */
 type DatedAmt = { date: string; amt: number };
 
-async function queryDatedAmounts(entity: "Bill" | "BillPayment", startDate: string, endDate: string): Promise<DatedAmt[]> {
+async function queryDatedAmounts(entity: "Bill" | "BillPayment", endDate: string, startDate?: string): Promise<DatedAmt[]> {
   const out: DatedAmt[] = [];
   let start = 1;
   const size = 1000;
 
   // Use TxnDate filtering (what QBO uses for aging and most reporting)
+  const lowerBound = startDate ? `TxnDate >= '${startDate}' AND ` : "";
   const q =
     entity === "Bill"
-      ? `SELECT TxnDate, TotalAmt FROM Bill WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`
-      : `SELECT TxnDate, TotalAmt FROM BillPayment WHERE TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`;
+      ? `SELECT TxnDate, TotalAmt FROM Bill WHERE ${lowerBound}TxnDate <= '${endDate}'`
+      : `SELECT TxnDate, TotalAmt FROM BillPayment WHERE ${lowerBound}TxnDate <= '${endDate}'`;
 
   while (true) {
     const path = `query?query=${encodeURIComponent(q)}` + `&startposition=${start}&maxresults=${size}`;
@@ -438,14 +492,13 @@ async function computeVendorBillsOutstandingByMonthEnds(monthEnds: string[]): Pr
   const out = new Map<string, number>();
   if (!monthEnds.length) return out;
 
-  const start = fiscalYearStartFor(monthEnds[monthEnds.length - 1]); // FY start for latest monthEnd
   const end = monthEnds[monthEnds.length - 1];
 
-  const cacheKey = `vb-months:${start}:${end}:${monthEnds.join("|")}`;
+  const cacheKey = `vb-months:all-history:${end}:${monthEnds.join("|")}`;
   const hit = cacheGet<Map<string, number>>(cacheKey);
   if (hit) return hit;
 
-  const [bills, pays] = await Promise.all([queryDatedAmounts("Bill", start, end), queryDatedAmounts("BillPayment", start, end)]);
+  const [bills, pays] = await Promise.all([queryDatedAmounts("Bill", end), queryDatedAmounts("BillPayment", end)]);
 
   // pointer scan (faster than recalculating for each month)
   let bi = 0;
@@ -708,8 +761,8 @@ export async function GET(req: Request) {
       // Precompute vendorBills outstanding for all month-ends in ONE pass
       const vbByDate = await computeVendorBillsOutstandingByMonthEnds(monthEnds);
 
-      // Preload all manual adjustments for those month-ends in ONE DB call
-      const adjByDate = await fetchAdjustmentsForDates(companyNameForCustom, "ar_ap", monthEnds);
+      // Preload cumulative manual adjustments up to each month-end in ONE DB call
+      const adjByDate = await fetchCumulativeAdjustmentsByMonthEnd(companyNameForCustom, "ar_ap", monthEnds);
 
       // Build totals series (this is what you want to show in growth chart)
       const totals = await mapLimit(dates, 3, async (d) => {
@@ -775,6 +828,8 @@ export async function GET(req: Request) {
       },
 
       // ✅ Use this for the Growth chart (matches your tables exactly)
+      // Keep legacy key for dashboard compatibility.
+      monthlySeries: monthlySeriesTotals,
       monthlySeriesTotals,
 
       // Optional reference series (true Balance Sheet A/P vs A/R)
