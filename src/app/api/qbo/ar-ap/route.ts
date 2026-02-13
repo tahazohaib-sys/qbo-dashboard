@@ -220,11 +220,12 @@ type CustomRow = {
   created_at: string;
 };
 
-async function fetchAdjustmentsForDates(company: string, module: string, asOfDates: string[]) {
+async function fetchAdjustmentsForDates(company: string, module: string, asOfDates: string[], cacheSalt = "") {
   if (!asOfDates.length) return new Map<string, { pay: number; rec: number; rows: CustomRow[] }>();
 
-  // Keep it safe: max 24 dates in your API anyway
-  const key = `adj:${company}:${module}:${asOfDates.join("|")}`;
+  // Keep cached reads fast, but allow callers to pass a cacheSalt (e.g. after add/delete)
+  // so manual-adjustment changes reflect immediately when needed.
+  const key = `adj:${company}:${module}:${asOfDates.join("|")}:${cacheSalt}`;
   const hit = cacheGet<Map<string, any>>(key);
   if (hit) return hit;
 
@@ -257,13 +258,14 @@ async function fetchAdjustmentsForDates(company: string, module: string, asOfDat
   return map;
 }
 
-async function fetchCumulativeAdjustmentsByMonthEnd(company: string, module: string, monthEnds: string[]) {
+async function fetchCumulativeAdjustmentsByMonthEnd(company: string, module: string, monthEnds: string[], cacheSalt = "") {
   if (!monthEnds.length) return new Map<string, { pay: number; rec: number }>();
 
   const sortedMonthEnds = [...monthEnds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const maxMonthEnd = sortedMonthEnds[sortedMonthEnds.length - 1];
 
-  const key = `adj-cumulative:${company}:${module}:${sortedMonthEnds.join("|")}`;
+  // Same strategy as exact-date fetch: cache by monthEnds + optional cacheSalt.
+  const key = `adj-cumulative:${company}:${module}:${sortedMonthEnds.join("|")}:${cacheSalt}`;
   const hit = cacheGet<Map<string, { pay: number; rec: number }>>(key);
   if (hit) return hit;
 
@@ -545,7 +547,8 @@ async function computeDetailedAsOf(
   asOf: string,
   accountingMethod: "Accrual" | "Cash",
   companyId: string,
-  companyNameForCustom: string
+  companyNameForCustom: string,
+  adjVersion: string
 ): Promise<{
   computed: Computed;
   apAging: { totalAP: number; vendors: any[]; source: string };
@@ -568,7 +571,7 @@ async function computeDetailedAsOf(
   const accountsPayable = vendorBills;
 
   // Manual adjustments for current asOf
-  const adjMap = await fetchAdjustmentsForDates(companyNameForCustom, "ar_ap", [asOf]);
+  const adjMap = await fetchAdjustmentsForDates(companyNameForCustom, "ar_ap", [asOf], adjVersion);
   const adj = adjMap.get(asOf) ?? { pay: 0, rec: 0, rows: [] };
 
   const totalPayables =
@@ -725,9 +728,10 @@ export async function GET(req: Request) {
     // months=... controls whether monthly series is returned
     const monthsRaw = searchParams.get("months");
     const months = Math.max(1, Math.min(24, Number(monthsRaw ?? "1") || 1)); // 1..24
+    const adjVersion = String(searchParams.get("adj_version") ?? "").trim();
 
     // 1) Detailed current asOf (exact tables + manual adjustments)
-    const { computed, apAging, custom } = await computeDetailedAsOf(asOf, accountingMethod, realmId, companyNameForCustom);
+    const { computed, apAging, custom } = await computeDetailedAsOf(asOf, accountingMethod, realmId, companyNameForCustom, adjVersion);
 
     // 2) Optional monthly series
     let monthlySeriesTotals:
@@ -762,7 +766,7 @@ export async function GET(req: Request) {
       const vbByDate = await computeVendorBillsOutstandingByMonthEnds(monthEnds);
 
       // Preload cumulative manual adjustments up to each month-end in ONE DB call
-      const adjByDate = await fetchCumulativeAdjustmentsByMonthEnd(companyNameForCustom, "ar_ap", monthEnds);
+      const adjByDate = await fetchCumulativeAdjustmentsByMonthEnd(companyNameForCustom, "ar_ap", monthEnds, adjVersion);
 
       // Build totals series (this is what you want to show in growth chart)
       const totals = await mapLimit(dates, 3, async (d) => {

@@ -518,14 +518,14 @@ export default function DashboardPage() {
     setCustomLabel("");
     setCustomAmount("");
     await reloadArApCustom();
-    await loadArApAndMonthly(currentAsOfYmd, fromYear, fromMonth, toYear, toMonth, method);
+    await loadArApAndMonthly(currentAsOfYmd, fromYear, fromMonth, toYear, toMonth, method, true);
   }
 
   async function deleteArApCustom(id: string) {
     setArApCustomErr("");
     await fetch(`/api/custom-fields/ar-ap?id=${encodeURIComponent(id)}`, { method: "DELETE" });
     await reloadArApCustom();
-    await loadArApAndMonthly(currentAsOfYmd, fromYear, fromMonth, toYear, toMonth, method);
+    await loadArApAndMonthly(currentAsOfYmd, fromYear, fromMonth, toYear, toMonth, method, true);
   }
 
   async function loadArApAndMonthly(
@@ -534,14 +534,15 @@ export default function DashboardPage() {
     fm: number,
     ty: number,
     tm: number,
-    accountingMethod: "Accrual" | "Cash"
+    accountingMethod: "Accrual" | "Cash",
+    forceFreshAdjustments = false
   ) {
     setArApLoading(true);
     try {
       // ✅ ONE call only (backend returns month-end AR/AP totals series)
       const res = await fetch(
         `
-        /api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=${monthSpanInclusive(fy, fm, ty, tm)}&fromYear=${fy}&fromMonth=${fm}&toYear=${ty}&toMonth=${tm}&accounting_method=${encodeURIComponent(accountingMethod)}
+        /api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=${monthSpanInclusive(fy, fm, ty, tm)}&fromYear=${fy}&fromMonth=${fm}&toYear=${ty}&toMonth=${tm}&accounting_method=${encodeURIComponent(accountingMethod)}${forceFreshAdjustments ? `&adj_version=${Date.now()}` : ""}
       `.replace(/\s+/g, ""),
         { cache: "no-store" }
       );
@@ -845,8 +846,32 @@ export default function DashboardPage() {
     [arApCustomReceivables]
   );
 
-  const payablesAdjTotal = arAp?.payables?.totalPayables ?? 0;
-  const receivablesAdjTotal = arAp?.receivables?.totalReceivables ?? 0;
+  const customRowsOnCurrentAsOf = useMemo(
+    () => arApCustomRows.filter((r) => String(r.as_of ?? "").slice(0, 10) === currentAsOfYmd),
+    [arApCustomRows, currentAsOfYmd]
+  );
+
+  const customPayablesOnCurrentAsOf = useMemo(
+    () =>
+      customRowsOnCurrentAsOf
+        .filter((r) => r.section === "payables")
+        .reduce((s, r) => s + Number(r.amount ?? 0), 0),
+    [customRowsOnCurrentAsOf]
+  );
+
+  const customReceivablesOnCurrentAsOf = useMemo(
+    () =>
+      customRowsOnCurrentAsOf
+        .filter((r) => r.section === "receivables")
+        .reduce((s, r) => s + Number(r.amount ?? 0), 0),
+    [customRowsOnCurrentAsOf]
+  );
+
+  // Backend headline details include same-day custom adjustments; normalize to cumulative
+  // by replacing same-day custom values with all historical values up to current as-of.
+  const payablesAdjTotal = (arAp?.payables?.totalPayables ?? 0) - customPayablesOnCurrentAsOf + customPayablesSum;
+  const receivablesAdjTotal =
+    (arAp?.receivables?.totalReceivables ?? 0) - customReceivablesOnCurrentAsOf + customReceivablesSum;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
