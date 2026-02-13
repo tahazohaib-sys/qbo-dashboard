@@ -227,13 +227,13 @@ type ArApCustomRow = {
   id: string;
   module: string;
   section: "payables" | "receivables";
-  as_of_date: string; // YYYY-MM-DD
+  as_of: string; // YYYY-MM-DD
   label: string;
   amount: number; // PKR
   created_at: string;
 };
 
-type ArApCustomListResp = { ok: true; asOf: string; rows: ArApCustomRow[] } | { ok: false; error: string };
+type ArApCustomListResp = { ok: true; rows: ArApCustomRow[] } | { ok: false; error: string };
 type ArApCustomCreateResp = { ok: true; row: ArApCustomRow } | { ok: false; error: string };
 
 /* ---------------------- helpers ---------------------- */
@@ -421,6 +421,7 @@ export default function DashboardPage() {
   const [customSection, setCustomSection] = useState<"payables" | "receivables">("receivables");
   const [customLabel, setCustomLabel] = useState("");
   const [customAmount, setCustomAmount] = useState<string>("");
+  const [customAsOfDate, setCustomAsOfDate] = useState<string>("");
 
   const [err, setErr] = useState<string>("");
 
@@ -460,19 +461,19 @@ export default function DashboardPage() {
     return json;
   }
 
-  // ✅ Custom Fields fetch (as-of specific)
-  async function fetchArApCustom(asOfYmd: string): Promise<ArApCustomRow[]> {
-    const res = await fetch(`/api/custom-fields/ar-ap?asOf=${encodeURIComponent(asOfYmd)}`, { cache: "no-store" });
+  // ✅ Custom Fields fetch (all entries)
+  async function fetchArApCustom(): Promise<ArApCustomRow[]> {
+    const res = await fetch(`/api/custom-fields/ar-ap?include_all=1`, { cache: "no-store" });
     const json: ArApCustomListResp = await res.json();
     if (!json || (json as any).ok !== true) throw new Error((json as any)?.error || "Custom fields API failed");
     return (json as any).rows ?? [];
   }
 
-  async function reloadArApCustom(asOfYmd: string) {
+  async function reloadArApCustom() {
     setArApCustomLoading(true);
     setArApCustomErr("");
     try {
-      const rows = await fetchArApCustom(asOfYmd);
+      const rows = await fetchArApCustom();
       setArApCustomRows(rows);
     } catch (e: any) {
       setArApCustomErr(e?.message ?? "Failed to load manual adjustments");
@@ -482,7 +483,7 @@ export default function DashboardPage() {
     }
   }
 
-  async function addArApCustom(asOfYmd: string) {
+  async function addArApCustom() {
     setArApCustomErr("");
 
     const label = customLabel.trim();
@@ -501,7 +502,7 @@ export default function DashboardPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        asOf: asOfYmd,
+        asOf: customAsOfDate || currentAsOfYmd,
         section: customSection,
         label,
         amount: Math.round(amt),
@@ -516,16 +517,18 @@ export default function DashboardPage() {
 
     setCustomLabel("");
     setCustomAmount("");
-    await reloadArApCustom(asOfYmd);
+    await reloadArApCustom();
+    await loadArApAndMonthly(currentAsOfYmd, fromYear, fromMonth, toYear, toMonth, method);
   }
 
-  async function deleteArApCustom(id: string, asOfYmd: string) {
+  async function deleteArApCustom(id: string) {
     setArApCustomErr("");
     await fetch(`/api/custom-fields/ar-ap?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-    await reloadArApCustom(asOfYmd);
+    await reloadArApCustom();
+    await loadArApAndMonthly(currentAsOfYmd, fromYear, fromMonth, toYear, toMonth, method);
   }
 
-    async function loadArApAndMonthly(
+  async function loadArApAndMonthly(
     endYmd: string,
     fy: number,
     fm: number,
@@ -535,7 +538,7 @@ export default function DashboardPage() {
   ) {
     setArApLoading(true);
     try {
-      // ✅ ONE call only (backend returns month-end Balance Sheet monthlySeries)
+      // ✅ ONE call only (backend returns month-end AR/AP totals series)
       const res = await fetch(
         `
         /api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=${monthSpanInclusive(fy, fm, ty, tm)}&fromYear=${fy}&fromMonth=${fm}&toYear=${ty}&toMonth=${tm}&accounting_method=${encodeURIComponent(accountingMethod)}
@@ -547,10 +550,11 @@ export default function DashboardPage() {
       if (!one?.ok) throw new Error(one?.error || "AR/AP API failed");
 
       setArAp(one);
+      await reloadArApCustom();
 
       // ---------- Build monthly rows (from backend series) ----------
       const series: Array<{ asOf: string; month: string; payables: number; receivables: number; error?: boolean }> =
-        (one.monthlySeries ?? []).map((r: any) => ({
+        (one.monthlySeriesTotals ?? one.monthlySeries ?? []).map((r: any) => ({
           asOf: r.asOf ?? `${r.month}-01`,
           month: r.month,
           payables: Number(r.payables ?? 0),
@@ -558,7 +562,7 @@ export default function DashboardPage() {
           error: Boolean(r.error),
         }));
 
-      // ✅ Keep chart strictly on Balance Sheet month-end snapshots (no manual adjustment overlays)
+      // ✅ Chart uses backend monthly totals (includes persisted manual adjustments)
       setMonthlyArAp(series);
     } catch {
       setArAp(null);
@@ -810,9 +814,27 @@ export default function DashboardPage() {
 
   const forecastRows = forecastData?.forecast ?? [];
 
-  // ✅ compute custom sums for CURRENT asOf (used in AR/AP UI totals)
-  const arApCustomPayables = useMemo(() => arApCustomRows.filter((r) => r.section === "payables"), [arApCustomRows]);
-  const arApCustomReceivables = useMemo(() => arApCustomRows.filter((r) => r.section === "receivables"), [arApCustomRows]);
+  // endYmd for current selected period (used by add/delete)
+  const currentAsOfYmd = useMemo(() => {
+    const fromKey = fromYear * 100 + fromMonth;
+    const toKey = toYear * 100 + toMonth;
+    const ty = fromKey <= toKey ? toYear : fromYear;
+    const tm = fromKey <= toKey ? toMonth : fromMonth;
+    const endDate = new Date(ty, tm, 0);
+    return `${ty}-${String(tm).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")}`;
+  }, [fromYear, fromMonth, toYear, toMonth]);
+
+  useEffect(() => {
+    setCustomAsOfDate(currentAsOfYmd);
+  }, [currentAsOfYmd]);
+
+  // ✅ compute custom sums cumulatively up to CURRENT asOf (used in AR/AP UI totals)
+  const customRowsUpToCurrent = useMemo(
+    () => arApCustomRows.filter((r) => String(r.as_of ?? "").slice(0, 10) <= currentAsOfYmd),
+    [arApCustomRows, currentAsOfYmd]
+  );
+  const arApCustomPayables = useMemo(() => customRowsUpToCurrent.filter((r) => r.section === "payables"), [customRowsUpToCurrent]);
+  const arApCustomReceivables = useMemo(() => customRowsUpToCurrent.filter((r) => r.section === "receivables"), [customRowsUpToCurrent]);
 
   const customPayablesSum = useMemo(
     () => arApCustomPayables.reduce((s, r) => s + Number(r.amount ?? 0), 0),
@@ -823,18 +845,8 @@ export default function DashboardPage() {
     [arApCustomReceivables]
   );
 
-  const payablesAdjTotal = (arAp?.payables?.totalPayables ?? 0) + customPayablesSum;
-  const receivablesAdjTotal = (arAp?.receivables?.totalReceivables ?? 0) + customReceivablesSum;
-
-  // endYmd for current selected period (used by add/delete)
-  const currentAsOfYmd = useMemo(() => {
-    const fromKey = fromYear * 100 + fromMonth;
-    const toKey = toYear * 100 + toMonth;
-    const ty = fromKey <= toKey ? toYear : fromYear;
-    const tm = fromKey <= toKey ? toMonth : fromMonth;
-    const endDate = new Date(ty, tm, 0);
-    return `${ty}-${String(tm).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")}`;
-  }, [fromYear, fromMonth, toYear, toMonth]);
+  const payablesAdjTotal = arAp?.payables?.totalPayables ?? 0;
+  const receivablesAdjTotal = arAp?.receivables?.totalReceivables ?? 0;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
@@ -1104,6 +1116,16 @@ export default function DashboardPage() {
                                 </div>
 
                                 <div>
+                                  <label className="text-xs text-slate-300">Adjustment Date</label>
+                                  <input
+                                    type="date"
+                                    value={customAsOfDate}
+                                    onChange={(e) => setCustomAsOfDate(e.target.value)}
+                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                                  />
+                                </div>
+
+                                <div>
                                   <label className="text-xs text-slate-300">Label</label>
                                   <input
                                     value={customLabel}
@@ -1125,7 +1147,7 @@ export default function DashboardPage() {
                                 </div>
 
                                 <button
-                                  onClick={() => addArApCustom(currentAsOfYmd)}
+                                  onClick={() => addArApCustom()}
                                   className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20"
                                 >
                                   Add
@@ -1143,7 +1165,7 @@ export default function DashboardPage() {
                               <div className="flex items-center justify-between">
                                 <div className="text-sm font-semibold">Saved Adjustments</div>
                                 <button
-                                  onClick={() => reloadArApCustom(currentAsOfYmd)}
+                                  onClick={() => reloadArApCustom()}
                                   className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
                                   disabled={arApCustomLoading}
                                 >
@@ -1155,6 +1177,7 @@ export default function DashboardPage() {
                                 <table className="w-full text-sm">
                                   <thead className="text-left text-xs text-slate-300">
                                     <tr>
+                                      <th className="py-2 pr-3">Date</th>
                                       <th className="py-2 pr-3">Section</th>
                                       <th className="py-2 pr-3">Label</th>
                                       <th className="py-2 text-right">Amount</th>
@@ -1164,19 +1187,20 @@ export default function DashboardPage() {
                                   <tbody>
                                     {arApCustomLoading ? (
                                       <tr>
-                                        <td colSpan={4} className="py-3 text-slate-300">
+                                        <td colSpan={5} className="py-3 text-slate-300">
                                           Loading…
                                         </td>
                                       </tr>
                                     ) : arApCustomRows.length ? (
                                       arApCustomRows.map((r) => (
                                         <tr key={r.id} className="border-t border-white/10">
+                                          <td className="py-2 pr-3 text-slate-200">{String(r.as_of ?? "").slice(0, 10)}</td>
                                           <td className="py-2 pr-3 capitalize text-slate-200">{r.section}</td>
                                           <td className="py-2 pr-3">{r.label}</td>
                                           <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
                                           <td className="py-2 text-right">
                                             <button
-                                              onClick={() => deleteArApCustom(r.id, currentAsOfYmd)}
+                                              onClick={() => deleteArApCustom(r.id)}
                                               className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-200 hover:bg-rose-500/15"
                                             >
                                               Delete
@@ -1186,8 +1210,8 @@ export default function DashboardPage() {
                                       ))
                                     ) : (
                                       <tr>
-                                        <td colSpan={4} className="py-3 text-slate-300">
-                                          No manual adjustments for this As-Of date.
+                                        <td colSpan={5} className="py-3 text-slate-300">
+                                          No manual adjustments saved yet.
                                         </td>
                                       </tr>
                                     )}
@@ -1519,7 +1543,7 @@ export default function DashboardPage() {
                       <tbody>
                         {txnLoading ? (
                           <tr>
-                            <td colSpan={4} className="py-3 text-slate-300">
+                            <td colSpan={5} className="py-3 text-slate-300">
                               Loading…
                             </td>
                           </tr>
@@ -1540,7 +1564,7 @@ export default function DashboardPage() {
                           })
                         ) : (
                           <tr>
-                            <td colSpan={4} className="py-3 text-slate-300">
+                            <td colSpan={5} className="py-3 text-slate-300">
                               No recent transactions found.
                             </td>
                           </tr>

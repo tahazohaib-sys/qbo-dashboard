@@ -33,10 +33,16 @@ export async function GET(req: Request) {
     const company = cleanText(searchParams.get("company") ?? "RTC League Pvt LTD");
     const module = cleanText(searchParams.get("module") ?? "ar_ap");
     const asOf = ymdOrToday(searchParams.get("asOf"));
+    const includeAll = ["1", "true", "yes"].includes(cleanText(searchParams.get("include_all")).toLowerCase());
     const sectionRaw = cleanText(searchParams.get("section")); // optional
 
-    const params: any[] = [company, module, asOf];
-    let where = `company = $1 AND module = $2 AND as_of = $3`;
+    const params: any[] = [company, module];
+    let where = `company = $1 AND module = $2`;
+
+    if (!includeAll) {
+      params.push(asOf);
+      where += ` AND as_of = $${params.length}`;
+    }
 
     if (sectionRaw) {
       const section = sectionRaw.toLowerCase();
@@ -44,7 +50,7 @@ export async function GET(req: Request) {
         return bad("Invalid section. Use 'payables' or 'receivables'.");
       }
       params.push(section);
-      where += ` AND section = $4`;
+      where += ` AND section = $${params.length}`;
     }
 
     const r = await pool.query(
@@ -52,7 +58,7 @@ export async function GET(req: Request) {
       SELECT id, company, module, as_of, section, label, amount, notes, created_at
       FROM public.dashboard_custom_fields
       WHERE ${where}
-      ORDER BY created_at DESC
+      ORDER BY as_of DESC, created_at DESC
       `,
       params
     );
