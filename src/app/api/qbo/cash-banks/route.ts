@@ -1,6 +1,7 @@
 // src/app/api/qbo/cash-banks/route.ts
 import { NextResponse } from "next/server";
 import { qboFetch } from "@/lib/metrics";
+import { getExternalBalances } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -74,6 +75,27 @@ export async function GET(req: Request) {
 
     if (!includeZero) {
       accounts = accounts.filter((a) => a.currentBalance !== 0);
+    }
+
+    // Overlay external balances (e.g., Plaid) if available. We add `externalBalance` and `balanceSource`.
+    try {
+      const ids = accounts.map((a) => a.id);
+      const external = await getExternalBalances(ids);
+      const mapExt = new Map<string, any>();
+      for (const e of external) mapExt.set(e.qbo_account_id, e);
+
+      accounts = accounts.map((a) => {
+        const ext = mapExt.get(a.id);
+        if (!ext) return a;
+        return {
+          ...a,
+          externalBalance: Number(ext.balance),
+          externalAvailable: ext.available != null ? Number(ext.available) : undefined,
+          balanceSource: ext.source || "external",
+        } as any;
+      });
+    } catch (e) {
+      // don't fail the whole response if external overlay fails
     }
 
     // totals grouped by currency (NO conversion)

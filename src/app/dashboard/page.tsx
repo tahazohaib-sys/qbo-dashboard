@@ -55,6 +55,9 @@ type CashBankAccount = {
   accountSubType?: string;
   currency: string;
   currentBalance: number;
+  externalBalance?: number;
+  externalAvailable?: number;
+  balanceSource?: string;
 };
 
 type CashBanksResp = {
@@ -705,7 +708,10 @@ export default function DashboardPage() {
       .map((k) => ({ currency: k, total: t[k] }));
   }, [cashBanks?.totalsByCurrency]);
 
-  const accounts = (cashBanks?.accounts ?? []).filter((a) => Math.abs(a.currentBalance ?? 0) > 0);
+  const accounts = (cashBanks?.accounts ?? []).filter((a) => {
+    const displayed = a.externalBalance ?? a.currentBalance ?? 0;
+    return Math.abs(displayed) > 0;
+  });
 
   /* ---------------- retained normalized values ---------------- */
 
@@ -1484,7 +1490,12 @@ export default function DashboardPage() {
                       <div className="mt-1 text-xs text-slate-300">
                         {a.accountSubType ?? a.accountType} • {a.currency}
                       </div>
-                      <div className="mt-3 text-2xl font-semibold">{formatMoneyByCurrency(a.currency, a.currentBalance)}</div>
+                      <div className="mt-3 text-2xl font-semibold">
+                        {formatMoneyByCurrency(a.currency, a.externalBalance ?? a.currentBalance)}
+                      </div>
+                      {a.externalBalance != null && (
+                        <div className="mt-1 text-xs text-slate-400">Updated live ({a.balanceSource ?? "external"})</div>
+                      )}
                     </button>
                   );
                 })}
