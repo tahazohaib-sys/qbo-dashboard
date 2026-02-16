@@ -59,6 +59,7 @@ type CashBankAccount = {
   bankBalance: number;
   pendingImpact: number;
   balanceSource: "bank-feed" | "posted";
+  feedBalanceAvailable: boolean;
 };
 
 type CashBanksResp = {
@@ -67,6 +68,11 @@ type CashBanksResp = {
   accounts: CashBankAccount[];
   totalsByCurrency: Record<string, number>;
   fetchedAt?: string;
+  feedBalanceCoverage?: {
+    bankAccounts: number;
+    feedEnabledAccounts: number;
+    note: string;
+  };
   error?: string;
 };
 
@@ -1483,6 +1489,14 @@ export default function DashboardPage() {
                 <div className="mt-1 text-xs text-slate-400">
                   Auto-refreshes every 60s. Last sync: {cashBanks?.fetchedAt ? new Date(cashBanks.fetchedAt).toLocaleTimeString() : "—"}
                 </div>
+                {cashBanks?.feedBalanceCoverage ? (
+                  <div className="mt-1 text-xs text-slate-400">
+                    Live feed coverage: {cashBanks.feedBalanceCoverage.feedEnabledAccounts}/{cashBanks.feedBalanceCoverage.bankAccounts} bank accounts
+                  </div>
+                ) : null}
+                {cashBanks?.feedBalanceCoverage?.note ? (
+                  <div className="mt-1 text-xs text-amber-200/80">{cashBanks.feedBalanceCoverage.note}</div>
+                ) : null}
               </div>
 
               <div className="flex gap-3 overflow-x-auto pb-2">

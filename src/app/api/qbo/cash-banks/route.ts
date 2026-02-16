@@ -10,11 +10,12 @@ type CashBankAccount = {
   accountType: string;
   accountSubType?: string;
   currency: string;
-  currentBalance: number; // native currency balance shown on UI
-  postedBalance: number; // bookkeeping/posted balance
-  bankBalance: number; // linked bank feed balance (if available)
-  pendingImpact: number; // bankBalance - postedBalance when bank feed balance exists
+  currentBalance: number; // value rendered on dashboard
+  postedBalance: number; // accounting ledger (posted) balance
+  bankBalance: number; // linked bank/feed balance when QBO exposes it
+  pendingImpact: number; // bankBalance - postedBalance
   balanceSource: "bank-feed" | "posted";
+  feedBalanceAvailable: boolean;
 };
 
 function toNumber(v: any): number {
@@ -33,47 +34,50 @@ function pickFirstNonEmpty(obj: any, keys: string[]) {
   return undefined;
 }
 
-function extractLiveBankBalance(account: any, detail: any): { hasValue: boolean; value: number } {
-  // Different QBO tenants/minor versions expose different field names.
+function extractLiveBankBalance(account: any): { hasValue: boolean; value: number } {
+  // QBO tenants expose feed values differently (or not at all via Accounting API).
+  const onlineInfo = account?.OnlineBankingInfo ?? account?.BankingInfo ?? account?.BankInfo;
+
   const raw =
-    pickFirstNonEmpty(detail, [
+    pickFirstNonEmpty(onlineInfo, [
       "BankBalance",
       "OnlineBankingBalance",
       "CurrentBankBalance",
       "AvailableBalance",
-      "Balance",
     ]) ??
-    pickFirstNonEmpty(account, ["BankBalance", "OnlineBankingBalance", "CurrentBankBalance", "AvailableBalance", "Balance"]);
+    pickFirstNonEmpty(account, [
+      "BankBalance",
+      "OnlineBankingBalance",
+      "CurrentBankBalance",
+      "AvailableBalance",
+    ]);
 
   if (raw == null) return { hasValue: false, value: 0 };
   return { hasValue: true, value: toNumber(raw) };
 }
 
-function normalizeAccounts(raw: any[], detailsById: Map<string, any>): CashBankAccount[] {
+function normalizeAccounts(raw: any[]): CashBankAccount[] {
   return (raw ?? [])
     .map((a: any) => {
-      const id = String(a?.Id ?? "");
-      const detail = detailsById.get(id) ?? null;
+      const currency = a?.CurrencyRef?.value || "PKR";
+      const postedBalance = toNumber(a?.CurrentBalance);
 
-      const currency = a?.CurrencyRef?.value || detail?.CurrencyRef?.value || "PKR";
-      const postedBalance = toNumber(a?.CurrentBalance ?? detail?.CurrentBalance);
-
-      const { hasValue: hasLiveBankBalance, value: bankBalance } = extractLiveBankBalance(a, detail);
-      const useBankFeed = String(a?.AccountType ?? detail?.AccountType ?? "") === "Bank" && hasLiveBankBalance;
-
-      const currentBalance = useBankFeed ? bankBalance : postedBalance;
+      const { hasValue: hasLiveBankBalance, value: bankBalance } = extractLiveBankBalance(a);
+      const isBankAccount = String(a?.AccountType ?? "") === "Bank";
+      const useBankFeed = isBankAccount && hasLiveBankBalance;
 
       return {
-        id,
-        name: String(a?.Name ?? detail?.Name ?? ""),
-        accountType: String(a?.AccountType ?? detail?.AccountType ?? ""),
-        accountSubType: a?.AccountSubType ? String(a.AccountSubType) : detail?.AccountSubType ? String(detail.AccountSubType) : undefined,
+        id: String(a?.Id ?? ""),
+        name: String(a?.Name ?? ""),
+        accountType: String(a?.AccountType ?? ""),
+        accountSubType: a?.AccountSubType ? String(a.AccountSubType) : undefined,
         currency,
-        currentBalance,
+        currentBalance: useBankFeed ? bankBalance : postedBalance,
         postedBalance,
         bankBalance,
         pendingImpact: useBankFeed ? bankBalance - postedBalance : 0,
         balanceSource: useBankFeed ? ("bank-feed" as const) : ("posted" as const),
+        feedBalanceAvailable: hasLiveBankBalance,
       };
     })
     .filter((a: CashBankAccount) => Boolean(a.id) && Boolean(a.name));
@@ -81,7 +85,7 @@ function normalizeAccounts(raw: any[], detailsById: Map<string, any>): CashBankA
 
 async function runAccountQuery(whereClause: string) {
   const query = `
-    SELECT Id, Name, AccountType, AccountSubType, CurrencyRef, CurrentBalance, Active
+    SELECT *
     FROM Account
     WHERE ${whereClause}
     ORDER BY Name
@@ -89,24 +93,6 @@ async function runAccountQuery(whereClause: string) {
 
   const data = await qboFetch(`query?query=${encodeURIComponent(query)}`);
   return data?.QueryResponse?.Account ?? [];
-}
-
-async function fetchAccountDetails(accountIds: string[]) {
-  const detailsById = new Map<string, any>();
-
-  await Promise.all(
-    accountIds.map(async (id) => {
-      try {
-        const detail = await qboFetch(`account/${encodeURIComponent(id)}`);
-        const acc = detail?.Account;
-        if (acc?.Id != null) detailsById.set(String(acc.Id), acc);
-      } catch {
-        // If detailed fetch fails for one account, keep the endpoint resilient.
-      }
-    })
-  );
-
-  return detailsById;
 }
 
 export async function GET(req: Request) {
@@ -117,13 +103,7 @@ export async function GET(req: Request) {
     const bankRaw = await runAccountQuery(`Active = true AND AccountType = 'Bank'`);
     const cashRaw = await runAccountQuery(`Active = true AND AccountSubType = 'CashOnHand'`);
 
-    const accountIds = [...bankRaw, ...cashRaw]
-      .map((a: any) => String(a?.Id ?? ""))
-      .filter((id: string) => Boolean(id));
-
-    const detailsById = await fetchAccountDetails(accountIds);
-
-    const all = [...normalizeAccounts(bankRaw, detailsById), ...normalizeAccounts(cashRaw, detailsById)];
+    const all = [...normalizeAccounts(bankRaw), ...normalizeAccounts(cashRaw)];
 
     // De-duplicate by account id
     const map = new Map<string, CashBankAccount>();
@@ -140,12 +120,21 @@ export async function GET(req: Request) {
       totalsByCurrency[a.currency] = (totalsByCurrency[a.currency] ?? 0) + a.currentBalance;
     }
 
+    const bankAccounts = accounts.filter((a) => a.accountType === "Bank");
+    const feedEnabledCount = bankAccounts.filter((a) => a.feedBalanceAvailable).length;
+
     return NextResponse.json({
       ok: true,
       count: accounts.length,
       accounts,
       totalsByCurrency,
       fetchedAt: new Date().toISOString(),
+      feedBalanceCoverage: {
+        bankAccounts: bankAccounts.length,
+        feedEnabledAccounts: feedEnabledCount,
+        note:
+          "Bank-feed balances appear only after QBO Banking Update pulls latest transactions; otherwise posted balance is shown.",
+      },
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
