@@ -55,6 +55,9 @@ type CashBankAccount = {
   accountSubType?: string;
   currency: string;
   currentBalance: number;
+  postedBalance: number;
+  bankBalance: number;
+  balanceSource: "bank-feed" | "posted";
 };
 
 type CashBanksResp = {
@@ -62,6 +65,7 @@ type CashBanksResp = {
   count: number;
   accounts: CashBankAccount[];
   totalsByCurrency: Record<string, number>;
+  fetchedAt?: string;
   error?: string;
 };
 
@@ -568,6 +572,13 @@ export default function DashboardPage() {
     }
   }
 
+  async function fetchCashBanks() {
+    const cbRes = await fetch(`/api/qbo/cash-banks?includeZero=true`, { cache: "no-store" });
+    const cbJson: CashBanksResp = await cbRes.json();
+    if (!cbJson.ok) throw new Error(cbJson.error || "Cash-banks API failed");
+    setCashBanks(cbJson);
+  }
+
   async function fetchAll() {
     setLoading(true);
     setErr("");
@@ -630,10 +641,7 @@ export default function DashboardPage() {
       const restSum = rest.reduce((s, x) => s + x.value, 0);
       setPnlBreakdown(restSum > 0 ? [...top, { name: "Other", value: restSum }] : top);
 
-      const cbRes = await fetch(`/api/qbo/cash-banks?includeZero=true`, { cache: "no-store" });
-      const cbJson: CashBanksResp = await cbRes.json();
-      if (!cbJson.ok) throw new Error(cbJson.error || "Cash-banks API failed");
-      setCashBanks(cbJson);
+      await fetchCashBanks();
 
       setRetainedLoading(true);
       try {
@@ -672,6 +680,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchCashBanks().catch(() => {});
+    }, 60_000);
+
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1462,6 +1479,9 @@ export default function DashboardPage() {
             <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="mb-3">
                 <div className="text-sm font-semibold">Accounts</div>
+                <div className="mt-1 text-xs text-slate-400">
+                  Auto-refreshes every 60s. Last sync: {cashBanks?.fetchedAt ? new Date(cashBanks.fetchedAt).toLocaleTimeString() : "—"}
+                </div>
               </div>
 
               <div className="flex gap-3 overflow-x-auto pb-2">
@@ -1483,6 +1503,9 @@ export default function DashboardPage() {
                       <div className="text-sm font-semibold">{a.name}</div>
                       <div className="mt-1 text-xs text-slate-300">
                         {a.accountSubType ?? a.accountType} • {a.currency}
+                      </div>
+                      <div className="mt-1 text-[11px] uppercase tracking-wide text-slate-400">
+                        {a.balanceSource === "bank-feed" ? "Live bank feed" : "Posted in books"}
                       </div>
                       <div className="mt-3 text-2xl font-semibold">{formatMoneyByCurrency(a.currency, a.currentBalance)}</div>
                     </button>
