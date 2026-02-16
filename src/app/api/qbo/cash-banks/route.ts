@@ -10,7 +10,10 @@ type CashBankAccount = {
   accountType: string;
   accountSubType?: string;
   currency: string;
-  currentBalance: number; // native currency balance
+  currentBalance: number; // native currency balance shown on UI
+  postedBalance: number; // bookkeeping/posted balance
+  bankBalance: number; // linked bank feed balance (if available)
+  balanceSource: "bank-feed" | "posted";
 };
 
 function toNumber(v: any): number {
@@ -23,13 +26,24 @@ function normalizeAccounts(raw: any[]): CashBankAccount[] {
   return (raw ?? [])
     .map((a: any) => {
       const currency = a?.CurrencyRef?.value || "PKR";
+      const postedBalance = toNumber(a?.CurrentBalance);
+
+      // Linked-bank accounts can expose a separate live bank/feed balance in some tenants.
+      const rawBankBalance = a?.BankBalance ?? a?.OnlineBankingBalance ?? a?.CurrentBankBalance;
+      const bankBalance = toNumber(rawBankBalance);
+      const hasLiveBankBalance = rawBankBalance != null && String(rawBankBalance).trim() !== "";
+
+      const useBankFeed = String(a?.AccountType ?? "") === "Bank" && hasLiveBankBalance;
       return {
         id: String(a?.Id ?? ""),
         name: String(a?.Name ?? ""),
         accountType: String(a?.AccountType ?? ""),
         accountSubType: a?.AccountSubType ? String(a.AccountSubType) : undefined,
         currency,
-        currentBalance: toNumber(a?.CurrentBalance),
+        currentBalance: useBankFeed ? bankBalance : postedBalance,
+        postedBalance,
+        bankBalance,
+        balanceSource: useBankFeed ? ("bank-feed" as const) : ("posted" as const),
       };
     })
     .filter((a: CashBankAccount) => Boolean(a.id) && Boolean(a.name));
@@ -37,7 +51,7 @@ function normalizeAccounts(raw: any[]): CashBankAccount[] {
 
 async function runAccountQuery(whereClause: string) {
   const query = `
-    SELECT Id, Name, AccountType, AccountSubType, CurrencyRef, CurrentBalance, Active
+    SELECT *
     FROM Account
     WHERE ${whereClause}
     ORDER BY Name
@@ -87,6 +101,7 @@ export async function GET(req: Request) {
       count: accounts.length,
       accounts,
       totalsByCurrency,
+      fetchedAt: new Date().toISOString(),
     });
   } catch (e: any) {
     return NextResponse.json(
