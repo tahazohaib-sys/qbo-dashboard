@@ -10,7 +10,12 @@ type CashBankAccount = {
   accountType: string;
   accountSubType?: string;
   currency: string;
-  currentBalance: number; // native currency balance
+  currentBalance: number; // value rendered on dashboard
+  postedBalance: number; // accounting ledger (posted) balance
+  bankBalance: number; // linked bank/feed balance when QBO exposes it
+  pendingImpact: number; // bankBalance - postedBalance
+  balanceSource: "bank-feed" | "posted";
+  feedBalanceAvailable: boolean;
 };
 
 function toNumber(v: any): number {
@@ -19,17 +24,60 @@ function toNumber(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function pickFirstNonEmpty(obj: any, keys: string[]) {
+  for (const key of keys) {
+    const value = obj?.[key];
+    if (value == null) continue;
+    if (typeof value === "string" && value.trim() === "") continue;
+    return value;
+  }
+  return undefined;
+}
+
+function extractLiveBankBalance(account: any): { hasValue: boolean; value: number } {
+  // QBO tenants expose feed values differently (or not at all via Accounting API).
+  const onlineInfo = account?.OnlineBankingInfo ?? account?.BankingInfo ?? account?.BankInfo;
+
+  const raw =
+    pickFirstNonEmpty(onlineInfo, [
+      "BankBalance",
+      "OnlineBankingBalance",
+      "CurrentBankBalance",
+      "AvailableBalance",
+    ]) ??
+    pickFirstNonEmpty(account, [
+      "BankBalance",
+      "OnlineBankingBalance",
+      "CurrentBankBalance",
+      "AvailableBalance",
+    ]);
+
+  if (raw == null) return { hasValue: false, value: 0 };
+  return { hasValue: true, value: toNumber(raw) };
+}
+
 function normalizeAccounts(raw: any[]): CashBankAccount[] {
   return (raw ?? [])
     .map((a: any) => {
       const currency = a?.CurrencyRef?.value || "PKR";
+      const postedBalance = toNumber(a?.CurrentBalance);
+
+      const { hasValue: hasLiveBankBalance, value: bankBalance } = extractLiveBankBalance(a);
+      const isBankAccount = String(a?.AccountType ?? "") === "Bank";
+      const useBankFeed = isBankAccount && hasLiveBankBalance;
+
       return {
         id: String(a?.Id ?? ""),
         name: String(a?.Name ?? ""),
         accountType: String(a?.AccountType ?? ""),
         accountSubType: a?.AccountSubType ? String(a.AccountSubType) : undefined,
         currency,
-        currentBalance: toNumber(a?.CurrentBalance),
+        currentBalance: useBankFeed ? bankBalance : postedBalance,
+        postedBalance,
+        bankBalance,
+        pendingImpact: useBankFeed ? bankBalance - postedBalance : 0,
+        balanceSource: useBankFeed ? ("bank-feed" as const) : ("posted" as const),
+        feedBalanceAvailable: hasLiveBankBalance,
       };
     })
     .filter((a: CashBankAccount) => Boolean(a.id) && Boolean(a.name));
@@ -37,7 +85,7 @@ function normalizeAccounts(raw: any[]): CashBankAccount[] {
 
 async function runAccountQuery(whereClause: string) {
   const query = `
-    SELECT Id, Name, AccountType, AccountSubType, CurrencyRef, CurrentBalance, Active
+    SELECT *
     FROM Account
     WHERE ${whereClause}
     ORDER BY Name
@@ -52,15 +100,6 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const includeZero = (url.searchParams.get("includeZero") ?? "true") !== "false";
 
-    /**
-     * IMPORTANT:
-     * Many QBO tenants reject OR / parentheses in QBOQL.
-     * So we run two queries and merge:
-     * 1) Bank accounts
-     * 2) CashOnHand accounts
-     *
-     * Active is boolean in QBOQL; "true" is accepted by most tenants.
-     */
     const bankRaw = await runAccountQuery(`Active = true AND AccountType = 'Bank'`);
     const cashRaw = await runAccountQuery(`Active = true AND AccountSubType = 'CashOnHand'`);
 
@@ -76,22 +115,28 @@ export async function GET(req: Request) {
       accounts = accounts.filter((a) => a.currentBalance !== 0);
     }
 
-    // totals grouped by currency (NO conversion)
     const totalsByCurrency: Record<string, number> = {};
     for (const a of accounts) {
       totalsByCurrency[a.currency] = (totalsByCurrency[a.currency] ?? 0) + a.currentBalance;
     }
+
+    const bankAccounts = accounts.filter((a) => a.accountType === "Bank");
+    const feedEnabledCount = bankAccounts.filter((a) => a.feedBalanceAvailable).length;
 
     return NextResponse.json({
       ok: true,
       count: accounts.length,
       accounts,
       totalsByCurrency,
+      fetchedAt: new Date().toISOString(),
+      feedBalanceCoverage: {
+        bankAccounts: bankAccounts.length,
+        feedEnabledAccounts: feedEnabledCount,
+        note:
+          "Bank-feed balances appear only after QBO Banking Update pulls latest transactions; otherwise posted balance is shown.",
+      },
     });
   } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message ?? String(e) },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
   }
 }
