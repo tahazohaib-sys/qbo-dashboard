@@ -346,12 +346,7 @@ function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurr
   return { main: formatMoneyByCurrency(cur, txn.amountHome ?? 0), sub: null };
 }
 
-/* ------------ chart axis/ticks: clearer visibility ------------ */
-
-const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
-const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
-const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
-const GRID = { strokeDasharray: "3 3", opacity: 0.22 } as const;
+/* ------------ chart theme tokens ------------ */
 
 const CHART_COLORS = {
   positive: "#22d3ee",
@@ -423,6 +418,39 @@ export default function DashboardPage() {
   const [customAmount, setCustomAmount] = useState<string>("");
 
   const [err, setErr] = useState<string>("");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? window.localStorage.getItem("qbo-theme") : null;
+    if (saved === "light" || saved === "dark") {
+      setTheme(saved);
+      return;
+    }
+
+    if (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: light)").matches) {
+      setTheme("light");
+    }
+  }, []);
+
+  const isDark = theme === "dark";
+  const AXIS_TICK = { fill: isDark ? "#e2e8f0" : "#334155", fontSize: 12, fontWeight: 600 } as const;
+  const AXIS_LINE = { stroke: isDark ? "rgba(226,232,240,0.55)" : "rgba(51,65,85,0.5)" } as const;
+  const TICK_LINE = { stroke: isDark ? "rgba(226,232,240,0.35)" : "rgba(51,65,85,0.32)" } as const;
+  const GRID = {
+    strokeDasharray: "3 3",
+    opacity: isDark ? 0.22 : 0.3,
+    stroke: isDark ? "rgba(148,163,184,0.55)" : "rgba(148,163,184,0.45)",
+  } as const;
+
+  function toggleTheme() {
+    setTheme((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("qbo-theme", next);
+      }
+      return next;
+    });
+  }
 
   function buildStartEnd(fy: number, fm: number, ty: number, tm: number) {
     const start = `${fy}-${String(fm).padStart(2, "0")}-01`;
@@ -837,7 +865,9 @@ export default function DashboardPage() {
   }, [fromYear, fromMonth, toYear, toMonth]);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
+    <div
+      className={`theme-${theme} relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100`}
+    >
       <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
       <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
 
@@ -867,6 +897,13 @@ export default function DashboardPage() {
               disabled={loading}
             >
               {loading ? "Refreshing..." : "Refresh"}
+            </button>
+
+            <button
+              onClick={toggleTheme}
+              className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 active:scale-[0.99]"
+            >
+              {isDark ? "Light Theme" : "Dark Theme"}
             </button>
           </div>
         </div>
