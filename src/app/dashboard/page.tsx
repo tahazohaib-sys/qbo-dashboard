@@ -422,6 +422,59 @@ function useAnimatedNumber(target: number, durationMs = 800) {
   return reduceMotion ? target : value;
 }
 
+function GlobeAccent() {
+  return (
+    <div className="pointer-events-none absolute right-[-110px] top-[-90px] z-0 h-[420px] w-[420px] opacity-[0.08]">
+      <svg viewBox="0 0 320 320" className="h-full w-full" aria-hidden="true">
+        <defs>
+          <radialGradient id="globeFade" cx="50%" cy="45%" r="56%">
+            <stop offset="0%" stopColor="rgba(148,163,184,0.38)" />
+            <stop offset="72%" stopColor="rgba(34,211,238,0.16)" />
+            <stop offset="100%" stopColor="rgba(2,6,23,0)" />
+          </radialGradient>
+          <clipPath id="globeClip">
+            <circle cx="160" cy="160" r="128" />
+          </clipPath>
+          <linearGradient id="globeStroke" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="rgba(125,211,252,0.75)" />
+            <stop offset="100%" stopColor="rgba(148,163,184,0.35)" />
+          </linearGradient>
+        </defs>
+
+        <circle cx="160" cy="160" r="128" fill="url(#globeFade)" />
+        <circle cx="160" cy="160" r="128" fill="none" stroke="url(#globeStroke)" strokeWidth="1.2" />
+
+        <g clipPath="url(#globeClip)" className="globe-rotate origin-center motion-reduce:animate-none">
+          <g fill="none" stroke="rgba(148,163,184,0.45)" strokeWidth="1">
+            <ellipse cx="160" cy="160" rx="120" ry="54" />
+            <ellipse cx="160" cy="160" rx="120" ry="90" />
+            <ellipse cx="160" cy="160" rx="120" ry="118" />
+            <ellipse cx="160" cy="160" rx="86" ry="128" />
+            <ellipse cx="160" cy="160" rx="42" ry="128" />
+          </g>
+
+          <path
+            d="M60 123c15-12 33-15 51-18 21-3 36-16 61-13 16 1 34 9 44 19 7 7 11 16 13 26 3 15-1 30-10 42-7 9-18 17-31 20-17 4-35 2-50-5-12-5-21-15-32-21-15-9-35-8-46-21-10-11-9-24 0-29z"
+            fill="rgba(148,163,184,0.58)"
+          />
+          <path
+            d="M84 196c10-3 22 0 31 4 10 5 19 13 30 17 18 6 38 7 57 3 14-3 28-9 41-7 7 1 13 4 17 10 5 8 3 18-2 26-8 12-24 18-39 21-21 5-43 5-64 3-19-3-38-7-55-16-10-5-20-13-23-24-3-12 0-26 7-37z"
+            fill="rgba(125,211,252,0.46)"
+          />
+          <path
+            d="M164 82c8-9 22-12 34-12 14 1 28 6 38 15 9 8 15 19 16 31 0 7-2 15-7 21-6 6-15 9-23 12-14 4-28 10-43 8-15-2-28-11-32-24-4-12 2-31 17-51z"
+            fill="rgba(186,230,253,0.43)"
+          />
+          <path
+            d="M228 164c14-3 30 1 41 10 8 7 13 17 12 27-1 12-11 20-23 24-11 4-25 4-36-1-10-4-18-13-20-23-3-14 8-33 26-37z"
+            fill="rgba(148,163,184,0.44)"
+          />
+        </g>
+      </svg>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const years = useMemo(() => ymOptions(6), []);
   const now = new Date();
@@ -941,6 +994,7 @@ export default function DashboardPage() {
     <div className='relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(34,211,238,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(99,102,241,0.14),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(244,63,94,0.08),transparent_55%),linear-gradient(180deg,#030711_0%,#050b19_45%,#040714_100%)] text-slate-100 [font-family:ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Inter,Roboto,Arial]'>
       <div className="pointer-events-none absolute inset-0 opacity-[0.03] [background-image:radial-gradient(rgba(255,255,255,0.7)_0.7px,transparent_0.7px)] [background-size:4px_4px]" />
       <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
+      <GlobeAccent />
       <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
 
       <div className="mx-auto max-w-7xl px-5 py-8">
@@ -2032,6 +2086,20 @@ export default function DashboardPage() {
           50% {
             opacity: 0.46;
           }
+        }
+
+        @keyframes globeSpin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
+        }
+
+        .globe-rotate {
+          animation: globeSpin 38s linear infinite;
+          transform-origin: center;
         }
 
         @media (prefers-reduced-motion: reduce) {
