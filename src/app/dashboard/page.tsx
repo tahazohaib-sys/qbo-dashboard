@@ -422,55 +422,34 @@ function useAnimatedNumber(target: number, durationMs = 800) {
   return reduceMotion ? target : value;
 }
 
-function GlobeAccent() {
+function WorldMapBackground() {
   return (
-    <div className="pointer-events-none absolute right-[-110px] top-[-90px] z-0 h-[420px] w-[420px] opacity-[0.08]">
-      <svg viewBox="0 0 320 320" className="h-full w-full" aria-hidden="true">
-        <defs>
-          <radialGradient id="globeFade" cx="50%" cy="45%" r="56%">
-            <stop offset="0%" stopColor="rgba(148,163,184,0.38)" />
-            <stop offset="72%" stopColor="rgba(34,211,238,0.16)" />
-            <stop offset="100%" stopColor="rgba(2,6,23,0)" />
-          </radialGradient>
-          <clipPath id="globeClip">
-            <circle cx="160" cy="160" r="128" />
-          </clipPath>
-          <linearGradient id="globeStroke" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="rgba(125,211,252,0.75)" />
-            <stop offset="100%" stopColor="rgba(148,163,184,0.35)" />
-          </linearGradient>
-        </defs>
-
-        <circle cx="160" cy="160" r="128" fill="url(#globeFade)" />
-        <circle cx="160" cy="160" r="128" fill="none" stroke="url(#globeStroke)" strokeWidth="1.2" />
-
-        <g clipPath="url(#globeClip)" className="globe-rotate origin-center motion-reduce:animate-none">
-          <g fill="none" stroke="rgba(148,163,184,0.45)" strokeWidth="1">
-            <ellipse cx="160" cy="160" rx="120" ry="54" />
-            <ellipse cx="160" cy="160" rx="120" ry="90" />
-            <ellipse cx="160" cy="160" rx="120" ry="118" />
-            <ellipse cx="160" cy="160" rx="86" ry="128" />
-            <ellipse cx="160" cy="160" rx="42" ry="128" />
+    <div className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center overflow-hidden">
+      <div className="world-map-pan opacity-[0.08] blur-[0.5px] [mask-image:radial-gradient(circle_at_center,black_0%,black_45%,transparent_75%)]">
+        <svg
+          viewBox="0 0 1400 700"
+          aria-hidden="true"
+          className="h-[72vh] min-h-[420px] w-[170vw] max-w-none drop-shadow-[0_0_24px_rgba(56,189,248,0.16)]"
+        >
+          <g fill="rgba(148,163,184,0.68)">
+            <path d="M95 245l34-18 44-8 50 8 42-10 42 11 34 24 14 31-16 24-35 16-50 5-44 14-39-6-36-22-35-5-18-27z" />
+            <path d="M286 354l18-9 23 6 16 20-8 31-18 18-27-2-8-28z" />
+            <path d="M438 224l44-26 56-14 73 14 58 28 19 36-27 27-57 15-56 8-41 25-40 47-54 7-40-25-14-31 12-33 31-29z" />
+            <path d="M623 362l24 6 25 26 2 38-24 30-45 6-29-24 1-40 22-30z" />
+            <path d="M744 214l59-18 60 4 46 24 10 27-24 17-45 5-39 19-30 23-32 1-25-23 2-26z" />
+            <path d="M864 321l39 9 31 25 4 41-27 28-49 5-32-25-1-44z" />
+            <path d="M992 207l72-18 95 13 71 34 28 53-15 44-62 20-89-4-57-25-29-44z" />
+            <path d="M1068 364l61-8 67 10 44 27-8 39-44 22-64 6-54-18-18-34z" />
+            <path d="M1199 511l57-9 49 16 20 34-23 24-53 8-45-13-21-27z" />
+            <path d="M832 520l33-8 36 9 15 24-16 18-35 7-28-11-13-19z" />
           </g>
-
-          <path
-            d="M60 123c15-12 33-15 51-18 21-3 36-16 61-13 16 1 34 9 44 19 7 7 11 16 13 26 3 15-1 30-10 42-7 9-18 17-31 20-17 4-35 2-50-5-12-5-21-15-32-21-15-9-35-8-46-21-10-11-9-24 0-29z"
-            fill="rgba(148,163,184,0.58)"
-          />
-          <path
-            d="M84 196c10-3 22 0 31 4 10 5 19 13 30 17 18 6 38 7 57 3 14-3 28-9 41-7 7 1 13 4 17 10 5 8 3 18-2 26-8 12-24 18-39 21-21 5-43 5-64 3-19-3-38-7-55-16-10-5-20-13-23-24-3-12 0-26 7-37z"
-            fill="rgba(125,211,252,0.46)"
-          />
-          <path
-            d="M164 82c8-9 22-12 34-12 14 1 28 6 38 15 9 8 15 19 16 31 0 7-2 15-7 21-6 6-15 9-23 12-14 4-28 10-43 8-15-2-28-11-32-24-4-12 2-31 17-51z"
-            fill="rgba(186,230,253,0.43)"
-          />
-          <path
-            d="M228 164c14-3 30 1 41 10 8 7 13 17 12 27-1 12-11 20-23 24-11 4-25 4-36-1-10-4-18-13-20-23-3-14 8-33 26-37z"
-            fill="rgba(148,163,184,0.44)"
-          />
-        </g>
-      </svg>
+          <g fill="none" stroke="rgba(125,211,252,0.4)" strokeWidth="1.4">
+            <path d="M70 348h1260" />
+            <path d="M70 260h1260" />
+            <path d="M70 438h1260" />
+          </g>
+        </svg>
+      </div>
     </div>
   );
 }
@@ -994,10 +973,10 @@ export default function DashboardPage() {
     <div className='relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(34,211,238,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(99,102,241,0.14),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(244,63,94,0.08),transparent_55%),linear-gradient(180deg,#030711_0%,#050b19_45%,#040714_100%)] text-slate-100 [font-family:ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Inter,Roboto,Arial]'>
       <div className="pointer-events-none absolute inset-0 opacity-[0.03] [background-image:radial-gradient(rgba(255,255,255,0.7)_0.7px,transparent_0.7px)] [background-size:4px_4px]" />
       <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
-      <GlobeAccent />
+      <WorldMapBackground />
       <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
 
-      <div className="mx-auto max-w-7xl px-5 py-8">
+      <div className="relative z-10 mx-auto max-w-7xl px-5 py-8">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div className="flex items-center gap-4">
             <div className="relative h-12 w-12 shrink-0">
@@ -2088,22 +2067,32 @@ export default function DashboardPage() {
           }
         }
 
-        @keyframes globeSpin {
+        @keyframes mapPan {
           from {
-            transform: rotate(0deg);
+            transform: translateX(-12%);
           }
           to {
-            transform: rotate(360deg);
+            transform: translateX(12%);
           }
         }
 
-        .globe-rotate {
-          animation: globeSpin 38s linear infinite;
-          transform-origin: center;
+        @keyframes mapPulse {
+          0%,
+          100% {
+            transform: scale(1) translateY(0px);
+          }
+          50% {
+            transform: scale(1.015) translateY(-4px);
+          }
+        }
+
+        .world-map-pan {
+          animation: mapPan 54s linear infinite alternate, mapPulse 18s ease-in-out infinite;
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .glass-breathe::after {
+          .glass-breathe::after,
+          .world-map-pan {
             animation: none;
           }
         }
