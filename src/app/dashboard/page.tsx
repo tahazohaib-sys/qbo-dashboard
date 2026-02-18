@@ -4,7 +4,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -388,6 +388,40 @@ function fmtAxisPKR(v: any) {
   return `${Math.round(n)}`;
 }
 
+function useAnimatedNumber(target: number, durationMs = 800) {
+  const [value, setValue] = useState(target);
+  const fromRef = useRef(target);
+  const reduceMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  useEffect(() => {
+    if (reduceMotion) {
+      fromRef.current = target;
+      return;
+    }
+
+    const start = performance.now();
+    const from = fromRef.current;
+    const delta = target - from;
+    let raf = 0;
+
+    const step = (ts: number) => {
+      const progress = Math.min(1, (ts - start) / durationMs);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(from + delta * eased);
+      if (progress < 1) {
+        raf = requestAnimationFrame(step);
+      } else {
+        fromRef.current = target;
+      }
+    };
+
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [durationMs, reduceMotion, target]);
+
+  return reduceMotion ? target : value;
+}
+
 export default function DashboardPage() {
   const years = useMemo(() => ymOptions(6), []);
   const now = new Date();
@@ -434,6 +468,10 @@ export default function DashboardPage() {
   const [customAmount, setCustomAmount] = useState<string>("");
 
   const [err, setErr] = useState<string>("");
+  const [lastUpdated, setLastUpdated] = useState("--:--:--");
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fetchAllRef = useRef<() => Promise<void>>(async () => {});
 
   function buildStartEnd(fy: number, fm: number, ty: number, tm: number) {
     const start = `${fy}-${String(fm).padStart(2, "0")}-01`;
@@ -661,6 +699,12 @@ export default function DashboardPage() {
       }
 
       if (selectedAccount) await fetchTransactions(selectedAccount.id);
+
+      setLastUpdated(
+        new Date().toLocaleTimeString("en-GB", {
+          hour12: false,
+        })
+      );
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     } finally {
@@ -682,9 +726,46 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
+    fetchAllRef.current = fetchAll;
+  });
+
+  useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!autoRefresh) {
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      return;
+    }
+
+    const runRefresh = () => {
+      if (document.visibilityState === "visible") {
+        fetchAllRef.current();
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        runRefresh();
+      }
+    };
+
+    refreshTimerRef.current = setInterval(runRefresh, 30_000);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [autoRefresh]);
 
   const series = data?.series ?? [];
   const kpi = data?.kpis?.ytd ?? { revenue: 0, expenses: 0, profit: 0 };
@@ -875,12 +956,40 @@ export default function DashboardPage() {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+              <span className="relative inline-flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300/60 motion-reduce:animate-none" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300" />
+              </span>
+              <span className="font-semibold uppercase tracking-[0.14em]">Live</span>
+              <span className="text-emerald-100/80">Last updated: {lastUpdated}</span>
+            </div>
+
             <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
               <div className="font-medium text-slate-200">
                 Company: {data?.companyName ?? "—"} ({data?.currency ?? "PKR"})
               </div>
               <div className="opacity-80">As of: {headerAsOf || "—"}</div>
             </div>
+
+            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200">
+              <span className="uppercase tracking-[0.12em]">Auto refresh</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoRefresh}
+                onClick={() => setAutoRefresh((prev) => !prev)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
+                  autoRefresh ? "border-cyan-300/50 bg-cyan-400/30" : "border-white/15 bg-white/10"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                    autoRefresh ? "translate-x-5" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </label>
 
             <button
               onClick={fetchAll}
@@ -1040,14 +1149,19 @@ export default function DashboardPage() {
                 <>
                   {/* ✅ KPIs: show totals + include manual adjustments */}
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                    <KpiCard title="Total Payables" value={formatPKRCompact(payablesAdjTotal)} highlight="bad" />
-                    <KpiCard title="Total Receivables" value={formatPKRCompact(receivablesAdjTotal)} highlight="good" />
+                    <KpiCard title="Total Payables" numericValue={payablesAdjTotal} formatValue={formatPKRCompact} highlight="bad" />
+                    <KpiCard title="Total Receivables" numericValue={receivablesAdjTotal} formatValue={formatPKRCompact} highlight="good" />
                     <KpiCard
                       title="Net (Receivables - Payables)"
-                      value={formatPKRCompact(receivablesAdjTotal - payablesAdjTotal)}
+                      numericValue={receivablesAdjTotal - payablesAdjTotal}
+                      formatValue={formatPKRCompact}
                       highlight={receivablesAdjTotal - payablesAdjTotal >= 0 ? "good" : "bad"}
                     />
-                    <KpiCard title="AR/AP Gap" value={formatPKRCompact(Math.abs(payablesAdjTotal - receivablesAdjTotal))} />
+                    <KpiCard
+                      title="AR/AP Gap"
+                      numericValue={Math.abs(payablesAdjTotal - receivablesAdjTotal)}
+                      formatValue={formatPKRCompact}
+                    />
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1085,8 +1199,26 @@ export default function DashboardPage() {
                             <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                             <Tooltip content={<MoneyTooltip arApMonthEnd />} />
                             <Legend />
-                            <Line type="monotone" dataKey="payables" name="Total Payables" stroke={CHART_COLORS.negative} strokeWidth={3} dot={false} />
-                            <Line type="monotone" dataKey="receivables" name="Total Receivables" stroke={CHART_COLORS.profit} strokeWidth={3} dot={false} />
+                            <Line
+                              type="monotone"
+                              dataKey="payables"
+                              name="Total Payables"
+                              stroke={CHART_COLORS.negative}
+                              strokeWidth={3}
+                              dot={(props) => <LastPointPulseDot {...props} dataLength={monthlyArAp.length} color={CHART_COLORS.negative} />}
+                              activeDot={{ r: 5 }}
+                              style={{ filter: "drop-shadow(0 0 8px rgba(248,113,113,0.2))" }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="receivables"
+                              name="Total Receivables"
+                              stroke={CHART_COLORS.profit}
+                              strokeWidth={3}
+                              dot={(props) => <LastPointPulseDot {...props} dataLength={monthlyArAp.length} color={CHART_COLORS.profit} />}
+                              activeDot={{ r: 5 }}
+                              style={{ filter: "drop-shadow(0 0 8px rgba(52,211,153,0.2))" }}
+                            />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -1388,10 +1520,27 @@ export default function DashboardPage() {
         {tab === "pnl" ? (
           <>
             <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <KpiCard title="Total Income" value={formatPKRCompact(kpi.revenue)} subtext="Year-to-date inflows" highlight="good" />
-              <KpiCard title="Total Expenses" value={formatPKRCompact(kpi.expenses)} subtext="Year-to-date outflows" highlight="bad" />
-              <KpiCard title="Net Profit (Loss)" value={formatPKRCompact(kpi.profit)} highlight={kpi.profit < 0 ? "bad" : "good"} />
-              <KpiCard title="Months" value={`${series.length}`} subtext="Period coverage" />
+              <KpiCard
+                title="Total Income"
+                numericValue={kpi.revenue}
+                formatValue={formatPKRCompact}
+                subtext="Year-to-date inflows"
+                highlight="good"
+              />
+              <KpiCard
+                title="Total Expenses"
+                numericValue={kpi.expenses}
+                formatValue={formatPKRCompact}
+                subtext="Year-to-date outflows"
+                highlight="bad"
+              />
+              <KpiCard
+                title="Net Profit (Loss)"
+                numericValue={kpi.profit}
+                formatValue={formatPKRCompact}
+                highlight={kpi.profit < 0 ? "bad" : "good"}
+              />
+              <KpiCard title="Months" numericValue={series.length} formatValue={(n) => `${Math.round(n)}`} subtext="Period coverage" />
             </div>
 
             <div className="mt-8">
@@ -1434,8 +1583,20 @@ export default function DashboardPage() {
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip />} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
-                      <Bar dataKey="revenue" name="Income" fill="url(#incomeBars)" radius={[10, 10, 0, 0]} />
-                      <Bar dataKey="expenses" name="Expenses" fill="url(#expenseBars)" radius={[10, 10, 0, 0]} />
+                      <Bar
+                        dataKey="revenue"
+                        name="Income"
+                        fill="url(#incomeBars)"
+                        radius={[10, 10, 0, 0]}
+                        style={{ filter: "drop-shadow(0 0 8px rgba(103,232,249,0.2))" }}
+                      />
+                      <Bar
+                        dataKey="expenses"
+                        name="Expenses"
+                        fill="url(#expenseBars)"
+                        radius={[10, 10, 0, 0]}
+                        style={{ filter: "drop-shadow(0 0 8px rgba(251,113,133,0.18))" }}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -1461,7 +1622,7 @@ export default function DashboardPage() {
                         name="Net Profit"
                         stroke="url(#netProfitLine)"
                         strokeWidth={3}
-                        dot={{ r: 2.8, fill: "#99f6e4", strokeWidth: 0 }}
+                        dot={(props) => <LastPointPulseDot {...props} dataLength={series.length} color="#5eead4" />}
                         activeDot={{ r: 5.5, fill: "#5eead4", stroke: "#ccfbf1", strokeWidth: 2 }}
                         style={{ filter: "drop-shadow(0 0 10px rgba(52,211,153,0.28))" }}
                       />
@@ -1621,10 +1782,15 @@ export default function DashboardPage() {
         {tab === "retained" ? (
           <>
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-              <KpiCard title="Net Profit" value={formatPKRCompact(reProfit)} />
-              <KpiCard title="Long-term Assets" value={formatPKRCompact(reLongTermAssets)} />
-              <KpiCard title="Net Investments" value={formatPKRCompact(reNetInvestments)} />
-              <KpiCard title="Retained Earning" value={formatPKRCompact(reRetained)} highlight={reRetained < 0 ? "bad" : "good"} />
+              <KpiCard title="Net Profit" numericValue={reProfit} formatValue={formatPKRCompact} />
+              <KpiCard title="Long-term Assets" numericValue={reLongTermAssets} formatValue={formatPKRCompact} />
+              <KpiCard title="Net Investments" numericValue={reNetInvestments} formatValue={formatPKRCompact} />
+              <KpiCard
+                title="Retained Earning"
+                numericValue={reRetained}
+                formatValue={formatPKRCompact}
+                highlight={reRetained < 0 ? "bad" : "good"}
+              />
             </div>
 
             <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1774,10 +1940,25 @@ export default function DashboardPage() {
             ) : fcOk ? (
               <>
                 <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-                  <KpiCard title="Revenue Trend (Avg MoM)" value={formatPct(fcRevMoM)} highlight={fcRevMoM < 0 ? "bad" : "good"} />
-                  <KpiCard title="Opex Trend (Avg MoM)" value={formatPct(fcExpMoM)} highlight={fcExpMoM > 0 ? "bad" : "good"} />
-                  <KpiCard title="Avg Monthly Opex" value={formatPKRCompact(fcAvgOpex)} />
-                  <KpiCard title="Break-even Revenue" value={formatPKRCompact(fcBreakeven)} highlight={fcMeetsBE ? "good" : "bad"} />
+                  <KpiCard
+                    title="Revenue Trend (Avg MoM)"
+                    numericValue={fcRevMoM}
+                    formatValue={formatPct}
+                    highlight={fcRevMoM < 0 ? "bad" : "good"}
+                  />
+                  <KpiCard
+                    title="Opex Trend (Avg MoM)"
+                    numericValue={fcExpMoM}
+                    formatValue={formatPct}
+                    highlight={fcExpMoM > 0 ? "bad" : "good"}
+                  />
+                  <KpiCard title="Avg Monthly Opex" numericValue={fcAvgOpex} formatValue={formatPKRCompact} />
+                  <KpiCard
+                    title="Break-even Revenue"
+                    numericValue={fcBreakeven}
+                    formatValue={formatPKRCompact}
+                    highlight={fcMeetsBE ? "good" : "bad"}
+                  />
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1820,6 +2001,45 @@ export default function DashboardPage() {
           </>
         ) : null}
       </div>
+
+      <style jsx global>{`
+        .glass-breathe {
+          position: relative;
+          isolation: isolate;
+        }
+
+        .glass-breathe::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          padding: 1px;
+          pointer-events: none;
+          background: linear-gradient(130deg, rgba(34, 211, 238, 0.22), rgba(255, 255, 255, 0.08), rgba(244, 63, 94, 0.18));
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          mask-composite: exclude;
+          opacity: 0.4;
+          animation: glassBreathe 7s ease-in-out infinite;
+        }
+
+        @keyframes glassBreathe {
+          0%,
+          100% {
+            opacity: 0.26;
+          }
+          50% {
+            opacity: 0.46;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .glass-breathe::after {
+            animation: none;
+          }
+        }
+      `}</style>
     </div>
   );
 }
@@ -1882,7 +2102,7 @@ function TabLinkButton({
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
       <div className="mb-3">
         <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
       </div>
@@ -1901,7 +2121,7 @@ function ChartCard({
   legend: Array<{ label: string; color: string }>;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -1921,14 +2141,26 @@ function ChartCard({
 function KpiCard({
   title,
   value,
+  numericValue,
+  formatValue,
   highlight,
   subtext,
 }: {
   title: string;
-  value: string;
+  value?: string;
+  numericValue?: number;
+  formatValue?: (n: number) => string;
   highlight?: "good" | "bad";
   subtext?: string;
 }) {
+  const animatedValue = useAnimatedNumber(numericValue ?? 0);
+  const resolvedValue =
+    typeof numericValue === "number"
+      ? formatValue
+        ? formatValue(animatedValue)
+        : `${Math.round(animatedValue)}`
+      : value ?? "—";
+
   const ring = highlight === "good" ? "border-emerald-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
 
   const glow =
@@ -1942,15 +2174,29 @@ function KpiCard({
 
   return (
     <div
-      className={`group rounded-2xl border ${ring} ${glow} bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl transition hover:shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_16px_45px_rgba(6,182,212,0.15)]`}
+      className={`glass-breathe group rounded-2xl border ${ring} ${glow} bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl transition hover:shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_16px_45px_rgba(6,182,212,0.15)]`}
     >
       <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.14em] text-slate-300">
         <span className={`h-2 w-2 rounded-full ${dot}`} />
         {title}
       </div>
-      <div className="mt-3 text-[24px] font-semibold tracking-tight text-white">{value}</div>
+      <div className="mt-3 text-[24px] font-semibold tracking-tight text-white">{resolvedValue}</div>
       {subtext ? <div className="mt-1 text-xs text-slate-400">{subtext}</div> : null}
     </div>
+  );
+}
+
+function LastPointPulseDot({ cx, cy, index, dataLength, color }: any) {
+  if (cx == null || cy == null || index !== dataLength - 1) return null;
+
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={4.5} fill={color} stroke="rgba(255,255,255,0.8)" strokeWidth={1.5} />
+      <circle cx={cx} cy={cy} r={7} fill="none" stroke={color} strokeOpacity={0.45} strokeWidth={1.5}>
+        <animate attributeName="r" values="7;12;7" dur="2.4s" repeatCount="indefinite" />
+        <animate attributeName="stroke-opacity" values="0.45;0.08;0.45" dur="2.4s" repeatCount="indefinite" />
+      </circle>
+    </g>
   );
 }
 
@@ -1960,7 +2206,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any
   if (pie) {
     const p = payload[0];
     return (
-      <div className="rounded-xl border border-white/10 bg-[#0b1220]/90 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-xl">
+      <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">{p?.name ?? ""}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
       </div>
@@ -1974,7 +2220,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any
     const receivables = Number(row?.receivables ?? 0);
 
     return (
-      <div className="rounded-xl border border-white/10 bg-[#0b1220]/90 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-xl">
+      <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">As of {asOf || label}</div>
         <div className="flex items-center justify-between gap-4">
           <span className="text-slate-300">Payables PKR</span>
@@ -1991,7 +2237,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any
   if (single) {
     const p = payload[0];
     return (
-      <div className="rounded-xl border border-white/10 bg-[#0b1220]/90 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-xl">
+      <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">{label}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
       </div>
@@ -1999,7 +2245,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-[#0b1220]/90 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-xl">
+    <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
       <div className="font-semibold">{label}</div>
       {payload.map((p: any) => (
         <div key={p.dataKey} className="flex items-center justify-between gap-4">
