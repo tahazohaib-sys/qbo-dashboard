@@ -422,34 +422,58 @@ function useAnimatedNumber(target: number, durationMs = 800) {
   return reduceMotion ? target : value;
 }
 
-function WorldMapBackground() {
+function WorldMapVideoBackground(): JSX.Element {
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduceMotion(media.matches);
+    update();
+
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+
+    if (reduceMotion) {
+      el.pause();
+      return;
+    }
+
+    el.playbackRate = 0.8;
+    const playPromise = el.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+  }, [reduceMotion]);
+
   return (
-    <div className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center overflow-hidden">
-      <div className="world-map-pan opacity-[0.08] blur-[0.5px] [mask-image:radial-gradient(circle_at_center,black_0%,black_45%,transparent_75%)]">
-        <svg
-          viewBox="0 0 1400 700"
-          aria-hidden="true"
-          className="h-[72vh] min-h-[420px] w-[170vw] max-w-none drop-shadow-[0_0_24px_rgba(56,189,248,0.16)]"
-        >
-          <g fill="rgba(148,163,184,0.68)">
-            <path d="M95 245l34-18 44-8 50 8 42-10 42 11 34 24 14 31-16 24-35 16-50 5-44 14-39-6-36-22-35-5-18-27z" />
-            <path d="M286 354l18-9 23 6 16 20-8 31-18 18-27-2-8-28z" />
-            <path d="M438 224l44-26 56-14 73 14 58 28 19 36-27 27-57 15-56 8-41 25-40 47-54 7-40-25-14-31 12-33 31-29z" />
-            <path d="M623 362l24 6 25 26 2 38-24 30-45 6-29-24 1-40 22-30z" />
-            <path d="M744 214l59-18 60 4 46 24 10 27-24 17-45 5-39 19-30 23-32 1-25-23 2-26z" />
-            <path d="M864 321l39 9 31 25 4 41-27 28-49 5-32-25-1-44z" />
-            <path d="M992 207l72-18 95 13 71 34 28 53-15 44-62 20-89-4-57-25-29-44z" />
-            <path d="M1068 364l61-8 67 10 44 27-8 39-44 22-64 6-54-18-18-34z" />
-            <path d="M1199 511l57-9 49 16 20 34-23 24-53 8-45-13-21-27z" />
-            <path d="M832 520l33-8 36 9 15 24-16 18-35 7-28-11-13-19z" />
-          </g>
-          <g fill="none" stroke="rgba(125,211,252,0.4)" strokeWidth="1.4">
-            <path d="M70 348h1260" />
-            <path d="M70 260h1260" />
-            <path d="M70 438h1260" />
-          </g>
-        </svg>
-      </div>
+    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+      <video
+        ref={videoRef}
+        autoPlay={!reduceMotion}
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        poster="/bg/world-map-poster.jpg"
+        className="absolute inset-0 h-full w-full object-cover opacity-[0.14] blur-[0.4px] mix-blend-screen [mask-image:radial-gradient(circle_at_center,black_0%,black_45%,transparent_80%)]"
+      >
+        <source src="/bg/2611-865412751_medium.mp4" type="video/mp4" />
+      </video>
+
+      <div className="absolute inset-0 bg-black/35 [mask-image:radial-gradient(circle_at_center,black_0%,black_45%,transparent_80%)]" />
     </div>
   );
 }
@@ -973,7 +997,7 @@ export default function DashboardPage() {
     <div className='relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(34,211,238,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(99,102,241,0.14),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(244,63,94,0.08),transparent_55%),linear-gradient(180deg,#030711_0%,#050b19_45%,#040714_100%)] text-slate-100 [font-family:ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Inter,Roboto,Arial]'>
       <div className="pointer-events-none absolute inset-0 opacity-[0.03] [background-image:radial-gradient(rgba(255,255,255,0.7)_0.7px,transparent_0.7px)] [background-size:4px_4px]" />
       <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
-      <WorldMapBackground />
+      <WorldMapVideoBackground />
       <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
 
       <div className="relative z-10 mx-auto max-w-7xl px-5 py-8">
@@ -2066,33 +2090,8 @@ export default function DashboardPage() {
             opacity: 0.46;
           }
         }
-
-        @keyframes mapPan {
-          from {
-            transform: translateX(-12%);
-          }
-          to {
-            transform: translateX(12%);
-          }
-        }
-
-        @keyframes mapPulse {
-          0%,
-          100% {
-            transform: scale(1) translateY(0px);
-          }
-          50% {
-            transform: scale(1.015) translateY(-4px);
-          }
-        }
-
-        .world-map-pan {
-          animation: mapPan 54s linear infinite alternate, mapPulse 18s ease-in-out infinite;
-        }
-
         @media (prefers-reduced-motion: reduce) {
-          .glass-breathe::after,
-          .world-map-pan {
+          .glass-breathe::after {
             animation: none;
           }
         }
