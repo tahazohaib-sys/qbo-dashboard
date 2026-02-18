@@ -422,7 +422,7 @@ function useAnimatedNumber(target: number, durationMs = 800) {
   return reduceMotion ? target : value;
 }
 
-function WorldMapVideoBackground(): JSX.Element {
+function WorldMapVideoBackground(): React.JSX.Element {
   const [reduceMotion, setReduceMotion] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
