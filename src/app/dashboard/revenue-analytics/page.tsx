@@ -507,7 +507,7 @@ export default function RevenueAnalyticsPage() {
 
         {/* Growth chart + Growth table (PRIMARY) */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Panel title="Revenue Growth (Monthly, Company-wise)" subtitle="Lines per company (includes Total Revenue line)">
+          <Panel title="Revenue Growth (Monthly, Company-wise)">
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={ok ? (data as any).growthSeries : []} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
@@ -525,7 +525,7 @@ export default function RevenueAnalyticsPage() {
             </div>
           </Panel>
 
-          <Panel title="Revenue Growth Table" subtitle="Change (Δ) and Change % (green = positive, red = negative)">
+          <Panel title="Revenue Growth Table">
             {ok ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -580,7 +580,6 @@ export default function RevenueAnalyticsPage() {
         <div className="mt-4">
           <Panel
             title="Quarterly Revenue Change by Amount"
-            subtitle="Quarter-over-quarter revenue movement in currency amounts (with growth % in tooltip)."
           >
             <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
               <div className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-emerald-200">
@@ -638,7 +637,6 @@ export default function RevenueAnalyticsPage() {
         <div className="mt-4">
           <Panel
             title="Monthly Revenue Churn Rate vs Growth Rate (Company-wise)"
-            subtitle="Click a row to see revenue bridge: lost/new customers + expansion/contraction from existing customers."
           >
             {ok ? (
               <>
@@ -754,7 +752,6 @@ export default function RevenueAnalyticsPage() {
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <Panel
                     title="Lost Customers (Previous month only)"
-                    subtitle="Customers present in previous month but missing in current month (shows last month revenue)"
                   >
                     {!churnSelected ? (
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
@@ -786,7 +783,6 @@ export default function RevenueAnalyticsPage() {
 
                   <Panel
                     title="New Customers (Current month only)"
-                    subtitle="Customers present in current month but missing in previous month (shows current month revenue)"
                   >
                     {!churnSelected ? (
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
@@ -820,7 +816,6 @@ export default function RevenueAnalyticsPage() {
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <Panel
                     title="Existing Customers: Revenue Increased"
-                    subtitle="Customers present in both months with higher current revenue"
                   >
                     {!churnSelected ? (
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
@@ -856,7 +851,6 @@ export default function RevenueAnalyticsPage() {
 
                   <Panel
                     title="Existing Customers: Revenue Decreased"
-                    subtitle="Customers present in both months with lower current revenue"
                   >
                     {!churnSelected ? (
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
@@ -895,7 +889,6 @@ export default function RevenueAnalyticsPage() {
                 <div className="mt-4">
                   <Panel
                     title="Team Wise Revenue Bar Chart"
-                    subtitle="Top 20 teams by revenue (strictly based on slicer-filtered data)."
                   >
                     <div className="h-[360px]">
                       <ResponsiveContainer width="100%" height="100%">
