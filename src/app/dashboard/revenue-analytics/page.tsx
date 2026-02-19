@@ -9,7 +9,6 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  CartesianGrid,
   Legend,
   BarChart,
   Bar,
@@ -111,8 +110,6 @@ function fmtMoneyCompact(n: number, symbol: string) {
 const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
 const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
 const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
-const GRID = { strokeDasharray: "3 3", opacity: 0.22 } as const;
-
 function classDelta(n: number) {
   return n > 0 ? "text-emerald-300" : n < 0 ? "text-rose-300" : "text-slate-200";
 }
@@ -511,7 +508,6 @@ export default function RevenueAnalyticsPage() {
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={ok ? (data as any).growthSeries : []} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                  <CartesianGrid {...GRID} />
                   <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                   <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                   <Tooltip content={<MoneyTooltip symbol={symbol} />} />
@@ -893,7 +889,6 @@ export default function RevenueAnalyticsPage() {
                     <div className="h-[360px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={(data as any).teamRevenue ?? []} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
                           <XAxis
                             dataKey="team"
                             tick={AXIS_TICK}
