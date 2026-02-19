@@ -357,6 +357,36 @@ export default function RevenueAnalyticsPage() {
     return Array.from(keys);
   }, [growthSeries]);
 
+  const quarterlyGrowthData = useMemo(() => {
+    if (!monthTotals.length) return [] as Array<{ quarter: string; revenue: number; growthPct: number }>;
+
+    const quarterRevenue = new Map<string, number>();
+    const quarterOrder = new Map<string, number>();
+
+    for (const row of monthTotals) {
+      const parts = String(row.month ?? "").split("-");
+      const year = Number(parts[0]);
+      const monthNumber = Number(parts[1]);
+      if (!Number.isInteger(year) || !Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) continue;
+
+      const quarterNo = Math.floor((monthNumber - 1) / 3) + 1;
+      const quarterKey = `${year}-Q${quarterNo}`;
+      quarterRevenue.set(quarterKey, (quarterRevenue.get(quarterKey) ?? 0) + Number(row.totalRevenue ?? 0));
+      quarterOrder.set(quarterKey, year * 10 + quarterNo);
+    }
+
+    const orderedQuarters = Array.from(quarterRevenue.keys()).sort(
+      (a, b) => (quarterOrder.get(a) ?? 0) - (quarterOrder.get(b) ?? 0)
+    );
+
+    return orderedQuarters.map((quarter, i) => {
+      const revenue = quarterRevenue.get(quarter) ?? 0;
+      const prevRevenue = i > 0 ? quarterRevenue.get(orderedQuarters[i - 1]) ?? 0 : 0;
+      const growthPct = prevRevenue ? (revenue - prevRevenue) / prevRevenue : 0;
+      return { quarter, revenue, growthPct };
+    });
+  }, [monthTotals]);
+
   return (
     <div className="min-h-screen bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
       <div className="mx-auto max-w-7xl px-5 py-8">
@@ -531,6 +561,37 @@ export default function RevenueAnalyticsPage() {
             ) : (
               <div className="py-3 text-slate-300">Loading…</div>
             )}
+          </Panel>
+        </div>
+
+        <div className="mt-4">
+          <Panel
+            title="Quarterly Revenue Growth Bar Chart"
+            subtitle="Quarter-over-quarter growth % based on slicer-filtered monthly totals."
+          >
+            <div className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={quarterlyGrowthData} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                  <CartesianGrid {...GRID} />
+                  <XAxis dataKey="quarter" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    axisLine={AXIS_LINE}
+                    tickLine={TICK_LINE}
+                    tickFormatter={(v) => `${(Number(v) * 100).toFixed(0)}%`}
+                  />
+                  <Tooltip
+                    formatter={(value: number, _name, item: any) => [fmtPct(Number(value ?? 0)), item?.name ?? "QoQ Growth"]}
+                    labelFormatter={(label: string, payload: any) => {
+                      const row = payload?.[0]?.payload;
+                      return `${label} • Revenue ${fmtMoney(Number(row?.revenue ?? 0), symbol)}`;
+                    }}
+                  />
+                  <Legend />
+                  <Bar dataKey="growthPct" name="QoQ Growth" fill="#38bdf8" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </Panel>
         </div>
 
