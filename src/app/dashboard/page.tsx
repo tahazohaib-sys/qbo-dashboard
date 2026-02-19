@@ -4,7 +4,7 @@
 import Image from "next/image";
 import Link from "next/link";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -329,6 +329,17 @@ const DONUT_COLORS = [
   "#94a3b8",
 ];
 
+const DONUT_COLOR_CLASSES = [
+  "bg-blue-400",
+  "bg-emerald-400",
+  "bg-amber-300",
+  "bg-violet-400",
+  "bg-rose-400",
+  "bg-cyan-300",
+  "bg-orange-400",
+  "bg-slate-400",
+];
+
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
 
 function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurrency: string | null | undefined) {
@@ -348,10 +359,10 @@ function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurr
 
 /* ------------ chart axis/ticks: clearer visibility ------------ */
 
-const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
-const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
-const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
-const GRID = { strokeDasharray: "3 3", opacity: 0.22 } as const;
+const AXIS_TICK = { fill: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 500 } as const;
+const AXIS_LINE = false;
+const TICK_LINE = false;
+const GRID = { stroke: "transparent", horizontal: false, vertical: false } as const;
 
 const CHART_COLORS = {
   positive: "#22d3ee",
@@ -375,6 +386,96 @@ function fmtAxisPKR(v: any) {
   if (Math.abs(n) >= 1_000_000) return `${Math.round(n / 1_000_000)}M`;
   if (Math.abs(n) >= 1_000) return `${Math.round(n / 1_000)}K`;
   return `${Math.round(n)}`;
+}
+
+function useAnimatedNumber(target: number, durationMs = 800) {
+  const [value, setValue] = useState(target);
+  const fromRef = useRef(target);
+  const reduceMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  useEffect(() => {
+    if (reduceMotion) {
+      fromRef.current = target;
+      return;
+    }
+
+    const start = performance.now();
+    const from = fromRef.current;
+    const delta = target - from;
+    let raf = 0;
+
+    const step = (ts: number) => {
+      const progress = Math.min(1, (ts - start) / durationMs);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(from + delta * eased);
+      if (progress < 1) {
+        raf = requestAnimationFrame(step);
+      } else {
+        fromRef.current = target;
+      }
+    };
+
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [durationMs, reduceMotion, target]);
+
+  return reduceMotion ? target : value;
+}
+
+function WorldMapVideoBackground(): React.JSX.Element {
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduceMotion(media.matches);
+    update();
+
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+
+    if (reduceMotion) {
+      el.pause();
+      return;
+    }
+
+    el.playbackRate = 0.8;
+    const playPromise = el.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+  }, [reduceMotion]);
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+      <video
+        ref={videoRef}
+        autoPlay={!reduceMotion}
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        poster="/bg/world-map-poster.jpg"
+        className="absolute inset-0 h-full w-full object-cover opacity-[0.14] blur-[0.4px] mix-blend-screen [mask-image:radial-gradient(circle_at_center,black_0%,black_45%,transparent_80%)]"
+      >
+        <source src="/bg/2611-865412751_medium.mp4" type="video/mp4" />
+      </video>
+
+      <div className="absolute inset-0 bg-black/35 [mask-image:radial-gradient(circle_at_center,black_0%,black_45%,transparent_80%)]" />
+    </div>
+  );
 }
 
 export default function DashboardPage() {
@@ -423,6 +524,10 @@ export default function DashboardPage() {
   const [customAmount, setCustomAmount] = useState<string>("");
 
   const [err, setErr] = useState<string>("");
+  const [lastUpdated, setLastUpdated] = useState("--:--:--");
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fetchAllRef = useRef<() => Promise<void>>(async () => {});
 
   function buildStartEnd(fy: number, fm: number, ty: number, tm: number) {
     const start = `${fy}-${String(fm).padStart(2, "0")}-01`;
@@ -650,6 +755,12 @@ export default function DashboardPage() {
       }
 
       if (selectedAccount) await fetchTransactions(selectedAccount.id);
+
+      setLastUpdated(
+        new Date().toLocaleTimeString("en-GB", {
+          hour12: false,
+        })
+      );
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     } finally {
@@ -671,9 +782,46 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
+    fetchAllRef.current = fetchAll;
+  });
+
+  useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!autoRefresh) {
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      return;
+    }
+
+    const runRefresh = () => {
+      if (document.visibilityState === "visible") {
+        fetchAllRef.current();
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        runRefresh();
+      }
+    };
+
+    refreshTimerRef.current = setInterval(runRefresh, 30_000);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [autoRefresh]);
 
   const series = data?.series ?? [];
   const kpi = data?.kpis?.ytd ?? { revenue: 0, expenses: 0, profit: 0 };
@@ -692,6 +840,15 @@ export default function DashboardPage() {
     : `The selected period resulted in a net loss of ${formatPKRMillions(
         kpi.profit
       )}, with expenses exceeding revenue. Primary pressure remains in core fixed costs, so immediate focus should be on revenue realization and invoice coverage.`;
+
+  const expenseComposition = useMemo(() => {
+    const sorted = [...pnlBreakdown].sort((a, b) => b.value - a.value);
+    const topSix = sorted.slice(0, 6);
+    const remaining = sorted.slice(6).reduce((sum, item) => sum + item.value, 0);
+    return remaining > 0 ? [...topSix, { name: "Other", value: remaining }] : topSix;
+  }, [pnlBreakdown]);
+
+  const expenseTotal = useMemo(() => expenseComposition.reduce((sum, item) => sum + item.value, 0), [expenseComposition]);
 
   const headerAsOf = useMemo(() => {
     if (!data?.asOf) return "";
@@ -837,11 +994,13 @@ export default function DashboardPage() {
   }, [fromYear, fromMonth, toYear, toMonth]);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
+    <div className='relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(34,211,238,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(99,102,241,0.14),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(244,63,94,0.08),transparent_55%),linear-gradient(180deg,#030711_0%,#050b19_45%,#040714_100%)] text-slate-100 [font-family:ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Inter,Roboto,Arial]'>
+      <div className="pointer-events-none absolute inset-0 opacity-[0.03] [background-image:radial-gradient(rgba(255,255,255,0.7)_0.7px,transparent_0.7px)] [background-size:4px_4px]" />
       <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
+      <WorldMapVideoBackground />
       <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
 
-      <div className="mx-auto max-w-7xl px-5 py-8">
+      <div className="relative z-10 mx-auto max-w-7xl px-5 py-8">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div className="flex items-center gap-4">
             <div className="relative h-12 w-12 shrink-0">
@@ -849,17 +1008,45 @@ export default function DashboardPage() {
             </div>
 
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight">Finance Dashboard</h1>
+              <h1 className="text-[26px] font-semibold tracking-tight text-white">Finance Dashboard</h1>
             </div>
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+              <span className="relative inline-flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300/60 motion-reduce:animate-none" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300" />
+              </span>
+              <span className="font-semibold uppercase tracking-[0.14em]">Live</span>
+              <span className="text-emerald-100/80">Last updated: {lastUpdated}</span>
+            </div>
+
             <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
               <div className="font-medium text-slate-200">
                 Company: {data?.companyName ?? "—"} ({data?.currency ?? "PKR"})
               </div>
               <div className="opacity-80">As of: {headerAsOf || "—"}</div>
             </div>
+
+            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200">
+              <span className="uppercase tracking-[0.12em]">Auto refresh</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoRefresh}
+                onClick={() => setAutoRefresh((prev) => !prev)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
+                  autoRefresh ? "border-cyan-300/50 bg-cyan-400/30" : "border-white/15 bg-white/10"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
+                    autoRefresh ? "translate-x-5" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </label>
 
             <button
               onClick={fetchAll}
@@ -895,15 +1082,15 @@ export default function DashboardPage() {
         </div>
 
         {/* Filters */}
-        <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_24px_60px_rgba(2,6,23,0.35)] backdrop-blur-xl">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
               <div>
-                <label className="text-xs text-slate-300">From Year</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">From Year</label>
                 <select
                   value={fromYear}
                   onChange={(e) => setFromYear(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
                 >
                   {years.map((y) => (
                     <option key={y} value={y}>
@@ -914,11 +1101,11 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-xs text-slate-300">From Month</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">From Month</label>
                 <select
                   value={fromMonth}
                   onChange={(e) => setFromMonth(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
                 >
                   {MONTHS.map((m) => (
                     <option key={m.v} value={m.v}>
@@ -929,11 +1116,11 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-xs text-slate-300">To Year</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">To Year</label>
                 <select
                   value={toYear}
                   onChange={(e) => setToYear(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
                 >
                   {years.map((y) => (
                     <option key={y} value={y}>
@@ -944,11 +1131,11 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-xs text-slate-300">To Month</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">To Month</label>
                 <select
                   value={toMonth}
                   onChange={(e) => setToMonth(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
                 >
                   {MONTHS.map((m) => (
                     <option key={m.v} value={m.v}>
@@ -959,11 +1146,11 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-xs text-slate-300">Accounting Method</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">Accounting Method</label>
                 <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value as any)}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
                 >
                   <option value="Accrual">Accrual</option>
                   <option value="Cash">Cash</option>
@@ -1019,14 +1206,19 @@ export default function DashboardPage() {
                 <>
                   {/* ✅ KPIs: show totals + include manual adjustments */}
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                    <KpiCard title="Total Payables" value={formatPKRCompact(payablesAdjTotal)} highlight="bad" />
-                    <KpiCard title="Total Receivables" value={formatPKRCompact(receivablesAdjTotal)} highlight="good" />
+                    <KpiCard title="Total Payables" numericValue={payablesAdjTotal} formatValue={formatPKRCompact} highlight="bad" />
+                    <KpiCard title="Total Receivables" numericValue={receivablesAdjTotal} formatValue={formatPKRCompact} highlight="good" />
                     <KpiCard
                       title="Net (Receivables - Payables)"
-                      value={formatPKRCompact(receivablesAdjTotal - payablesAdjTotal)}
+                      numericValue={receivablesAdjTotal - payablesAdjTotal}
+                      formatValue={formatPKRCompact}
                       highlight={receivablesAdjTotal - payablesAdjTotal >= 0 ? "good" : "bad"}
                     />
-                    <KpiCard title="AR/AP Gap" value={formatPKRCompact(Math.abs(payablesAdjTotal - receivablesAdjTotal))} />
+                    <KpiCard
+                      title="AR/AP Gap"
+                      numericValue={Math.abs(payablesAdjTotal - receivablesAdjTotal)}
+                      formatValue={formatPKRCompact}
+                    />
                   </div>
 
                   <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1064,8 +1256,26 @@ export default function DashboardPage() {
                             <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                             <Tooltip content={<MoneyTooltip arApMonthEnd />} />
                             <Legend />
-                            <Line type="monotone" dataKey="payables" name="Total Payables" stroke={CHART_COLORS.negative} strokeWidth={3} dot={false} />
-                            <Line type="monotone" dataKey="receivables" name="Total Receivables" stroke={CHART_COLORS.profit} strokeWidth={3} dot={false} />
+                            <Line
+                              type="monotone"
+                              dataKey="payables"
+                              name="Total Payables"
+                              stroke={CHART_COLORS.negative}
+                              strokeWidth={3}
+                              dot={(props) => <LastPointPulseDot {...props} dataLength={monthlyArAp.length} color={CHART_COLORS.negative} />}
+                              activeDot={{ r: 5 }}
+                              style={{ filter: "drop-shadow(0 0 8px rgba(248,113,113,0.2))" }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="receivables"
+                              name="Total Receivables"
+                              stroke={CHART_COLORS.profit}
+                              strokeWidth={3}
+                              dot={(props) => <LastPointPulseDot {...props} dataLength={monthlyArAp.length} color={CHART_COLORS.profit} />}
+                              activeDot={{ r: 5 }}
+                              style={{ filter: "drop-shadow(0 0 8px rgba(52,211,153,0.2))" }}
+                            />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -1366,27 +1576,44 @@ export default function DashboardPage() {
         {/* PNL TAB */}
         {tab === "pnl" ? (
           <>
-            <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-              <KpiCard title="Total Income" value={formatPKRCompact(kpi.revenue)} />
-              <KpiCard title="Total Expenses" value={formatPKRCompact(kpi.expenses)} />
-              <KpiCard title="Net Profit (Loss)" value={formatPKRCompact(kpi.profit)} highlight={kpi.profit < 0 ? "bad" : "good"} />
-              <KpiCard title="Months" value={`${series.length}`} />
+            <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <KpiCard
+                title="Total Income"
+                numericValue={kpi.revenue}
+                formatValue={formatPKRCompact}
+                subtext="Year-to-date inflows"
+                highlight="good"
+              />
+              <KpiCard
+                title="Total Expenses"
+                numericValue={kpi.expenses}
+                formatValue={formatPKRCompact}
+                subtext="Year-to-date outflows"
+                highlight="bad"
+              />
+              <KpiCard
+                title="Net Profit (Loss)"
+                numericValue={kpi.profit}
+                formatValue={formatPKRCompact}
+                highlight={kpi.profit < 0 ? "bad" : "good"}
+              />
+              <KpiCard title="Months" numericValue={series.length} formatValue={(n) => `${Math.round(n)}`} subtext="Period coverage" />
             </div>
 
-            <div className="mt-4">
+            <div className="mt-8">
               <Panel title="Financial Insight">
-                <div className="rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/80 via-[#10243f]/70 to-[#130f2f]/80 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_20px_50px_rgba(2,6,23,0.45)] backdrop-blur-xl md:p-10">
+                <div className="relative rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/85 via-[#10243f]/70 to-[#130f2f]/80 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_24px_64px_rgba(2,6,23,0.5)] backdrop-blur-xl before:absolute before:inset-0 before:rounded-2xl before:p-px before:[background:linear-gradient(120deg,rgba(34,211,238,0.5),rgba(99,102,241,0.15),rgba(244,63,94,0.35))] before:[mask:linear-gradient(#fff_0_0)_content-box,linear-gradient(#fff_0_0)] before:[mask-composite:xor] md:p-10">
                   <div className="mx-auto max-w-4xl text-center">
                     <div className={`mx-auto mb-2 inline-block rounded-3xl px-6 py-2 text-6xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}>
                       {formatPct(netMargin)}
                     </div>
-                    <div className="text-base font-semibold uppercase tracking-[0.18em] text-slate-300 md:text-lg">{financialLabel}</div>
+                    <div className="text-[12px] font-semibold uppercase tracking-[0.24em] text-slate-300 md:text-[13px]">{financialLabel.toUpperCase()}</div>
 
                     <p className="mx-auto mt-5 max-w-3xl text-sm leading-relaxed text-slate-200/95 md:text-base">{financialSummary}</p>
 
                     <div className="mt-8 grid grid-cols-1 gap-2 border-t border-white/10 pt-4 text-xs text-slate-400 sm:grid-cols-3 md:text-sm">
-                      <div>Revenue: {formatPKRMillions(kpi.revenue)}</div>
-                      <div>Expenses: {formatPKRMillions(kpi.expenses)}</div>
+                      <div className="sm:border-r sm:border-white/10">Revenue: {formatPKRMillions(kpi.revenue)}</div>
+                      <div className="sm:border-r sm:border-white/10">Expenses: {formatPKRMillions(kpi.expenses)}</div>
                       <div>Net: {formatPKRMillions(kpi.profit, true)}</div>
                     </div>
                   </div>
@@ -1394,55 +1621,109 @@ export default function DashboardPage() {
               </Panel>
             </div>
 
-            <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Panel title="Income vs Expenses">
+            <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <ChartCard title="Income vs Expenses" legend={[{ label: "Income", color: "bg-cyan-300" }, { label: "Expenses", color: "bg-rose-300" }]}>
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                      <defs>
+                        <linearGradient id="incomeBars" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#67e8f9" stopOpacity={0.95} />
+                          <stop offset="100%" stopColor="#0891b2" stopOpacity={0.65} />
+                        </linearGradient>
+                        <linearGradient id="expenseBars" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#fda4af" stopOpacity={0.92} />
+                          <stop offset="100%" stopColor="#be123c" stopOpacity={0.58} />
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                      <Tooltip content={<MoneyTooltip />} />
-                      <Legend />
-                      <Bar dataKey="revenue" name="Income" fill={CHART_COLORS.profit} radius={[8, 8, 0, 0]} />
-                      <Bar dataKey="expenses" name="Expenses" fill={CHART_COLORS.negative} radius={[8, 8, 0, 0]} />
+                      <Tooltip content={<MoneyTooltip />} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
+                      <Bar
+                        dataKey="revenue"
+                        name="Income"
+                        fill="url(#incomeBars)"
+                        radius={[10, 10, 0, 0]}
+                        style={{ filter: "drop-shadow(0 0 8px rgba(103,232,249,0.2))" }}
+                      />
+                      <Bar
+                        dataKey="expenses"
+                        name="Expenses"
+                        fill="url(#expenseBars)"
+                        radius={[10, 10, 0, 0]}
+                        style={{ filter: "drop-shadow(0 0 8px rgba(251,113,133,0.18))" }}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-              </Panel>
+              </ChartCard>
 
-              <Panel title="Net Profit (Loss)">
+              <ChartCard title="Net Profit Trend" legend={[{ label: "Net Profit", color: "bg-emerald-300" }]}>
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                      <defs>
+                        <linearGradient id="netProfitLine" x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%" stopColor="#5eead4" />
+                          <stop offset="100%" stopColor="#34d399" />
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                      <Tooltip content={<MoneyTooltip />} />
-                      <Legend />
-                      <Line type="monotone" dataKey="profit" name="Net Profit" stroke={CHART_COLORS.profit} strokeWidth={3} dot={false} />
+                      <Tooltip content={<MoneyTooltip />} cursor={{ stroke: "rgba(255,255,255,0.22)", strokeDasharray: "4 4" }} />
+                      <Line
+                        type="monotone"
+                        dataKey="profit"
+                        name="Net Profit"
+                        stroke="url(#netProfitLine)"
+                        strokeWidth={3}
+                        dot={(props) => <LastPointPulseDot {...props} dataLength={series.length} color="#5eead4" />}
+                        activeDot={{ r: 5.5, fill: "#5eead4", stroke: "#ccfbf1", strokeWidth: 2 }}
+                        style={{ filter: "drop-shadow(0 0 10px rgba(52,211,153,0.28))" }}
+                      />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-              </Panel>
+              </ChartCard>
             </div>
 
-            <div className="mt-4">
-              <Panel title="Expense Composition">
-                <div className="h-[320px]">
+            <div className="mt-6">
+              <ChartCard
+                title="Expense Composition"
+                legend={expenseComposition.map((entry, idx) => ({
+                  label: entry.name,
+                  color: DONUT_COLOR_CLASSES[idx % DONUT_COLOR_CLASSES.length],
+                }))}
+              >
+                <div className="h-[340px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Tooltip content={<MoneyTooltip pie />} />
-                      <Legend />
-                      <Pie data={pnlBreakdown} dataKey="value" nameKey="name" innerRadius={65} outerRadius={105} paddingAngle={2}>
-                        {pnlBreakdown.map((_, i) => (
+                      <Pie
+                        data={expenseComposition}
+                        dataKey="value"
+                        nameKey="name"
+                        innerRadius={78}
+                        outerRadius={116}
+                        paddingAngle={2}
+                        cornerRadius={6}
+                      >
+                        {expenseComposition.map((_, i) => (
                           <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
                         ))}
                       </Pie>
+                      <text x="50%" y="46%" textAnchor="middle" className="fill-slate-300 text-[11px] uppercase tracking-[0.18em]">
+                        Total
+                      </text>
+                      <text x="50%" y="54%" textAnchor="middle" className="fill-white text-sm font-semibold md:text-base">
+                        {formatPKRCompact(expenseTotal)}
+                      </text>
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
-              </Panel>
+              </ChartCard>
             </div>
           </>
         ) : null}
@@ -1558,10 +1839,15 @@ export default function DashboardPage() {
         {tab === "retained" ? (
           <>
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-              <KpiCard title="Net Profit" value={formatPKRCompact(reProfit)} />
-              <KpiCard title="Long-term Assets" value={formatPKRCompact(reLongTermAssets)} />
-              <KpiCard title="Net Investments" value={formatPKRCompact(reNetInvestments)} />
-              <KpiCard title="Retained Earning" value={formatPKRCompact(reRetained)} highlight={reRetained < 0 ? "bad" : "good"} />
+              <KpiCard title="Net Profit" numericValue={reProfit} formatValue={formatPKRCompact} />
+              <KpiCard title="Long-term Assets" numericValue={reLongTermAssets} formatValue={formatPKRCompact} />
+              <KpiCard title="Net Investments" numericValue={reNetInvestments} formatValue={formatPKRCompact} />
+              <KpiCard
+                title="Retained Earning"
+                numericValue={reRetained}
+                formatValue={formatPKRCompact}
+                highlight={reRetained < 0 ? "bad" : "good"}
+              />
             </div>
 
             <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1711,10 +1997,25 @@ export default function DashboardPage() {
             ) : fcOk ? (
               <>
                 <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-                  <KpiCard title="Revenue Trend (Avg MoM)" value={formatPct(fcRevMoM)} highlight={fcRevMoM < 0 ? "bad" : "good"} />
-                  <KpiCard title="Opex Trend (Avg MoM)" value={formatPct(fcExpMoM)} highlight={fcExpMoM > 0 ? "bad" : "good"} />
-                  <KpiCard title="Avg Monthly Opex" value={formatPKRCompact(fcAvgOpex)} />
-                  <KpiCard title="Break-even Revenue" value={formatPKRCompact(fcBreakeven)} highlight={fcMeetsBE ? "good" : "bad"} />
+                  <KpiCard
+                    title="Revenue Trend (Avg MoM)"
+                    numericValue={fcRevMoM}
+                    formatValue={formatPct}
+                    highlight={fcRevMoM < 0 ? "bad" : "good"}
+                  />
+                  <KpiCard
+                    title="Opex Trend (Avg MoM)"
+                    numericValue={fcExpMoM}
+                    formatValue={formatPct}
+                    highlight={fcExpMoM > 0 ? "bad" : "good"}
+                  />
+                  <KpiCard title="Avg Monthly Opex" numericValue={fcAvgOpex} formatValue={formatPKRCompact} />
+                  <KpiCard
+                    title="Break-even Revenue"
+                    numericValue={fcBreakeven}
+                    formatValue={formatPKRCompact}
+                    highlight={fcMeetsBE ? "good" : "bad"}
+                  />
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1757,6 +2058,44 @@ export default function DashboardPage() {
           </>
         ) : null}
       </div>
+
+      <style jsx global>{`
+        .glass-breathe {
+          position: relative;
+          isolation: isolate;
+        }
+
+        .glass-breathe::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          padding: 1px;
+          pointer-events: none;
+          background: linear-gradient(130deg, rgba(34, 211, 238, 0.22), rgba(255, 255, 255, 0.08), rgba(244, 63, 94, 0.18));
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          mask-composite: exclude;
+          opacity: 0.4;
+          animation: glassBreathe 7s ease-in-out infinite;
+        }
+
+        @keyframes glassBreathe {
+          0%,
+          100% {
+            opacity: 0.26;
+          }
+          50% {
+            opacity: 0.46;
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .glass-breathe::after {
+            animation: none;
+          }
+        }
+      `}</style>
     </div>
   );
 }
@@ -1779,7 +2118,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       onClick={onClick}
       className={[
-        "rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200",
+        "rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200 backdrop-blur-md",
         active
           ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
           : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
@@ -1819,30 +2158,101 @@ function TabLinkButton({
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-sm">
+    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
       <div className="mb-3">
-        <div className="text-sm font-semibold text-slate-100">{title}</div>
+        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
       </div>
       {children}
     </div>
   );
 }
 
-function KpiCard({ title, value, highlight }: { title: string; value: string; highlight?: "good" | "bad" }) {
+function ChartCard({
+  title,
+  children,
+  legend,
+}: {
+  title: string;
+  children: React.ReactNode;
+  legend: Array<{ label: string; color: string }>;
+}) {
+  return (
+    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {legend.map((item) => (
+            <div key={item.label} className="flex items-center gap-1.5 text-[11px] text-slate-300">
+              <span className={`h-2.5 w-2.5 rounded-full ${item.color}`} />
+              {item.label}
+            </div>
+          ))}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function KpiCard({
+  title,
+  value,
+  numericValue,
+  formatValue,
+  highlight,
+  subtext,
+}: {
+  title: string;
+  value?: string;
+  numericValue?: number;
+  formatValue?: (n: number) => string;
+  highlight?: "good" | "bad";
+  subtext?: string;
+}) {
+  const animatedValue = useAnimatedNumber(numericValue ?? 0);
+  const resolvedValue =
+    typeof numericValue === "number"
+      ? formatValue
+        ? formatValue(animatedValue)
+        : `${Math.round(animatedValue)}`
+      : value ?? "—";
+
   const ring = highlight === "good" ? "border-emerald-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
 
   const glow =
     highlight === "good"
-      ? "shadow-[0_16px_45px_rgba(16,185,129,0.2)]"
+      ? "shadow-[0_16px_45px_rgba(6,182,212,0.18)]"
       : highlight === "bad"
       ? "shadow-[0_16px_45px_rgba(244,63,94,0.18)]"
       : "shadow-[0_20px_80px_rgba(0,0,0,0.35)]";
 
+  const dot = highlight === "good" ? "bg-cyan-300" : highlight === "bad" ? "bg-rose-300" : "bg-slate-300";
+
   return (
-    <div className={`rounded-2xl border ${ring} ${glow} bg-gradient-to-b from-white/10 to-white/5 p-4 backdrop-blur-sm`}>
-      <div className="text-xs text-slate-300">{title}</div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
+    <div
+      className={`glass-breathe group rounded-2xl border ${ring} ${glow} bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl transition hover:shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_16px_45px_rgba(6,182,212,0.15)]`}
+    >
+      <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.14em] text-slate-300">
+        <span className={`h-2 w-2 rounded-full ${dot}`} />
+        {title}
+      </div>
+      <div className="mt-3 text-[24px] font-semibold tracking-tight text-white">{resolvedValue}</div>
+      {subtext ? <div className="mt-1 text-xs text-slate-400">{subtext}</div> : null}
     </div>
+  );
+}
+
+function LastPointPulseDot({ cx, cy, index, dataLength, color }: any) {
+  if (cx == null || cy == null || index !== dataLength - 1) return null;
+
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={4.5} fill={color} stroke="rgba(255,255,255,0.8)" strokeWidth={1.5} />
+      <circle cx={cx} cy={cy} r={7} fill="none" stroke={color} strokeOpacity={0.45} strokeWidth={1.5}>
+        <animate attributeName="r" values="7;12;7" dur="2.4s" repeatCount="indefinite" />
+        <animate attributeName="stroke-opacity" values="0.45;0.08;0.45" dur="2.4s" repeatCount="indefinite" />
+      </circle>
+    </g>
   );
 }
 
@@ -1852,7 +2262,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any
   if (pie) {
     const p = payload[0];
     return (
-      <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+      <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">{p?.name ?? ""}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
       </div>
@@ -1866,7 +2276,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any
     const receivables = Number(row?.receivables ?? 0);
 
     return (
-      <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+      <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">As of {asOf || label}</div>
         <div className="flex items-center justify-between gap-4">
           <span className="text-slate-300">Payables PKR</span>
@@ -1883,7 +2293,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any
   if (single) {
     const p = payload[0];
     return (
-      <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+      <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">{label}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
       </div>
@@ -1891,7 +2301,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-slate-950/90 px-3 py-2 text-xs text-slate-100 shadow-[0_12px_35px_rgba(15,23,42,0.65)] backdrop-blur-sm">
+    <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
       <div className="font-semibold">{label}</div>
       {payload.map((p: any) => (
         <div key={p.dataKey} className="flex items-center justify-between gap-4">
