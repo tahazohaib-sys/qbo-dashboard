@@ -10,6 +10,7 @@ import {
   YAxis,
   Tooltip,
   Legend,
+  CartesianGrid,
   BarChart,
   Bar,
   Cell,
@@ -110,6 +111,7 @@ function fmtMoneyCompact(n: number, symbol: string) {
 const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
 const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
 const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
+const GRID = { stroke: "rgba(148,163,184,0.2)", strokeDasharray: "4 4" } as const;
 function classDelta(n: number) {
   return n > 0 ? "text-emerald-300" : n < 0 ? "text-rose-300" : "text-slate-200";
 }
