@@ -13,6 +13,8 @@ import {
   Legend,
   BarChart,
   Bar,
+  Cell,
+  ReferenceLine,
 } from "recharts";
 
 type ApiResp =
@@ -95,6 +97,15 @@ function fmtMoney(n: number, symbol: string) {
 function fmtPct(n: number) {
   if (!Number.isFinite(n)) return "0.0%";
   return `${(n * 100).toFixed(1)}%`;
+}
+
+function fmtMoneyCompact(n: number, symbol: string) {
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  return `${sign}${symbol}${new Intl.NumberFormat("en", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(abs)}`;
 }
 
 const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
@@ -357,6 +368,38 @@ export default function RevenueAnalyticsPage() {
     return Array.from(keys);
   }, [growthSeries]);
 
+  const quarterlyGrowthData = useMemo(() => {
+    if (!monthTotals.length)
+      return [] as Array<{ quarter: string; revenue: number; prevRevenue: number; growthAmount: number; growthPct: number }>;
+
+    const quarterRevenue = new Map<string, number>();
+    const quarterOrder = new Map<string, number>();
+
+    for (const row of monthTotals) {
+      const parts = String(row.month ?? "").split(/[\/-]/);
+      const year = Number(parts[0]);
+      const monthNumber = Number(parts[1]);
+      if (!Number.isInteger(year) || !Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) continue;
+
+      const quarterNo = Math.floor((monthNumber - 1) / 3) + 1;
+      const quarterKey = `${year}-Q${quarterNo}`;
+      quarterRevenue.set(quarterKey, (quarterRevenue.get(quarterKey) ?? 0) + Number(row.totalRevenue ?? 0));
+      quarterOrder.set(quarterKey, year * 10 + quarterNo);
+    }
+
+    const orderedQuarters = Array.from(quarterRevenue.keys()).sort(
+      (a, b) => (quarterOrder.get(a) ?? 0) - (quarterOrder.get(b) ?? 0)
+    );
+
+    return orderedQuarters.map((quarter, i) => {
+      const revenue = quarterRevenue.get(quarter) ?? 0;
+      const prevRevenue = i > 0 ? quarterRevenue.get(orderedQuarters[i - 1]) ?? 0 : 0;
+      const growthAmount = revenue - prevRevenue;
+      const growthPct = prevRevenue ? growthAmount / prevRevenue : 0;
+      return { quarter, revenue, prevRevenue, growthAmount, growthPct };
+    });
+  }, [monthTotals]);
+
   return (
     <div className="min-h-screen bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
       <div className="mx-auto max-w-7xl px-5 py-8">
@@ -464,7 +507,7 @@ export default function RevenueAnalyticsPage() {
 
         {/* Growth chart + Growth table (PRIMARY) */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Panel title="Revenue Growth (Monthly, Company-wise)" subtitle="Lines per company (includes Total Revenue line)">
+          <Panel title="Revenue Growth (Monthly, Company-wise)">
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={ok ? (data as any).growthSeries : []} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
@@ -482,7 +525,7 @@ export default function RevenueAnalyticsPage() {
             </div>
           </Panel>
 
-          <Panel title="Revenue Growth Table" subtitle="Change (Δ) and Change % (green = positive, red = negative)">
+          <Panel title="Revenue Growth Table">
             {ok ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -534,11 +577,66 @@ export default function RevenueAnalyticsPage() {
           </Panel>
         </div>
 
+        <div className="mt-4">
+          <Panel
+            title="Quarterly Revenue Change by Amount"
+          >
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+              <div className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-emerald-200">
+                Positive bars = revenue gained
+              </div>
+              <div className="rounded-full border border-rose-300/30 bg-rose-400/10 px-3 py-1 text-rose-200">
+                Negative bars = revenue decline
+              </div>
+            </div>
+            <div className="h-[340px] rounded-2xl border border-cyan-300/20 bg-[linear-gradient(135deg,rgba(14,116,144,0.2),rgba(30,41,59,0.12),rgba(59,130,246,0.15))] p-3 shadow-[inset_0_0_40px_rgba(14,165,233,0.08)]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={quarterlyGrowthData} margin={{ top: 12, right: 16, left: 10, bottom: 6 }}>
+                  <CartesianGrid {...GRID} />
+                  <XAxis dataKey="quarter" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    axisLine={AXIS_LINE}
+                    tickLine={TICK_LINE}
+                    tickFormatter={(v) => fmtMoneyCompact(Number(v ?? 0), symbol)}
+                  />
+                  <ReferenceLine y={0} stroke="rgba(226,232,240,0.5)" strokeDasharray="4 4" />
+                  <Tooltip
+                    formatter={(value, _name, item) => [fmtMoney(Number(value ?? 0), symbol), item?.name ?? "QoQ Change"]}
+                    labelFormatter={(label, payload) => {
+                      const row = payload?.[0]?.payload;
+                      return `${label} • Quarter Revenue ${fmtMoney(Number(row?.revenue ?? 0), symbol)} (${fmtPct(Number(row?.growthPct ?? 0))})`;
+                    }}
+                  />
+                  <Legend />
+                  <Bar dataKey="growthAmount" name="QoQ Change" radius={[10, 10, 4, 4]}>
+                    {quarterlyGrowthData.map((entry, index) => (
+                      <Cell
+                        key={`${entry.quarter}-${index}`}
+                        fill={entry.growthAmount >= 0 ? "url(#qoqPositiveGradient)" : "url(#qoqNegativeGradient)"}
+                      />
+                    ))}
+                  </Bar>
+                  <defs>
+                    <linearGradient id="qoqPositiveGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.95} />
+                      <stop offset="95%" stopColor="#14b8a6" stopOpacity={0.75} />
+                    </linearGradient>
+                    <linearGradient id="qoqNegativeGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#fb7185" stopOpacity={0.95} />
+                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.75} />
+                    </linearGradient>
+                  </defs>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+        </div>
+
         {/* Churn vs Growth + row-click drill */}
         <div className="mt-4">
           <Panel
             title="Monthly Revenue Churn Rate vs Growth Rate (Company-wise)"
-            subtitle="Click a row to see revenue bridge: lost/new customers + expansion/contraction from existing customers."
           >
             {ok ? (
               <>
@@ -654,7 +752,6 @@ export default function RevenueAnalyticsPage() {
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <Panel
                     title="Lost Customers (Previous month only)"
-                    subtitle="Customers present in previous month but missing in current month (shows last month revenue)"
                   >
                     {!churnSelected ? (
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
@@ -686,7 +783,6 @@ export default function RevenueAnalyticsPage() {
 
                   <Panel
                     title="New Customers (Current month only)"
-                    subtitle="Customers present in current month but missing in previous month (shows current month revenue)"
                   >
                     {!churnSelected ? (
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
@@ -720,7 +816,6 @@ export default function RevenueAnalyticsPage() {
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <Panel
                     title="Existing Customers: Revenue Increased"
-                    subtitle="Customers present in both months with higher current revenue"
                   >
                     {!churnSelected ? (
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
@@ -756,7 +851,6 @@ export default function RevenueAnalyticsPage() {
 
                   <Panel
                     title="Existing Customers: Revenue Decreased"
-                    subtitle="Customers present in both months with lower current revenue"
                   >
                     {!churnSelected ? (
                       <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
@@ -795,7 +889,6 @@ export default function RevenueAnalyticsPage() {
                 <div className="mt-4">
                   <Panel
                     title="Team Wise Revenue Bar Chart"
-                    subtitle="Top 20 teams by revenue (strictly based on slicer-filtered data)."
                   >
                     <div className="h-[360px]">
                       <ResponsiveContainer width="100%" height="100%">
