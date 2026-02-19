@@ -364,7 +364,7 @@ export default function RevenueAnalyticsPage() {
     const quarterOrder = new Map<string, number>();
 
     for (const row of monthTotals) {
-      const parts = String(row.month ?? "").split("-");
+      const parts = String(row.month ?? "").split(/[\/-]/);
       const year = Number(parts[0]);
       const monthNumber = Number(parts[1]);
       if (!Number.isInteger(year) || !Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) continue;
