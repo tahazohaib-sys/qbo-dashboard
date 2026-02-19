@@ -581,8 +581,8 @@ export default function RevenueAnalyticsPage() {
                     tickFormatter={(v) => `${(Number(v) * 100).toFixed(0)}%`}
                   />
                   <Tooltip
-                    formatter={(value: number, _name, item: any) => [fmtPct(Number(value ?? 0)), item?.name ?? "QoQ Growth"]}
-                    labelFormatter={(label: string, payload: any) => {
+                    formatter={(value, _name, item) => [fmtPct(Number(value ?? 0)), item?.name ?? "QoQ Growth"]}
+                    labelFormatter={(label, payload) => {
                       const row = payload?.[0]?.payload;
                       return `${label} • Revenue ${fmtMoney(Number(row?.revenue ?? 0), symbol)}`;
                     }}
