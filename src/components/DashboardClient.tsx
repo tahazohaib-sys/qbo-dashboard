@@ -8,7 +8,6 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  CartesianGrid,
   Legend,
 } from "recharts";
 
@@ -172,7 +171,6 @@ export default function DashboardClient() {
           <div className="mt-4 h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={series}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                 <XAxis dataKey="monthLabel" tick={{ fill: "#cbd5e1" }} />
                 <YAxis
                   tick={{ fill: "#cbd5e1" }}
@@ -203,7 +201,6 @@ export default function DashboardClient() {
           <div className="mt-4 h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={series}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                 <XAxis dataKey="monthLabel" tick={{ fill: "#cbd5e1" }} />
                 <YAxis
                   tick={{ fill: "#cbd5e1" }}

@@ -12,7 +12,6 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  CartesianGrid,
   BarChart,
   Bar,
   PieChart,
@@ -362,8 +361,6 @@ function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurr
 const AXIS_TICK = { fill: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 500 } as const;
 const AXIS_LINE = false;
 const TICK_LINE = false;
-const GRID = { stroke: "rgba(255,255,255,0.1)", strokeDasharray: "3 3" } as const;
-
 const CHART_COLORS = {
   positive: "#22d3ee",
   positiveSoft: "#67e8f9",
@@ -1251,7 +1248,6 @@ export default function DashboardPage() {
                       <div className="h-[320px]">
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={monthlyArAp} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                            <CartesianGrid {...GRID} />
                             <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                             <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                             <Tooltip content={<MoneyTooltip arApMonthEnd />} />
@@ -1636,7 +1632,6 @@ export default function DashboardPage() {
                           <stop offset="100%" stopColor="#be123c" stopOpacity={0.58} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip />} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
@@ -1669,7 +1664,6 @@ export default function DashboardPage() {
                           <stop offset="100%" stopColor="#34d399" />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip />} cursor={{ stroke: "rgba(255,255,255,0.22)", strokeDasharray: "4 4" }} />
@@ -1855,7 +1849,6 @@ export default function DashboardPage() {
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={investmentBarData} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                      <CartesianGrid {...GRID} />
                       <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip single />} />
@@ -2023,7 +2016,6 @@ export default function DashboardPage() {
                     <div className="h-[320px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={benchmarkBars} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
                           <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip single />} />
@@ -2037,7 +2029,6 @@ export default function DashboardPage() {
                     <div className="h-[320px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={forecastRows} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
                           <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip />} />
