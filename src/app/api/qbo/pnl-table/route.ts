@@ -71,26 +71,27 @@ export async function GET(req: Request) {
     // default: current month (you can change in URL)
     const start_date = searchParams.get("start_date") ?? "2026-01-01";
     const end_date = searchParams.get("end_date") ?? "2026-01-31";
+    const accounting_method = searchParams.get("accounting_method") ?? "Accrual";
 
     const path =
       `reports/ProfitAndLoss?start_date=${encodeURIComponent(start_date)}` +
       `&end_date=${encodeURIComponent(end_date)}` +
-      `&accounting_method=Accrual&summarize_column_by=Total`;
+      `&accounting_method=${encodeURIComponent(accounting_method)}` +
+      `&summarize_column_by=Total`;
 
     const report = await qboFetch(path);
 
     const out: RowItem[] = [];
     flattenRows(report?.Rows, "P&L", out);
 
-    // clean: remove zero lines (optional) — keep if you want full detail
-    const nonZero = out.filter((x) => Math.abs(x.amount) > 0);
-
     return NextResponse.json({
       ok: true,
       start_date,
       end_date,
+      accounting_method,
+      periodLabel: report?.Header?.ReportSubtitle ?? `${start_date} to ${end_date}`,
       currency: report?.Header?.Currency ?? "USD",
-      rows: nonZero.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
+      rows: out,
       // raw: report, // uncomment if you want full JSON (very large)
     });
   } catch (e: any) {
