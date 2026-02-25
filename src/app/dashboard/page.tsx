@@ -34,7 +34,7 @@ type DashboardResp = {
 
 type PnlRow = {
   path: string;
-  rowType: "Section" | "Data";
+  rowType: string;
   label: string;
   amount: number;
 };
@@ -43,9 +43,16 @@ type PnlTableResp = {
   ok: boolean;
   start_date: string;
   end_date: string;
+  accounting_method?: "Accrual" | "Cash";
+  periodLabel?: string;
   currency: string;
   rows: PnlRow[];
   error?: string;
+};
+
+type PnlComparisonRow = PnlRow & {
+  currentAmount: number;
+  previousAmount: number | null;
 };
 
 type CashBankAccount = {
@@ -290,6 +297,16 @@ function formatPct(n: number) {
   return `${(n * 100).toFixed(1)}%`;
 }
 
+function formatVariancePct(current: number, previous: number | null) {
+  if (previous == null || previous === 0) return "—";
+  const pct = ((current - previous) / Math.abs(previous)) * 100;
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`;
+}
+
+function normalizeRowKey(row: PnlRow) {
+  return `${row.path}|${row.rowType}|${row.label}`;
+}
+
 function formatPKRMillions(n: number, withSign = false) {
   const sign = n < 0 ? "-" : withSign && n > 0 ? "+" : "";
   const abs = Math.abs(n);
@@ -493,6 +510,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<DashboardResp | null>(null);
   const [pnlBreakdown, setPnlBreakdown] = useState<{ name: string; value: number }[]>([]);
+  const [pnlTable, setPnlTable] = useState<PnlTableResp | null>(null);
+  const [pnlComparisonTable, setPnlComparisonTable] = useState<PnlTableResp | null>(null);
   const [cashBanks, setCashBanks] = useState<CashBanksResp | null>(null);
 
   const [selectedAccount, setSelectedAccount] = useState<CashBankAccount | null>(null);
@@ -539,6 +558,22 @@ export default function DashboardPage() {
   function monthSpanInclusive(fy: number, fm: number, ty: number, tm: number) {
     const span = (ty - fy) * 12 + (tm - fm) + 1;
     return Math.max(1, Math.min(24, span));
+  }
+
+  function monthStartEnd(year: number, month: number) {
+    return buildStartEnd(year, month, year, month);
+  }
+
+  async function fetchPnlTable(start: string, end: string, accountingMethod: "Accrual" | "Cash") {
+    const pnlUrl =
+      `/api/qbo/pnl-table?start_date=${encodeURIComponent(start)}` +
+      `&end_date=${encodeURIComponent(end)}` +
+      `&accounting_method=${encodeURIComponent(accountingMethod)}`;
+
+    const pnlRes = await fetch(pnlUrl, { cache: "no-store" });
+    const pnlJson: PnlTableResp = await pnlRes.json();
+    if (!pnlJson.ok) throw new Error(pnlJson.error || "P&L table API failed");
+    return pnlJson;
   }
 
   async function fetchForecast(series: DashboardResp["series"], horizon: 6 | 12) {
@@ -708,16 +743,30 @@ export default function DashboardPage() {
         setForecastData(null);
       }
 
-      const pnlUrl =
-        `/api/qbo/pnl-table?start_date=${encodeURIComponent(start)}` +
-        `&end_date=${encodeURIComponent(end)}` +
-        `&accounting_method=${encodeURIComponent(method)}`;
+      const span = monthSpanInclusive(fy, fm, ty, tm);
+      let basePnlTable: PnlTableResp;
 
-      const pnlRes = await fetch(pnlUrl, { cache: "no-store" });
-      const pnlJson: PnlTableResp = await pnlRes.json();
-      if (!pnlJson.ok) throw new Error(pnlJson.error || "P&L table API failed");
+      if (span === 2) {
+        const current = monthStartEnd(ty, tm);
+        const prevDate = new Date(ty, tm - 2, 1);
+        const previous = monthStartEnd(prevDate.getFullYear(), prevDate.getMonth() + 1);
 
-      const expenseRows = pnlJson.rows.filter((r) => {
+        const [currentTable, previousTable] = await Promise.all([
+          fetchPnlTable(current.start, current.end, method),
+          fetchPnlTable(previous.start, previous.end, method),
+        ]);
+
+        setPnlTable(currentTable);
+        setPnlComparisonTable(previousTable);
+        basePnlTable = currentTable;
+      } else {
+        const totalTable = await fetchPnlTable(start, end, method);
+        setPnlTable(totalTable);
+        setPnlComparisonTable(null);
+        basePnlTable = totalTable;
+      }
+
+      const expenseRows = basePnlTable.rows.filter((r) => {
         if (r.rowType !== "Data") return false;
         const p = r.path || "";
         return p.startsWith("P&L > Expenses") || p.startsWith("P&L > Other Expenses");
@@ -840,6 +889,40 @@ export default function DashboardPage() {
     : `The selected period resulted in a net loss of ${formatPKRMillions(
         kpi.profit
       )}, with expenses exceeding revenue. Primary pressure remains in core fixed costs, so immediate focus should be on revenue realization and invoice coverage.`;
+
+  const isComparisonMode = !!pnlTable && !!pnlComparisonTable;
+
+  const pnlDisplayRows = useMemo<PnlComparisonRow[]>(() => {
+    if (!pnlTable) return [];
+
+    if (!pnlComparisonTable) {
+      return pnlTable.rows.map((row) => ({
+        ...row,
+        currentAmount: row.amount ?? 0,
+        previousAmount: null,
+      }));
+    }
+
+    const previousByKey = new Map(pnlComparisonTable.rows.map((row) => [normalizeRowKey(row), row.amount ?? 0]));
+
+    const merged = pnlTable.rows.map((row) => ({
+      ...row,
+      currentAmount: row.amount ?? 0,
+      previousAmount: previousByKey.get(normalizeRowKey(row)) ?? 0,
+    }));
+
+    const existingKeys = new Set(merged.map((row) => normalizeRowKey(row)));
+    for (const row of pnlComparisonTable.rows) {
+      if (existingKeys.has(normalizeRowKey(row))) continue;
+      merged.push({
+        ...row,
+        currentAmount: 0,
+        previousAmount: row.amount ?? 0,
+      });
+    }
+
+    return merged;
+  }, [pnlTable, pnlComparisonTable]);
 
   const expenseComposition = useMemo(() => {
     const sorted = [...pnlBreakdown].sort((a, b) => b.value - a.value);
@@ -1617,6 +1700,70 @@ export default function DashboardPage() {
                       <div>Net: {formatPKRMillions(kpi.profit, true)}</div>
                     </div>
                   </div>
+                </div>
+              </Panel>
+            </div>
+
+            <div className="mt-8">
+              <Panel title="Profit & Loss Details">
+                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                  <span>Current: {pnlTable?.periodLabel ?? "Selected Period"}</span>
+                  {isComparisonMode ? <span>• Previous: {pnlComparisonTable?.periodLabel ?? "Previous Period"}</span> : null}
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[740px] text-sm">
+                    <thead className="text-left text-xs text-slate-300">
+                      <tr>
+                        <th className="py-2 pr-3">Account</th>
+                        <th className="py-2 text-right">{pnlTable?.periodLabel ?? "Selected Period"}</th>
+                        {isComparisonMode ? (
+                          <>
+                            <th className="py-2 text-right">{pnlComparisonTable?.periodLabel ?? "Previous Period"}</th>
+                            <th className="py-2 text-right">Change</th>
+                            <th className="py-2 text-right">Change %</th>
+                          </>
+                        ) : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pnlDisplayRows.length ? (
+                        pnlDisplayRows.map((row, idx) => {
+                          const depth = Math.max(0, row.path.split(" > ").length - 1);
+                          const delta = row.currentAmount - (row.previousAmount ?? 0);
+                          const isUp = delta > 0;
+                          const isDown = delta < 0;
+
+                          return (
+                            <tr key={`${normalizeRowKey(row)}-${idx}`} className="border-t border-white/10">
+                              <td className="py-2 pr-3 text-slate-200" style={{ paddingLeft: `${Math.max(0, depth - 1) * 14}px` }}>
+                                <span className={row.rowType === "Section" ? "font-semibold text-slate-100" : row.rowType === "Summary" ? "font-semibold" : ""}>{row.label}</span>
+                              </td>
+                              <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(row.currentAmount)}</td>
+                              {isComparisonMode ? (
+                                <>
+                                  <td className="py-2 text-right font-semibold text-slate-300">{formatPKRCompact(row.previousAmount ?? 0)}</td>
+                                  <td className={`py-2 text-right font-semibold ${isUp ? "text-emerald-300" : isDown ? "text-rose-300" : "text-slate-300"}`}>
+                                    {isUp ? "▲ " : isDown ? "▼ " : "• "}
+                                    {formatPKRCompact(delta)}
+                                  </td>
+                                  <td className={`py-2 text-right font-semibold ${isUp ? "text-emerald-300" : isDown ? "text-rose-300" : "text-slate-300"}`}>
+                                    {formatVariancePct(row.currentAmount, row.previousAmount)}
+                                  </td>
+                                </>
+                              ) : null}
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr className="border-t border-white/10">
+                          <td colSpan={isComparisonMode ? 5 : 2} className="py-3 text-slate-300">
+                            No Profit & Loss rows found for the selected period.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </Panel>
             </div>
