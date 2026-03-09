@@ -340,7 +340,7 @@ const DONUT_COLOR_CLASSES = [
   "bg-slate-400",
 ];
 
-type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
+type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp" | "cashFlow";
 
 function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurrency: string | null | undefined) {
   if (txn.amountForeign != null && txn.foreignCurrency) {
@@ -1078,6 +1078,9 @@ export default function DashboardPage() {
 
           <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" onActivate={() => setTab("revenue")}>
             Revenue Analytics
+          </TabLinkButton>
+          <TabLinkButton active={tab === "cashFlow"} href="/dashboard/cash-flow" onActivate={() => setTab("cashFlow")}>
+            Cash Flow
           </TabLinkButton>
         </div>
 
