@@ -10,7 +10,6 @@ import {
   YAxis,
   Tooltip,
   Legend,
-  CartesianGrid,
   BarChart,
   Bar,
   Cell,
@@ -111,7 +110,6 @@ function fmtMoneyCompact(n: number, symbol: string) {
 const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
 const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
 const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
-const GRID = { stroke: "rgba(148,163,184,0.2)", strokeDasharray: "4 4" } as const;
 function classDelta(n: number) {
   return n > 0 ? "text-emerald-300" : n < 0 ? "text-rose-300" : "text-slate-200";
 }
@@ -590,7 +588,6 @@ export default function RevenueAnalyticsPage() {
             <div className="h-[340px] rounded-2xl border border-cyan-300/20 bg-[linear-gradient(135deg,rgba(14,116,144,0.2),rgba(30,41,59,0.12),rgba(59,130,246,0.15))] p-3 shadow-[inset_0_0_40px_rgba(14,165,233,0.08)]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={quarterlyGrowthData} margin={{ top: 12, right: 16, left: 10, bottom: 6 }}>
-                  <CartesianGrid {...GRID} />
                   <XAxis dataKey="quarter" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                   <YAxis
                     tick={AXIS_TICK}
