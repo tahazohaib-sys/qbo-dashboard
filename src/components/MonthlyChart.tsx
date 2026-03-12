@@ -6,7 +6,6 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
-  CartesianGrid,
   XAxis,
   YAxis,
   Tooltip,
@@ -76,7 +75,6 @@ export default function MonthlyChart({
         <ResponsiveContainer width="100%" height="100%">
           {mode === "rev-exp" ? (
             <BarChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => fmtCompact(v, currency)} />
               <Tooltip content={<TooltipBox currency={currency} />} />
@@ -85,7 +83,6 @@ export default function MonthlyChart({
             </BarChart>
           ) : (
             <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => fmtCompact(v, currency)} />
               <Tooltip content={<TooltipBox currency={currency} />} />
