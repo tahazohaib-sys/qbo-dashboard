@@ -6,7 +6,8 @@
     "dev": "set NODE_OPTIONS=--dns-result-order=ipv4first && next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:no-chart-gridlines": "node scripts/check-no-chart-gridlines.mjs"
   },
   "dependencies": {
     "googleapis": "^171.4.0",
