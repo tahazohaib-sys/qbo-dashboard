@@ -110,6 +110,8 @@ type RetainedResp = {
     buraq: number;
     convoi: number;
     stratger: number;
+    stratgerContribution?: number;
+    buracContribution?: number;
     contribution: number;
     totalInvestments: number;
     netInvestments: number;
@@ -118,6 +120,8 @@ type RetainedResp = {
       buraq: number;
       convoi: number;
       stratger: number;
+      stratgerContribution?: number;
+      buracContribution?: number;
       contribution: number;
       totalInvestments: number;
       netInvestments: number;
@@ -926,7 +930,8 @@ export default function DashboardPage() {
         { label: "Buraq AI Investment", amount: reInvestments.buraq ?? 0 },
         { label: "Convoi AI Investment", amount: reInvestments.convoi ?? 0 },
         { label: "Stratger AI Investment", amount: reInvestments.stratger ?? 0 },
-        { label: "Strategr AI Contribution Received", amount: reInvestments.contribution ?? 0 },
+        { label: "Strategr AI Contribution Received", amount: reInvestments.stratgerContribution ?? reInvestments.contribution ?? 0 },
+        { label: "Burac AI Contribution Received", amount: reInvestments.buracContribution ?? 0 },
       ];
     }
 
