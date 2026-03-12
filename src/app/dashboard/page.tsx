@@ -365,7 +365,6 @@ function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurr
 const AXIS_TICK = { fill: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 500 } as const;
 const AXIS_LINE = false;
 const TICK_LINE = false;
-
 const CHART_COLORS = {
   positive: "#22d3ee",
   positiveSoft: "#67e8f9",
