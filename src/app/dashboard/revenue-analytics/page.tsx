@@ -10,7 +10,6 @@ import {
   YAxis,
   Tooltip,
   Legend,
-  CartesianGrid,
   BarChart,
   Bar,
   Cell,
@@ -589,7 +588,6 @@ export default function RevenueAnalyticsPage() {
             <div className="h-[340px] rounded-2xl border border-cyan-300/20 bg-[linear-gradient(135deg,rgba(14,116,144,0.2),rgba(30,41,59,0.12),rgba(59,130,246,0.15))] p-3 shadow-[inset_0_0_40px_rgba(14,165,233,0.08)]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={quarterlyGrowthData} margin={{ top: 12, right: 16, left: 10, bottom: 6 }}>
-                  <CartesianGrid {...GRID} />
                   <XAxis dataKey="quarter" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                   <YAxis
                     tick={AXIS_TICK}

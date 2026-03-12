@@ -197,7 +197,8 @@ export async function GET(req: Request) {
     const stratger = Math.abs(stratMove);
     const stratgerContribution = Math.max(0, stratContribMove); // contribution increases equity positive
     const buracContribution = Math.max(0, buracContribMove); // contribution increases equity positive
-    const contribution = stratgerContribution + buracContribution;
+    const contributionMove = stratContribMove + buracContribMove;
+    const contribution = Math.max(0, contributionMove);
 
     const totalInvestments = buraq + convoi + stratger;
     const netInvestments = totalInvestments - contribution;
@@ -290,7 +291,7 @@ export async function GET(req: Request) {
             strategerMove: stratMove,
             stratgerContributionMove: stratContribMove,
             buracContributionMove: buracContribMove,
-            contribMove: stratContribMove + buracContribMove,
+            contribMove: contributionMove,
           },
         },
       },
