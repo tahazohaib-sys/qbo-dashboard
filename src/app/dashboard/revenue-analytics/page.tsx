@@ -3,7 +3,6 @@ import dynamic from "next/dynamic";
 const RevenueAnalyticsPageClient = dynamic(
   () => import("@/components/pages/RevenueAnalyticsPageClient"),
   {
-    ssr: false,
     loading: () => (
       <main className="min-h-screen bg-[#050814] text-slate-100 px-4 py-6 md:px-8">
         <div className="mx-auto w-full max-w-[1400px] animate-pulse space-y-4">
