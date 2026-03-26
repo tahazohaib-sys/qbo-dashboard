@@ -164,7 +164,8 @@ export async function GET(req: Request) {
       buraq: ["Buraq AI Investment"],
       convoi: ["Convoi AI Investment"],
       stratger: ["Stratger AI Investment", "Strateger AI Investment", "Strateg AI Investment"],
-      contribution: ["Strategr AI Contribution Received", "Stratger AI Contribution Received", "Strateger AI Contribution Received"],
+      stratgerContribution: ["Strategr AI Contribution Received", "Stratger AI Contribution Received", "Strateger AI Contribution Received"],
+      buracContribution: ["Burac AI Contribution Received", "Burac AI Contribution Recieved", "Buraq AI Contribution Received", "Buraq AI Contribution Recieved"],
     };
 
     function bal(rows: FlatRow[], keys: keyof typeof invLabelMap) {
@@ -178,20 +179,26 @@ export async function GET(req: Request) {
     const convoiPrior = bal(priorRows, "convoi");
     const stratEnd = bal(endRows, "stratger");
     const stratPrior = bal(priorRows, "stratger");
-    const contribEnd = bal(endRows, "contribution");
-    const contribPrior = bal(priorRows, "contribution");
+    const stratContribEnd = bal(endRows, "stratgerContribution");
+    const stratContribPrior = bal(priorRows, "stratgerContribution");
+    const buracContribEnd = bal(endRows, "buracContribution");
+    const buracContribPrior = bal(priorRows, "buracContribution");
 
     // movement = end - prior (balances are negative in equity)
     const buraqMove = buraqEnd - buraqPrior;
     const convoiMove = convoiEnd - convoiPrior;
     const stratMove = stratEnd - stratPrior;
-    const contribMove = contribEnd - contribPrior;
+    const stratContribMove = stratContribEnd - stratContribPrior;
+    const buracContribMove = buracContribEnd - buracContribPrior;
 
     // Spend shown as positive movement magnitude
     const buraq = Math.abs(buraqMove);
     const convoi = Math.abs(convoiMove);
     const stratger = Math.abs(stratMove);
-    const contribution = Math.max(0, contribMove); // contribution increases equity positive
+    const stratgerContribution = Math.max(0, stratContribMove); // contribution increases equity positive
+    const buracContribution = Math.max(0, buracContribMove); // contribution increases equity positive
+    const contributionMove = stratContribMove + buracContribMove;
+    const contribution = Math.max(0, contributionMove);
 
     const totalInvestments = buraq + convoi + stratger;
     const netInvestments = totalInvestments - contribution;
@@ -246,6 +253,8 @@ export async function GET(req: Request) {
         buraq,
         convoi,
         stratger,
+        stratgerContribution,
+        buracContribution,
         contribution,
         totalInvestments,
         netInvestments,
@@ -253,14 +262,37 @@ export async function GET(req: Request) {
           buraq,
           convoi,
           stratger,
+          stratgerContribution,
+          buracContribution,
           contribution,
           totalInvestments,
           netInvestments,
         },
         debugBalances: {
-          end: { buraq: buraqEnd, convoi: convoiEnd, strateger: stratEnd, contribution: contribEnd },
-          prior: { buraq: buraqPrior, convoi: convoiPrior, strateger: stratPrior, contribution: contribPrior },
-          movement: { buraqMove, convoiMove, strategerMove: stratMove, contribMove },
+          end: {
+            buraq: buraqEnd,
+            convoi: convoiEnd,
+            strateger: stratEnd,
+            stratgerContribution: stratContribEnd,
+            buracContribution: buracContribEnd,
+            contribution: stratContribEnd + buracContribEnd,
+          },
+          prior: {
+            buraq: buraqPrior,
+            convoi: convoiPrior,
+            strateger: stratPrior,
+            stratgerContribution: stratContribPrior,
+            buracContribution: buracContribPrior,
+            contribution: stratContribPrior + buracContribPrior,
+          },
+          movement: {
+            buraqMove,
+            convoiMove,
+            strategerMove: stratMove,
+            stratgerContributionMove: stratContribMove,
+            buracContributionMove: buracContribMove,
+            contribMove: contributionMove,
+          },
         },
       },
 
