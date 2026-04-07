@@ -341,6 +341,13 @@ const DONUT_COLOR_CLASSES = [
 ];
 
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
+type AppliedFilter = {
+  fromYear: number;
+  fromMonth: number;
+  toYear: number;
+  toMonth: number;
+  method: "Accrual" | "Cash";
+};
 
 function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurrency: string | null | undefined) {
   if (txn.amountForeign != null && txn.foreignCurrency) {
@@ -489,6 +496,13 @@ export default function DashboardPage() {
   const [toYear, setToYear] = useState<number>(now.getFullYear());
   const [toMonth, setToMonth] = useState<number>(now.getMonth() + 1);
   const [method, setMethod] = useState<"Accrual" | "Cash">("Accrual");
+  const [appliedFilters, setAppliedFilters] = useState<AppliedFilter>({
+    fromYear: now.getFullYear(),
+    fromMonth: 1,
+    toYear: now.getFullYear(),
+    toMonth: now.getMonth() + 1,
+    method: "Accrual",
+  });
 
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<DashboardResp | null>(null);
@@ -527,7 +541,10 @@ export default function DashboardPage() {
   const [lastUpdated, setLastUpdated] = useState("--:--:--");
   const [autoRefresh, setAutoRefresh] = useState(false);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const fetchAllRef = useRef<() => Promise<void>>(async () => {});
+  const applyFiltersRef = useRef<() => Promise<void>>(async () => {});
+  const requestIdRef = useRef(0);
+  const moduleCacheRef = useRef<Map<string, any>>(new Map());
+  const hasInitializedRef = useRef(false);
 
   function buildStartEnd(fy: number, fm: number, ty: number, tm: number) {
     const start = `${fy}-${String(fm).padStart(2, "0")}-01`;
@@ -541,28 +558,14 @@ export default function DashboardPage() {
     return Math.max(1, Math.min(24, span));
   }
 
-  async function fetchForecast(series: DashboardResp["series"], horizon: 6 | 12) {
-    setForecastLoading(true);
-    try {
-      const res = await fetch(`/api/forecast`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ series, horizon }),
-      });
-      const json: ForecastApiResp = await res.json();
-      setForecastData(json?.ok ? json : null);
-    } catch {
-      setForecastData(null);
-    } finally {
-      setForecastLoading(false);
-    }
-  }
-
-  async function fetchArAp(asOfYmd: string) {
-    const res = await fetch(`/api/qbo/ar-ap?asOf=${encodeURIComponent(asOfYmd)}`, { cache: "no-store" });
-    const json: ArApResp = await res.json();
-    if (!json.ok) throw new Error(json.error || "AR/AP API failed");
-    return json;
+  async function fetchForecast(series: DashboardResp["series"], horizon: 6 | 12): Promise<ForecastApiResp | null> {
+    const res = await fetch(`/api/forecast`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ series, horizon }),
+    });
+    const json: ForecastApiResp = await res.json();
+    return json?.ok ? json : null;
   }
 
   // ✅ Custom Fields fetch (as-of specific)
@@ -621,16 +624,24 @@ export default function DashboardPage() {
 
     setCustomLabel("");
     setCustomAmount("");
+    invalidateTabCache("arAp");
     await reloadArApCustom(asOfYmd);
   }
 
   async function deleteArApCustom(id: string, asOfYmd: string) {
     setArApCustomErr("");
     await fetch(`/api/custom-fields/ar-ap?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    invalidateTabCache("arAp");
     await reloadArApCustom(asOfYmd);
   }
 
-    async function loadArApAndMonthly(
+  function invalidateTabCache(tabKey: TabKey) {
+    for (const key of moduleCacheRef.current.keys()) {
+      if (key.startsWith(`${tabKey}|`)) moduleCacheRef.current.delete(key);
+    }
+  }
+
+  async function loadArApAndMonthly(
     endYmd: string,
     fy: number,
     fm: number,
@@ -638,83 +649,93 @@ export default function DashboardPage() {
     tm: number,
     accountingMethod: "Accrual" | "Cash"
   ) {
-    setArApLoading(true);
-    try {
-      // ✅ ONE call only (backend returns month-end Balance Sheet monthlySeries)
-      const res = await fetch(
-        `
-        /api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=${monthSpanInclusive(fy, fm, ty, tm)}&fromYear=${fy}&fromMonth=${fm}&toYear=${ty}&toMonth=${tm}&accounting_method=${encodeURIComponent(accountingMethod)}
-      `.replace(/\s+/g, ""),
-        { cache: "no-store" }
-      );
+    // ✅ ONE call only (backend returns month-end Balance Sheet monthlySeries)
+    const res = await fetch(
+      `
+      /api/qbo/ar-ap?asOf=${encodeURIComponent(endYmd)}&months=${monthSpanInclusive(fy, fm, ty, tm)}&fromYear=${fy}&fromMonth=${fm}&toYear=${ty}&toMonth=${tm}&accounting_method=${encodeURIComponent(accountingMethod)}
+    `.replace(/\s+/g, ""),
+      { cache: "no-store" }
+    );
 
-      const one: any = await res.json();
-      if (!one?.ok) throw new Error(one?.error || "AR/AP API failed");
+    const one: any = await res.json();
+    if (!one?.ok) throw new Error(one?.error || "AR/AP API failed");
 
-      setArAp(one);
-
-      // ---------- Build monthly rows (from backend series) ----------
-      const series: Array<{ asOf: string; month: string; payables: number; receivables: number; error?: boolean }> =
-        (one.monthlySeries ?? []).map((r: any) => ({
-          asOf: r.asOf ?? `${r.month}-01`,
-          month: r.month,
-          payables: Number(r.payables ?? 0),
-          receivables: Number(r.receivables ?? 0),
-          error: Boolean(r.error),
-        }));
-
-      // ✅ Keep chart strictly on Balance Sheet month-end snapshots (no manual adjustment overlays)
-      setMonthlyArAp(series);
-    } catch {
-      setArAp(null);
-      setMonthlyArAp([]);
-    } finally {
-      setArApLoading(false);
-    }
+    // ---------- Build monthly rows (from backend series) ----------
+    const monthlySeries: Array<{ asOf: string; month: string; payables: number; receivables: number; error?: boolean }> = (
+      one.monthlySeries ?? []
+    ).map((r: any) => ({
+      asOf: r.asOf ?? `${r.month}-01`,
+      month: r.month,
+      payables: Number(r.payables ?? 0),
+      receivables: Number(r.receivables ?? 0),
+      error: Boolean(r.error),
+    }));
+    return { arAp: one as ArApResp, monthlySeries };
   }
 
-  async function fetchAll() {
-    setLoading(true);
+  async function fetchTransactions(accountId: string): Promise<AccountTxnsResp | null> {
+    const res = await fetch(`/api/qbo/account-transactions?accountId=${encodeURIComponent(accountId)}&limit=5`, {
+      cache: "no-store",
+    });
+    const json: AccountTxnsResp = await res.json();
+    return json.ok ? json : null;
+  }
+
+  function getNormalizedFilters(filters: AppliedFilter) {
+    const fromKey = filters.fromYear * 100 + filters.fromMonth;
+    const toKey = filters.toYear * 100 + filters.toMonth;
+    const fy = fromKey <= toKey ? filters.fromYear : filters.toYear;
+    const fm = fromKey <= toKey ? filters.fromMonth : filters.toMonth;
+    const ty = fromKey <= toKey ? filters.toYear : filters.fromYear;
+    const tm = fromKey <= toKey ? filters.toMonth : filters.fromMonth;
+    const { start, end } = buildStartEnd(fy, fm, ty, tm);
+    return { fy, fm, ty, tm, start, end };
+  }
+
+  function cacheKey(tabKey: TabKey, filters: AppliedFilter, extras: string[] = []) {
+    const { fy, fm, ty, tm } = getNormalizedFilters(filters);
+    return [tabKey, fy, fm, ty, tm, filters.method, ...extras].join("|");
+  }
+
+  function setLastUpdatedNow() {
+    setLastUpdated(new Date().toLocaleTimeString("en-GB", { hour12: false }));
+  }
+
+  function shouldApplyRequest(requestId: number) {
+    return requestId === requestIdRef.current;
+  }
+
+  async function loadActiveTabData(nextTab: TabKey, filters: AppliedFilter, requestId: number) {
+    if (nextTab === "revenue") return;
+
+    const { fy, fm, ty, tm, start, end } = getNormalizedFilters(filters);
     setErr("");
 
-    try {
-      // normalize range
-      const fromKey = fromYear * 100 + fromMonth;
-      const toKey = toYear * 100 + toMonth;
-
-      const fy = fromKey <= toKey ? fromYear : toYear;
-      const fm = fromKey <= toKey ? fromMonth : toMonth;
-      const ty = fromKey <= toKey ? toYear : fromYear;
-      const tm = fromKey <= toKey ? toMonth : fromMonth;
-
-      const { start, end } = buildStartEnd(fy, fm, ty, tm);
-
-      // ✅ AR/AP uses end date as "asOf"
-      loadArApAndMonthly(end, fy, fm, ty, tm, method).catch(() => {});
-
-      const dashUrl =
-        `/api/dashboard?start_date=${encodeURIComponent(start)}` +
-        `&end_date=${encodeURIComponent(end)}` +
-        `&accounting_method=${encodeURIComponent(method)}`;
-
-      const dashRes = await fetch(dashUrl, { cache: "no-store" });
-      const dashJson: DashboardResp = await dashRes.json();
-      if (!dashJson.ok) throw new Error(dashJson.error || "Dashboard API failed");
-      setData(dashJson);
-
-      if (dashJson?.series?.length) {
-        await fetchForecast(dashJson.series, forecastHorizon);
-      } else {
-        setForecastData(null);
+    if (nextTab === "pnl") {
+      const key = cacheKey("pnl", filters);
+      const cached = moduleCacheRef.current.get(key);
+      if (cached) {
+        if (!shouldApplyRequest(requestId)) return;
+        setData(cached.dashboard);
+        setPnlBreakdown(cached.pnlBreakdown);
+        setLastUpdatedNow();
+        return;
       }
 
-      const pnlUrl =
-        `/api/qbo/pnl-table?start_date=${encodeURIComponent(start)}` +
-        `&end_date=${encodeURIComponent(end)}` +
-        `&accounting_method=${encodeURIComponent(method)}`;
+      const [dashRes, pnlRes] = await Promise.all([
+        fetch(
+          `/api/dashboard?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
+          { cache: "no-store" }
+        ),
+        fetch(
+          `/api/qbo/pnl-table?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
+          { cache: "no-store" }
+        ),
+      ]);
 
-      const pnlRes = await fetch(pnlUrl, { cache: "no-store" });
+      const dashJson: DashboardResp = await dashRes.json();
       const pnlJson: PnlTableResp = await pnlRes.json();
+      if (!dashJson.ok) throw new Error(dashJson.error || "Dashboard API failed");
       if (!pnlJson.ok) throw new Error(pnlJson.error || "P&L table API failed");
 
       const expenseRows = pnlJson.rows.filter((r) => {
@@ -725,70 +746,187 @@ export default function DashboardPage() {
 
       const map = new Map<string, number>();
       for (const r of expenseRows) map.set(r.label, (map.get(r.label) ?? 0) + (r.amount ?? 0));
-
       const sorted = Array.from(map.entries())
         .map(([name, value]) => ({ name, value }))
         .sort((a, b) => b.value - a.value);
-
       const top = sorted.slice(0, 8);
       const rest = sorted.slice(8);
       const restSum = rest.reduce((s, x) => s + x.value, 0);
-      setPnlBreakdown(restSum > 0 ? [...top, { name: "Other", value: restSum }] : top);
+      const nextBreakdown = restSum > 0 ? [...top, { name: "Other", value: restSum }] : top;
 
-      const cbRes = await fetch(`/api/qbo/cash-banks?includeZero=true`, { cache: "no-store" });
-      const cbJson: CashBanksResp = await cbRes.json();
-      if (!cbJson.ok) throw new Error(cbJson.error || "Cash-banks API failed");
-      setCashBanks(cbJson);
+      moduleCacheRef.current.set(key, { dashboard: dashJson, pnlBreakdown: nextBreakdown });
+      if (!shouldApplyRequest(requestId)) return;
+      setData(dashJson);
+      setPnlBreakdown(nextBreakdown);
+      setLastUpdatedNow();
+      return;
+    }
 
-      setRetainedLoading(true);
-      try {
-        const reRes = await fetch(
-          `/api/qbo/retained-earning?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(
-            end
-          )}&accounting_method=${encodeURIComponent(method)}`,
-          { cache: "no-store" }
-        );
-        const reJson: RetainedResp = await reRes.json();
-        setRetained(reJson?.ok ? reJson : null);
-      } finally {
-        setRetainedLoading(false);
+    if (nextTab === "cash") {
+      const txKey = selectedAccount?.id ?? "none";
+      const key = cacheKey("cash", filters, [txKey]);
+      const cached = moduleCacheRef.current.get(key);
+      if (cached) {
+        if (!shouldApplyRequest(requestId)) return;
+        setCashBanks(cached.cashBanks);
+        setTxns(cached.txns);
+        setLastUpdatedNow();
+        return;
       }
 
-      if (selectedAccount) await fetchTransactions(selectedAccount.id);
+      const txPromise = selectedAccount ? fetchTransactions(selectedAccount.id) : Promise.resolve(null);
+      const [cbRes, txRes] = await Promise.all([fetch(`/api/qbo/cash-banks?includeZero=true`, { cache: "no-store" }), txPromise]);
+      const cbJson: CashBanksResp = await cbRes.json();
+      if (!cbJson.ok) throw new Error(cbJson.error || "Cash-banks API failed");
 
-      setLastUpdated(
-        new Date().toLocaleTimeString("en-GB", {
-          hour12: false,
-        })
+      moduleCacheRef.current.set(key, { cashBanks: cbJson, txns: txRes });
+      if (!shouldApplyRequest(requestId)) return;
+      setCashBanks(cbJson);
+      setTxns(txRes);
+      setLastUpdatedNow();
+      return;
+    }
+
+    if (nextTab === "retained") {
+      const key = cacheKey("retained", filters);
+      const cached = moduleCacheRef.current.get(key);
+      if (cached) {
+        if (!shouldApplyRequest(requestId)) return;
+        setRetained(cached.retained);
+        setLastUpdatedNow();
+        return;
+      }
+
+      const reRes = await fetch(
+        `/api/qbo/retained-earning?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
+        { cache: "no-store" }
       );
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-    } finally {
-      setLoading(false);
+      const reJson: RetainedResp = await reRes.json();
+      const nextRetained = reJson?.ok ? reJson : null;
+
+      moduleCacheRef.current.set(key, { retained: nextRetained });
+      if (!shouldApplyRequest(requestId)) return;
+      setRetained(nextRetained);
+      setLastUpdatedNow();
+      return;
+    }
+
+    if (nextTab === "arAp") {
+      const key = cacheKey("arAp", filters);
+      const cached = moduleCacheRef.current.get(key);
+      if (cached) {
+        if (!shouldApplyRequest(requestId)) return;
+        setArAp(cached.arAp);
+        setMonthlyArAp(cached.monthlySeries);
+        setArApCustomRows(cached.customRows);
+        setArApCustomErr(cached.customErr ?? "");
+        setLastUpdatedNow();
+        return;
+      }
+
+      const [arApResp, customRowsSettled] = await Promise.all([
+        loadArApAndMonthly(end, fy, fm, ty, tm, filters.method),
+        fetchArApCustom(end).then(
+          (rows) => ({ rows, error: "" }),
+          (e: any) => ({ rows: [] as ArApCustomRow[], error: e?.message ?? "Failed to load manual adjustments" })
+        ),
+      ]);
+
+      moduleCacheRef.current.set(key, { ...arApResp, customRows: customRowsSettled.rows, customErr: customRowsSettled.error });
+      if (!shouldApplyRequest(requestId)) return;
+      setArAp(arApResp.arAp);
+      setMonthlyArAp(arApResp.monthlySeries);
+      setArApCustomRows(customRowsSettled.rows);
+      setArApCustomErr(customRowsSettled.error);
+      setLastUpdatedNow();
+      return;
+    }
+
+    if (nextTab === "forecast") {
+      const key = cacheKey("forecast", filters, [String(forecastHorizon)]);
+      const cached = moduleCacheRef.current.get(key);
+      if (cached) {
+        if (!shouldApplyRequest(requestId)) return;
+        setData(cached.dashboard);
+        setForecastData(cached.forecastData);
+        setLastUpdatedNow();
+        return;
+      }
+
+      const dashRes = await fetch(
+        `/api/dashboard?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
+        { cache: "no-store" }
+      );
+      const dashJson: DashboardResp = await dashRes.json();
+      if (!dashJson.ok) throw new Error(dashJson.error || "Dashboard API failed");
+
+      const nextForecast = dashJson?.series?.length ? await fetchForecast(dashJson.series, forecastHorizon) : null;
+
+      moduleCacheRef.current.set(key, { dashboard: dashJson, forecastData: nextForecast });
+      if (!shouldApplyRequest(requestId)) return;
+      setData(dashJson);
+      setForecastData(nextForecast);
+      setLastUpdatedNow();
     }
   }
 
-  async function fetchTransactions(accountId: string) {
-    setTxnLoading(true);
+  async function runActiveTabLoad(nextTab: TabKey, filters: AppliedFilter) {
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
+    setErr("");
+    setTxnLoading(nextTab === "cash");
+    setRetainedLoading(nextTab === "retained");
+    setArApLoading(nextTab === "arAp");
+    setForecastLoading(nextTab === "forecast");
     try {
-      const res = await fetch(`/api/qbo/account-transactions?accountId=${encodeURIComponent(accountId)}&limit=5`, {
-        cache: "no-store",
-      });
-      const json: AccountTxnsResp = await res.json();
-      setTxns(json.ok ? json : null);
+      await loadActiveTabData(nextTab, filters, requestId);
+    } catch (e: any) {
+      if (!shouldApplyRequest(requestId)) return;
+      setErr(e?.message ?? String(e));
     } finally {
+      if (!shouldApplyRequest(requestId)) return;
+      setLoading(false);
       setTxnLoading(false);
+      setRetainedLoading(false);
+      setArApLoading(false);
+      setForecastLoading(false);
     }
+  }
+
+  async function applyFilters() {
+    const nextFilters: AppliedFilter = { fromYear, fromMonth, toYear, toMonth, method };
+    setAppliedFilters(nextFilters);
+    await runActiveTabLoad(tab, nextFilters);
   }
 
   useEffect(() => {
-    fetchAllRef.current = fetchAll;
+    applyFiltersRef.current = applyFilters;
   });
 
   useEffect(() => {
-    fetchAll();
+    applyFilters();
+    hasInitializedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!hasInitializedRef.current) return;
+    if (tab === "revenue") return;
+    runActiveTabLoad(tab, appliedFilters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "cash") return;
+    runActiveTabLoad("cash", appliedFilters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAccount?.id]);
+
+  useEffect(() => {
+    if (tab !== "forecast") return;
+    runActiveTabLoad("forecast", appliedFilters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forecastHorizon]);
 
   useEffect(() => {
     if (!autoRefresh) {
@@ -801,7 +939,7 @@ export default function DashboardPage() {
 
     const runRefresh = () => {
       if (document.visibilityState === "visible") {
-        fetchAllRef.current();
+        applyFiltersRef.current();
       }
     };
 
@@ -1049,7 +1187,7 @@ export default function DashboardPage() {
             </label>
 
             <button
-              onClick={fetchAll}
+              onClick={applyFilters}
               className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 active:scale-[0.99]"
               disabled={loading}
             >
@@ -1159,7 +1297,7 @@ export default function DashboardPage() {
             </div>
 
             <button
-              onClick={fetchAll}
+              onClick={applyFilters}
               className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
               disabled={loading}
             >
@@ -1752,10 +1890,8 @@ export default function DashboardPage() {
                   return (
                     <button
                       key={a.id}
-                      onClick={async () => {
+                      onClick={() => {
                         setSelectedAccount(a);
-                        setTxns(null);
-                        await fetchTransactions(a.id);
                       }}
                       className={[
                         "min-w-[260px] rounded-2xl border p-4 text-left transition",
@@ -1979,10 +2115,9 @@ export default function DashboardPage() {
                   <label className="text-xs text-slate-300">Horizon</label>
                   <select
                     value={forecastHorizon}
-                    onChange={async (e) => {
+                    onChange={(e) => {
                       const h = Number(e.target.value) as 6 | 12;
                       setForecastHorizon(h);
-                      if (data?.series?.length) await fetchForecast(data.series, h);
                     }}
                     className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
                   >
