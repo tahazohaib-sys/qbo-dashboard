@@ -2320,8 +2320,8 @@ function ChartCard({
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
-          {legend.map((item) => (
-            <div key={item.label} className="flex items-center gap-1.5 text-[11px] text-slate-300">
+          {legend.map((item, index) => (
+            <div key={`${item.label}-${index}`} className="flex items-center gap-1.5 text-[11px] text-slate-300">
               <span className={`h-2.5 w-2.5 rounded-full ${item.color}`} />
               {item.label}
             </div>
