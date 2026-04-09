@@ -919,8 +919,14 @@ export default function DashboardPage() {
       });
 
       if (!res.ok) {
-        const json = await res.json().catch(() => ({ error: "Failed to export financial report" }));
-        throw new Error(json?.error ?? "Failed to export financial report");
+        const contentType = res.headers.get("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          const json = await res.json().catch(() => ({ error: "Failed to export financial report" }));
+          throw new Error(json?.error ?? "Failed to export financial report");
+        }
+        const text = await res.text().catch(() => "");
+        const safe = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+        throw new Error(safe || `Failed to export financial report (HTTP ${res.status})`);
       }
 
       const blob = await res.blob();

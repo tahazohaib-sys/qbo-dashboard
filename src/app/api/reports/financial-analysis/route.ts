@@ -22,6 +22,8 @@ function monthSpanInclusive(startDate: string, endDate: string): number {
 }
 
 function originFrom(req: NextRequest): string {
+  const fromUrl = new URL(req.url).origin;
+  if (fromUrl && fromUrl !== "null") return fromUrl;
   const proto = req.headers.get("x-forwarded-proto") ?? "http";
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "localhost:3000";
   return `${proto}://${host}`;
@@ -29,12 +31,19 @@ function originFrom(req: NextRequest): string {
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: "no-store", ...init });
-  const json = (await res.json()) as T & { ok?: boolean; error?: string };
-  if (!res.ok || (json && (json as any).ok === false)) {
-    const err = (json as any)?.error ?? `Failed request: ${url}`;
-    throw new Error(err);
+  const contentType = res.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    const json = (await res.json()) as T & { ok?: boolean; error?: string };
+    if (!res.ok || (json && json.ok === false)) {
+      throw new Error(json.error ?? `Failed request: ${url}`);
+    }
+    return json;
   }
-  return json;
+
+  const text = await res.text();
+  const snippet = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+  throw new Error(snippet || `Unexpected non-JSON response from ${url} (HTTP ${res.status})`);
 }
 
 export async function POST(req: NextRequest) {
