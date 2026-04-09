@@ -545,6 +545,7 @@ export default function DashboardPage() {
   const requestIdRef = useRef(0);
   const moduleCacheRef = useRef<Map<string, any>>(new Map());
   const hasInitializedRef = useRef(false);
+  const hasHandledInitialTabEffectRef = useRef(false);
 
   function buildStartEnd(fy: number, fm: number, ty: number, tm: number) {
     const start = `${fy}-${String(fm).padStart(2, "0")}-01`;
@@ -911,6 +912,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!hasInitializedRef.current) return;
+    if (!hasHandledInitialTabEffectRef.current) {
+      hasHandledInitialTabEffectRef.current = true;
+      return;
+    }
     if (tab === "revenue") return;
     runActiveTabLoad(tab, appliedFilters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
