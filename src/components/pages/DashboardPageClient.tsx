@@ -538,6 +538,8 @@ export default function DashboardPage() {
   const [customAmount, setCustomAmount] = useState<string>("");
 
   const [err, setErr] = useState<string>("");
+  const [reportExportLoading, setReportExportLoading] = useState(false);
+  const [reportExportError, setReportExportError] = useState("");
   const [lastUpdated, setLastUpdated] = useState("--:--:--");
   const [autoRefresh, setAutoRefresh] = useState(false);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -898,6 +900,47 @@ export default function DashboardPage() {
     const nextFilters: AppliedFilter = { fromYear, fromMonth, toYear, toMonth, method };
     setAppliedFilters(nextFilters);
     await runActiveTabLoad(tab, nextFilters);
+  }
+
+  async function exportFinancialAnalysisReport() {
+    setReportExportError("");
+    setReportExportLoading(true);
+    try {
+      const { start, end } = buildStartEnd(fromYear, fromMonth, toYear, toMonth);
+      const res = await fetch("/api/reports/financial-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          start_date: start,
+          end_date: end,
+          accounting_method: method,
+          forecast_horizon: forecastHorizon,
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({ error: "Failed to export financial report" }));
+        throw new Error(json?.error ?? "Failed to export financial report");
+      }
+
+      const blob = await res.blob();
+      const contentDisposition = res.headers.get("content-disposition") ?? "";
+      const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+      const filename = filenameMatch?.[1] ?? `financial-analysis-${start}-to-${end}.pdf`;
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setReportExportError(e?.message ?? "Failed to export financial report");
+    } finally {
+      setReportExportLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -1301,17 +1344,31 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <button
-              onClick={applyFilters}
-              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
-              disabled={loading}
-            >
-              Apply
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={exportFinancialAnalysisReport}
+                className="rounded-xl border border-cyan-300/30 bg-cyan-500/15 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/20 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={reportExportLoading}
+              >
+                {reportExportLoading ? "Generating Report..." : "Export Financial Analysis Report"}
+              </button>
+
+              <button
+                onClick={applyFilters}
+                className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
+                disabled={loading}
+              >
+                Apply
+              </button>
+            </div>
           </div>
 
           {err ? (
             <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{err}</div>
+          ) : null}
+
+          {reportExportError ? (
+            <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">{reportExportError}</div>
           ) : null}
         </div>
 
