@@ -1137,7 +1137,7 @@ export default function DashboardPage() {
   }, [fromYear, fromMonth, toYear, toMonth]);
 
   return (
-    <div className='relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(34,211,238,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(99,102,241,0.14),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(244,63,94,0.08),transparent_55%),linear-gradient(180deg,#030711_0%,#050b19_45%,#040714_100%)] text-slate-100 [font-family:ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Inter,Roboto,Arial]'>
+    <div className='relative min-h-screen overflow-hidden bg-black text-slate-100 [font-family:ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Inter,Roboto,Arial]'>
       <div className="pointer-events-none absolute inset-0 opacity-[0.03] [background-image:radial-gradient(rgba(255,255,255,0.7)_0.7px,transparent_0.7px)] [background-size:4px_4px]" />
       <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
       <WorldMapVideoBackground />
@@ -1225,15 +1225,15 @@ export default function DashboardPage() {
         </div>
 
         {/* Filters */}
-        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_24px_60px_rgba(2,6,23,0.35)] backdrop-blur-xl">
+        <div className="mt-6 rounded-2xl border border-white/20 bg-[#1a1a1a] p-5 shadow-[0_20px_50px_rgba(0,0,0,0.45)]">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">From Year</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-400">From Year</label>
                 <select
                   value={fromYear}
                   onChange={(e) => setFromYear(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
+                  className="mt-1 w-full rounded-xl border border-white/15 bg-[#2a2a2a] px-3 py-2 text-sm outline-none transition focus:border-white/45"
                 >
                   {years.map((y) => (
                     <option key={y} value={y}>
@@ -1244,11 +1244,11 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">From Month</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-400">From Month</label>
                 <select
                   value={fromMonth}
                   onChange={(e) => setFromMonth(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
+                  className="mt-1 w-full rounded-xl border border-white/15 bg-[#2a2a2a] px-3 py-2 text-sm outline-none transition focus:border-white/45"
                 >
                   {MONTHS.map((m) => (
                     <option key={m.v} value={m.v}>
@@ -1259,11 +1259,11 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">To Year</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-400">To Year</label>
                 <select
                   value={toYear}
                   onChange={(e) => setToYear(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
+                  className="mt-1 w-full rounded-xl border border-white/15 bg-[#2a2a2a] px-3 py-2 text-sm outline-none transition focus:border-white/45"
                 >
                   {years.map((y) => (
                     <option key={y} value={y}>
@@ -1274,11 +1274,11 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">To Month</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-400">To Month</label>
                 <select
                   value={toMonth}
                   onChange={(e) => setToMonth(Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
+                  className="mt-1 w-full rounded-xl border border-white/15 bg-[#2a2a2a] px-3 py-2 text-sm outline-none transition focus:border-white/45"
                 >
                   {MONTHS.map((m) => (
                     <option key={m.v} value={m.v}>
@@ -1289,11 +1289,11 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">Accounting Method</label>
+                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-400">Accounting Method</label>
                 <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value as any)}
-                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm outline-none transition focus:border-cyan-300/40"
+                  className="mt-1 w-full rounded-xl border border-white/15 bg-[#2a2a2a] px-3 py-2 text-sm outline-none transition focus:border-white/45"
                 >
                   <option value="Accrual">Accrual</option>
                   <option value="Cash">Cash</option>
@@ -1303,7 +1303,7 @@ export default function DashboardPage() {
 
             <button
               onClick={applyFilters}
-              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
+              className="rounded-xl border border-white/25 bg-[#2a2a2a] px-6 py-2 text-sm font-semibold hover:bg-[#313131] active:scale-[0.99]"
               disabled={loading}
             >
               Apply
@@ -1746,38 +1746,51 @@ export default function DashboardPage() {
 
             <div className="mt-8">
               <Panel title="Financial Insight">
-                <div className="relative rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/85 via-[#10243f]/70 to-[#130f2f]/80 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_24px_64px_rgba(2,6,23,0.5)] backdrop-blur-xl before:absolute before:inset-0 before:rounded-2xl before:p-px before:[background:linear-gradient(120deg,rgba(34,211,238,0.5),rgba(99,102,241,0.15),rgba(244,63,94,0.35))] before:[mask:linear-gradient(#fff_0_0)_content-box,linear-gradient(#fff_0_0)] before:[mask-composite:xor] md:p-10">
-                  <div className="mx-auto max-w-4xl text-center">
-                    <div className={`mx-auto mb-2 inline-block rounded-3xl px-6 py-2 text-6xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}>
-                      {formatPct(netMargin)}
-                    </div>
-                    <div className="text-[12px] font-semibold uppercase tracking-[0.24em] text-slate-300 md:text-[13px]">{financialLabel.toUpperCase()}</div>
+                <div className="grid grid-cols-1 divide-y divide-white/10 rounded-2xl border border-white/10 bg-[#1f1f1f] lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+                  <div className="p-7 text-center">
+                    <div className={`text-6xl font-extrabold tracking-tight md:text-7xl ${marginTone} ${marginGlow}`}>{formatPct(netMargin)}</div>
+                    <div className="mt-2 text-[12px] font-semibold uppercase tracking-[0.22em] text-slate-400">{financialLabel}</div>
+                    <p className="mx-auto mt-5 max-w-lg text-base leading-relaxed text-slate-300">{financialSummary}</p>
+                  </div>
 
-                    <p className="mx-auto mt-5 max-w-3xl text-sm leading-relaxed text-slate-200/95 md:text-base">{financialSummary}</p>
-
-                    <div className="mt-8 grid grid-cols-1 gap-2 border-t border-white/10 pt-4 text-xs text-slate-400 sm:grid-cols-3 md:text-sm">
-                      <div className="sm:border-r sm:border-white/10">Revenue: {formatPKRMillions(kpi.revenue)}</div>
-                      <div className="sm:border-r sm:border-white/10">Expenses: {formatPKRMillions(kpi.expenses)}</div>
-                      <div>Net: {formatPKRMillions(kpi.profit, true)}</div>
-                    </div>
+                  <div className="space-y-5 p-6">
+                    {[
+                      { label: "Revenue", value: kpi.revenue, tone: "text-emerald-300", bar: "bg-emerald-400" },
+                      { label: "Expenses", value: kpi.expenses, tone: "text-rose-300", bar: "bg-pink-500" },
+                      { label: "Net position", value: kpi.profit, tone: kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300", bar: kpi.profit >= 0 ? "bg-emerald-400" : "bg-rose-500" },
+                    ].map((item) => {
+                      const maxVal = Math.max(Math.abs(kpi.revenue), Math.abs(kpi.expenses), Math.abs(kpi.profit), 1);
+                      const widthPct = Math.max(8, Math.round((Math.abs(item.value) / maxVal) * 100));
+                      return (
+                        <div key={item.label}>
+                          <div className="flex items-center justify-between rounded-xl border border-white/15 bg-[#2a2a2a] px-4 py-3">
+                            <span className="text-sm text-slate-300">{item.label}</span>
+                            <span className={`text-right text-xl font-semibold ${item.tone}`}>{formatPKRMillions(item.value, item.value < 0)}</span>
+                          </div>
+                          <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
+                            <div className={`h-full rounded-full ${item.bar}`} style={{ width: `${widthPct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </Panel>
             </div>
 
             <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-2">
-              <ChartCard title="Income vs Expenses" legend={[{ label: "Income", color: "bg-cyan-300" }, { label: "Expenses", color: "bg-rose-300" }]}>
+              <ChartCard title="Income vs Expenses" legend={[{ label: "Income", color: "bg-emerald-400" }, { label: "Expenses", color: "bg-pink-500" }]}>
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                       <defs>
                         <linearGradient id="incomeBars" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#67e8f9" stopOpacity={0.95} />
-                          <stop offset="100%" stopColor="#0891b2" stopOpacity={0.65} />
+                          <stop offset="0%" stopColor="#34d399" stopOpacity={0.95} />
+                          <stop offset="100%" stopColor="#059669" stopOpacity={0.65} />
                         </linearGradient>
                         <linearGradient id="expenseBars" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#fda4af" stopOpacity={0.92} />
-                          <stop offset="100%" stopColor="#be123c" stopOpacity={0.58} />
+                          <stop offset="0%" stopColor="#ec4899" stopOpacity={0.92} />
+                          <stop offset="100%" stopColor="#be185d" stopOpacity={0.58} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid {...GRID} />
@@ -1803,14 +1816,14 @@ export default function DashboardPage() {
                 </div>
               </ChartCard>
 
-              <ChartCard title="Net Profit Trend" legend={[{ label: "Net Profit", color: "bg-emerald-300" }]}>
+              <ChartCard title="Net Profit Trend" legend={[{ label: "Net Profit", color: "bg-blue-500" }]}>
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                       <defs>
                         <linearGradient id="netProfitLine" x1="0" y1="0" x2="1" y2="0">
-                          <stop offset="0%" stopColor="#5eead4" />
-                          <stop offset="100%" stopColor="#34d399" />
+                          <stop offset="0%" stopColor="#60a5fa" />
+                          <stop offset="100%" stopColor="#2563eb" />
                         </linearGradient>
                       </defs>
                       <CartesianGrid {...GRID} />
@@ -1823,9 +1836,9 @@ export default function DashboardPage() {
                         name="Net Profit"
                         stroke="url(#netProfitLine)"
                         strokeWidth={3}
-                        dot={(props) => <LastPointPulseDot {...props} dataLength={series.length} color="#5eead4" />}
-                        activeDot={{ r: 5.5, fill: "#5eead4", stroke: "#ccfbf1", strokeWidth: 2 }}
-                        style={{ filter: "drop-shadow(0 0 10px rgba(52,211,153,0.28))" }}
+                        dot={(props) => <LastPointPulseDot {...props} dataLength={series.length} color="#3b82f6" />}
+                        activeDot={{ r: 5.5, fill: "#3b82f6", stroke: "#bfdbfe", strokeWidth: 2 }}
+                        style={{ filter: "drop-shadow(0 0 10px rgba(59,130,246,0.28))" }}
                       />
                     </LineChart>
                   </ResponsiveContainer>
@@ -1837,7 +1850,7 @@ export default function DashboardPage() {
               <ChartCard
                 title="Expense Composition"
                 legend={expenseComposition.map((entry, idx) => ({
-                  label: entry.name,
+                  label: `${entry.name} (${expenseTotal > 0 ? Math.round((entry.value / expenseTotal) * 100) : 0}%)`,
                   color: DONUT_COLOR_CLASSES[idx % DONUT_COLOR_CLASSES.length],
                 }))}
               >
@@ -2259,10 +2272,10 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       onClick={onClick}
       className={[
-        "rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200 backdrop-blur-md",
+        "rounded-xl border-2 px-6 py-2.5 text-sm font-semibold transition duration-200",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "border-white bg-[#1f1f1f] text-white shadow-[0_0_0_1px_rgba(255,255,255,0.1)]"
+          : "border-white/85 bg-transparent text-slate-100 hover:bg-white/10",
       ].join(" ")}
     >
       {children}
@@ -2289,10 +2302,10 @@ function TabLinkButton({
       onClick={() => onActivate?.()}
       prefetch={prefetch}
       className={[
-        "inline-flex items-center rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200",
+        "inline-flex items-center rounded-xl border-2 px-6 py-2.5 text-sm font-semibold transition duration-200",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "border-white bg-[#1f1f1f] text-white shadow-[0_0_0_1px_rgba(255,255,255,0.1)]"
+          : "border-white/85 bg-transparent text-slate-100 hover:bg-white/10",
       ].join(" ")}
     >
       {children}
@@ -2302,9 +2315,9 @@ function TabLinkButton({
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+    <div className="rounded-2xl border border-white/20 bg-[#1f1f1f] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
       <div className="mb-3">
-        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
+        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-300">{title}</div>
       </div>
       {children}
     </div>
@@ -2321,12 +2334,12 @@ function ChartCard({
   legend: Array<{ label: string; color: string }>;
 }) {
   return (
-    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
+    <div className="rounded-2xl border border-white/20 bg-[#1f1f1f] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-300">{title}</div>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           {legend.map((item, index) => (
-            <div key={`${item.label}-${index}`} className="flex items-center gap-1.5 text-[11px] text-slate-300">
+            <div key={`${item.label}-${index}`} className="flex items-center gap-1.5 text-[12px] text-slate-300">
               <span className={`h-2.5 w-2.5 rounded-full ${item.color}`} />
               {item.label}
             </div>
@@ -2361,22 +2374,22 @@ function KpiCard({
         : `${Math.round(animatedValue)}`
       : value ?? "—";
 
-  const ring = highlight === "good" ? "border-emerald-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
+  const ring = highlight === "good" ? "border-emerald-400/80" : highlight === "bad" ? "border-rose-400/80" : "border-blue-400/80";
 
   const glow =
     highlight === "good"
-      ? "shadow-[0_16px_45px_rgba(6,182,212,0.18)]"
+      ? "shadow-[0_16px_45px_rgba(16,185,129,0.18)]"
       : highlight === "bad"
       ? "shadow-[0_16px_45px_rgba(244,63,94,0.18)]"
-      : "shadow-[0_20px_80px_rgba(0,0,0,0.35)]";
+      : "shadow-[0_20px_80px_rgba(59,130,246,0.2)]";
 
-  const dot = highlight === "good" ? "bg-cyan-300" : highlight === "bad" ? "bg-rose-300" : "bg-slate-300";
+  const dot = highlight === "good" ? "bg-emerald-400" : highlight === "bad" ? "bg-rose-400" : "bg-blue-400";
 
   return (
     <div
-      className={`glass-breathe group rounded-2xl border ${ring} ${glow} bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl transition hover:shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_16px_45px_rgba(6,182,212,0.15)]`}
+      className={`group rounded-2xl border-t-4 border ${ring} ${glow} bg-[#1f1f1f] p-5 transition hover:bg-[#252525]`}
     >
-      <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.14em] text-slate-300">
+      <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.14em] text-slate-400">
         <span className={`h-2 w-2 rounded-full ${dot}`} />
         {title}
       </div>
