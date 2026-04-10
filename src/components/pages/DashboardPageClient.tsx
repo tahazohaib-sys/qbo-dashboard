@@ -1201,6 +1201,8 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        <ModulesLayoutSection tab={tab} setTab={setTab} headerAsOf={headerAsOf} method={method} companyName={data?.companyName ?? "RTC League Pvt LTD"} />
+
         {/* Tabs */}
         <div className="mt-6 flex gap-2 flex-wrap">
           <TabButton active={tab === "pnl"} onClick={() => setTab("pnl")}>
@@ -2238,6 +2240,107 @@ export default function DashboardPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+function ModulesLayoutSection({
+  tab,
+  setTab,
+  headerAsOf,
+  method,
+  companyName,
+}: {
+  tab: "pnl" | "cash" | "arAp" | "retained" | "forecast" | "revenue";
+  setTab: React.Dispatch<React.SetStateAction<"pnl" | "cash" | "arAp" | "retained" | "forecast" | "revenue">>;
+  headerAsOf: string;
+  method: "Accrual" | "Cash";
+  companyName: string;
+}) {
+  const reportItems: Array<{ key: typeof tab; label: string }> = [
+    { key: "pnl", label: "Profit & Loss" },
+    { key: "cash", label: "Bank & Cash" },
+    { key: "arAp", label: "AR/AP" },
+    { key: "retained", label: "Retained Earning" },
+  ];
+
+  const planningItems: Array<{ key: typeof tab; label: string }> = [
+    { key: "forecast", label: "CFO Forecast" },
+    { key: "revenue", label: "Revenue Analytics" },
+  ];
+
+  const selectedLabel = [...reportItems, ...planningItems].find((item) => item.key === tab)?.label ?? "Profit & Loss";
+
+  return (
+    <section className="mt-6 overflow-hidden rounded-[26px] border border-white/10 bg-black/30 shadow-[0_24px_60px_rgba(2,6,23,0.5)] backdrop-blur-xl">
+      <div className="grid min-h-[420px] grid-cols-1 lg:grid-cols-[320px_1fr]">
+        <aside className="border-b border-white/10 lg:border-b-0 lg:border-r">
+          <div className="flex items-center gap-3 border-b border-white/10 p-6">
+            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-500/25 text-base font-semibold text-blue-200">RTC</div>
+            <div className="text-3xl font-semibold text-white/90">Finance</div>
+          </div>
+
+          <div className="p-5">
+            <div className="px-2 text-xs uppercase tracking-[0.2em] text-white/45">Reports</div>
+            <div className="mt-3 space-y-1.5">
+              {reportItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setTab(item.key)}
+                  className={[
+                    "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition",
+                    tab === item.key ? "border border-blue-300/30 bg-white/10 text-white" : "text-white/70 hover:bg-white/5 hover:text-white/90",
+                  ].join(" ")}
+                >
+                  <span className={["h-2 w-2 rounded-full", tab === item.key ? "bg-blue-300" : "bg-white/30"].join(" ")} />
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <div className="px-2 text-xs uppercase tracking-[0.2em] text-white/45">Planning</div>
+              <div className="mt-3 space-y-1.5">
+                {planningItems.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setTab(item.key)}
+                    className={[
+                      "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition",
+                      tab === item.key ? "border border-blue-300/30 bg-white/10 text-white" : "text-white/70 hover:bg-white/5 hover:text-white/90",
+                    ].join(" ")}
+                  >
+                    <span className={["h-2 w-2 rounded-full", tab === item.key ? "bg-blue-300" : "bg-white/30"].join(" ")} />
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div className="p-6 lg:p-8">
+          <h2 className="text-4xl font-semibold tracking-tight text-white">{selectedLabel}</h2>
+          <p className="mt-2 text-lg text-white/50">
+            {headerAsOf || "Jan – Apr 2026"} · {method} · {companyName}
+          </p>
+
+          <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div className="h-24 rounded-2xl border border-white/10 bg-white/[0.02]" />
+            <div className="h-24 rounded-2xl border border-white/10 bg-white/[0.02]" />
+            <div className="h-24 rounded-2xl border border-white/10 bg-white/[0.02]" />
+          </div>
+
+          <div className="mt-5 h-56 rounded-2xl border border-white/10 bg-white/[0.02] lg:h-64" />
+
+          <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="h-52 rounded-2xl border border-white/10 bg-white/[0.02]" />
+            <div className="h-52 rounded-2xl border border-white/10 bg-white/[0.02]" />
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
