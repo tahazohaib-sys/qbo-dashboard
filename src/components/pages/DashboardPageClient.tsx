@@ -1850,7 +1850,7 @@ export default function DashboardPage() {
               <ChartCard
                 title="Expense Composition"
                 legend={expenseComposition.map((entry, idx) => ({
-                  label: entry.name,
+                  label: `${entry.name} (${expenseTotal > 0 ? Math.round((entry.value / expenseTotal) * 100) : 0}%)`,
                   color: DONUT_COLOR_CLASSES[idx % DONUT_COLOR_CLASSES.length],
                 }))}
               >
