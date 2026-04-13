@@ -111,53 +111,45 @@ function MultiFilter({
   const summary = `${selected.length} selected`;
 
   return (
-    <div className="multi-filter">
+    <div className="relative">
       <button
-        className="h-11 min-w-[210px] px-4 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-sm text-slate-100 flex items-center justify-between"
+        className="h-11 min-w-[210px] max-w-[240px] px-4 rounded-2xl border border-white/10 bg-white/5 text-sm text-slate-100 hover:bg-white/10 transition flex items-center justify-between whitespace-nowrap"
         type="button"
         onClick={() => setOpenKey(open ? null : id)}
       >
-        <span>{label}: {summary}</span>
+        <span className="min-w-0 overflow-hidden text-ellipsis">{label}: {summary}</span>
         <span className="chev">{open ? "▲" : "▼"}</span>
       </button>
-      {open ? (
-        <div className="multi-menu">
-          <div className="mode-head">Mode</div>
-          <div className="mode-radio">
-            <label><input type="radio" checked={mode === "include"} onChange={() => setMode("include")} /> Include</label>
-            <label><input type="radio" checked={mode === "exclude"} onChange={() => setMode("exclude")} /> Exclude</label>
-          </div>
-          <input className="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" />
-          <div className="menu-divider" />
-          <div className="menu-list">
-            <label className="menu-check">
+      <div className={`absolute left-0 top-[calc(100%+8px)] z-[80] w-[340px] rounded-2xl border border-white/10 bg-[#10131f] p-3 shadow-2xl ${open ? "opacity-100 visible" : "opacity-0 invisible pointer-events-none"}`}>
+        <div className="text-xs text-slate-300 mb-2">Mode</div>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <button type="button" className={`h-9 rounded-xl border border-white/10 text-sm ${mode === "include" ? "bg-blue-600/30 text-blue-200" : "bg-white/5 text-slate-300"}`} onClick={() => setMode("include")}>Include</button>
+          <button type="button" className={`h-9 rounded-xl border border-white/10 text-sm ${mode === "exclude" ? "bg-amber-500/20 text-amber-200" : "bg-white/5 text-slate-300"}`} onClick={() => setMode("exclude")}>Exclude</button>
+        </div>
+        <input className="h-10 w-full rounded-xl border border-white/10 bg-[#0e1322] px-3 text-sm text-slate-100 mb-3" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" />
+        <div className="border-t border-white/10 my-2" />
+        <label className="flex items-center gap-2 text-sm text-slate-200 py-2">
+          <input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? [] : [...options])} />
+          Select all
+        </label>
+        <div className="max-h-44 overflow-auto space-y-1 pr-1">
+          {visibleOptions.map((opt) => (
+            <label key={opt} className="flex items-center gap-2 text-sm text-slate-200 py-1 hover:bg-white/5 rounded-md px-1">
               <input
                 type="checkbox"
-                checked={allSelected}
-                onChange={() => setSelected(allSelected ? [] : [...options])}
+                checked={selected.includes(opt)}
+                onChange={() => setSelected(selected.includes(opt) ? selected.filter((x) => x !== opt) : [...selected, opt])}
               />
-              Select all
+              {opt}
             </label>
-            {visibleOptions.map((opt) => (
-              <label key={opt} className="menu-check">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(opt)}
-                  onChange={() =>
-                    setSelected(selected.includes(opt) ? selected.filter((x) => x !== opt) : [...selected, opt])
-                  }
-                />
-                {opt}
-              </label>
-            ))}
-          </div>
-          <div className="panel-actions">
-            <button type="button" className="mini-btn" onClick={() => setSelected([])}>Clear</button>
-            <button type="button" className="mini-btn" onClick={() => setOpenKey(null)}>Done</button>
-            <button type="button" className="mini-btn apply-mini" onClick={() => { onApply(); setOpenKey(null); }}>Apply</button>
-          </div>
+          ))}
         </div>
-      ) : null}
+        <div className="sticky bottom-0 mt-3 bg-[#10131f] border-t border-white/10 pt-2 flex gap-2">
+          <button type="button" className="h-9 px-3 rounded-lg border border-white/10 bg-white/5 text-sm text-slate-200" onClick={() => setSelected([])}>Clear</button>
+          <button type="button" className="h-9 px-3 rounded-lg border border-white/10 bg-white/5 text-sm text-slate-200" onClick={() => setOpenKey(null)}>Done</button>
+          <button type="button" className="h-9 px-3 rounded-lg bg-blue-600 text-sm text-white ml-auto" onClick={() => { onApply(); setOpenKey(null); }}>Apply</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -446,19 +438,19 @@ export default function RevenueAnalyticsPageClient() {
 
         <section className="w-full">
           <div className="max-w-[1200px] mx-auto">
-            <div className="toolbar-row">
-              <div className="toolbar-triggers">
+            <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur-md max-[1100px]:flex-wrap">
+              <div className="flex min-w-0 items-center gap-3">
                 <MultiFilter id="month" label="Month" options={monthOptions} selected={months} setSelected={setMonths} mode={monthMode} setMode={setMonthMode} openKey={openFilter} setOpenKey={setOpenFilter} onApply={fetchData} />
                 <MultiFilter id="company" label="Company" options={companyOptions} selected={companies} setSelected={setCompanies} mode={companyMode} setMode={setCompanyMode} openKey={openFilter} setOpenKey={setOpenFilter} onApply={fetchData} />
                 <MultiFilter id="source" label="Source" options={sourceOptions} selected={sources} setSelected={setSources} mode={sourceMode} setMode={setSourceMode} openKey={openFilter} setOpenKey={setOpenFilter} onApply={fetchData} />
               </div>
 
-              <div className="toolbar-actions-tight">
-                <span className="rows-count">{data ? `${data.filteredCount} rows` : "— rows"}</span>
-                <button className="clear-link" type="button" onClick={() => { setMonths([]); setCompanies([]); setSources([]); }}>
+              <div className="flex shrink-0 items-center gap-3 max-[1100px]:w-full max-[1100px]:justify-end">
+                <span className="text-sm text-slate-400 whitespace-nowrap">{data ? `${data.filteredCount} rows` : "— rows"}</span>
+                <button className="text-sm text-slate-400 hover:text-white transition" type="button" onClick={() => { setMonths([]); setCompanies([]); setSources([]); }}>
                   Clear All
                 </button>
-                <button className="toolbar-apply-btn" type="button" onClick={fetchData}>
+                <button className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium shadow-md" type="button" onClick={fetchData}>
                   Apply
                 </button>
               </div>
@@ -535,9 +527,9 @@ export default function RevenueAnalyticsPageClient() {
       </div>
 
       <style jsx>{`
-      .page{background:${COLORS.bg};color:#e6e9ef;min-height:100vh;font-family:'DM Sans',sans-serif}.container{max-width:1320px;margin:0 auto;padding:28px 20px 44px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}h1{font-size:48px;margin:0;font-weight:700}h2{margin:0 0 4px;font-size:20px}p{margin:0;color:rgba(255,255,255,.7)}.actions{display:flex;gap:10px;align-items:center}.btn{height:56px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;padding:0 24px;text-decoration:none;border:1px solid ${COLORS.border};color:#fff;background:transparent;cursor:pointer;font-size:14px}.btn-solid{background:#185FA5;border-color:#185FA5;color:#B5D4F4}.btn-outline{background:transparent}.card{background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:12px;padding:16px}.toolbar-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border:.5px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);backdrop-filter:blur(8px);padding:10px 12px;border-radius:16px}.toolbar-triggers{display:flex;align-items:center;gap:10px;flex:1;min-width:0}.toolbar-actions-tight{display:flex;align-items:center;gap:10px;flex-shrink:0}.toolbar-apply-btn{height:40px;padding:0 16px;border-radius:12px;border:0;background:#2563eb;color:#fff;font-size:14px;font-weight:600}.multi-filter{position:relative;min-width:210px}.multi-trigger{height:46px;width:100%;display:flex;justify-content:space-between;align-items:center;text-align:left;background:${COLORS.surface};color:#e9edf5;border:.5px solid rgba(255,255,255,.14);border-radius:12px;padding:0 14px;font-size:13px;white-space:nowrap;overflow:hidden}.multi-trigger > span:first-child{overflow:hidden;text-overflow:ellipsis}.chev{opacity:.7;color:#6ea4df}.multi-menu{position:absolute;width:340px;z-index:60;left:0;top:48px;background:#10131f;border:.5px solid rgba(255,255,255,.14);border-radius:14px;padding:10px;box-shadow:0 12px 28px rgba(0,0,0,.4)}.menu-top{display:grid;grid-template-columns:1fr 140px;gap:10px;margin-bottom:8px}.search{height:38px;width:100%;background:#0e1322;color:#f0f4f9;border:.5px solid rgba(255,255,255,.12);border-radius:10px;padding:0 12px}.mode{height:44px;background:#02071b;color:#fff;border:.5px solid rgba(255,255,255,.15);border-radius:16px;padding:0 14px}.menu-actions{display:flex;gap:8px;margin-bottom:8px}.mini-btn{height:34px;border:.5px solid rgba(255,255,255,.12);background:#1b2238;color:#fff;border-radius:10px;padding:0 12px;font-size:12px}.tip{font-size:13px;color:#9ca8bb;margin:8px 2px}.menu-list{max-height:190px;overflow:auto;padding-right:4px;border-top:.5px solid rgba(255,255,255,.1);padding-top:8px}.menu-divider{display:none}.menu-check{display:flex;gap:10px;align-items:center;font-size:13px;color:#e6e9ef;padding:7px 4px;border-radius:6px}.menu-check:hover{background:rgba(255,255,255,.05)}.menu-check input{accent-color:${COLORS.blue};width:20px;height:20px}.done-btn{width:100%;height:52px;margin-top:10px;border:.5px solid rgba(255,255,255,.12);background:#111a34;color:#fff;border-radius:16px;font-size:16px}.mode-head{font-size:12px;color:#9ba3b5;margin:2px 0 6px}.mode-radio{display:flex;gap:8px;margin-bottom:8px}.mode-radio label{display:flex;align-items:center;gap:6px;border:.5px solid rgba(255,255,255,.14);padding:6px 10px;border-radius:999px;background:#181d2d;color:#cbd5e6;font-size:12px}.mode-radio input{accent-color:#378ADD}.panel-actions{position:sticky;bottom:0;background:#10131f;display:flex;gap:8px;margin-top:10px;padding-top:8px;border-top:.5px solid rgba(255,255,255,.1)}.apply-mini{background:#2d67c6}.rows-count{font-size:12px;color:#9ea6b7}.clear-link{border:0;background:transparent;color:#c6ccd9;font-size:13px}.error{margin-top:10px;color:${COLORS.red}}.kpi-grid{margin-top:14px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.kpi .muted,.muted{font-size:12px;color:rgba(255,255,255,.55)}.kpi h3{margin:8px 0 7px;font-size:22px;font-weight:500}.mono{font-family:'DM Mono',monospace}.small{font-size:12px}.neg{color:${COLORS.red}}.pos{color:${COLORS.green}}.neutral{color:${COLORS.gray}}.divider{border-top:1px solid ${COLORS.border};margin:18px 0}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}.sub,.section-sub{font-size:13px;margin-bottom:12px;color:rgba(255,255,255,.6)}.section-title{margin:0}.chart-wrap{position:relative}.h220{height:220px}.h240{height:240px}.h320{height:320px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:rgba(255,255,255,.7)}.legend i{width:10px;height:10px;display:inline-block;border-radius:2px;margin-right:6px;vertical-align:middle}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-top:1px solid ${COLORS.border};white-space:nowrap}th{border-top:0;color:rgba(255,255,255,.55);font-size:12px;font-weight:500}.active-row td{background:rgba(55,138,221,.12)!important}.tint-red td{background:rgba(226,75,74,.05)}.badge-red{background:#FCEBEB;color:#A32D2D;border-radius:999px;font-size:12px;padding:3px 8px;font-weight:600}.mini-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}.mini h4{margin:8px 0 0;font-size:20px;font-weight:500}.info-box{margin-top:12px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:10px;padding:10px}.foot-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.52)}
+      .page{background:${COLORS.bg};color:#e6e9ef;min-height:100vh;font-family:'DM Sans',sans-serif}.container{max-width:1320px;margin:0 auto;padding:28px 20px 44px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}h1{font-size:48px;margin:0;font-weight:700}h2{margin:0 0 4px;font-size:20px}p{margin:0;color:rgba(255,255,255,.7)}.actions{display:flex;gap:10px;align-items:center}.btn{height:56px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;padding:0 24px;text-decoration:none;border:1px solid ${COLORS.border};color:#fff;background:transparent;cursor:pointer;font-size:14px}.btn-solid{background:#185FA5;border-color:#185FA5;color:#B5D4F4}.btn-outline{background:transparent}.card{background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:12px;padding:16px}.multi-filter{position:relative;min-width:210px}.multi-trigger > span:first-child{overflow:hidden;text-overflow:ellipsis}.chev{opacity:.7;color:#6ea4df}.menu-top{display:grid;grid-template-columns:1fr 140px;gap:10px;margin-bottom:8px}.search{height:38px;width:100%;background:#0e1322;color:#f0f4f9;border:.5px solid rgba(255,255,255,.12);border-radius:10px;padding:0 12px}.mode{height:44px;background:#02071b;color:#fff;border:.5px solid rgba(255,255,255,.15);border-radius:16px;padding:0 14px}.menu-actions{display:flex;gap:8px;margin-bottom:8px}.mini-btn{height:34px;border:.5px solid rgba(255,255,255,.12);background:#1b2238;color:#fff;border-radius:10px;padding:0 12px;font-size:12px}.tip{font-size:13px;color:#9ca8bb;margin:8px 2px}.menu-list{max-height:190px;overflow:auto;padding-right:4px;border-top:.5px solid rgba(255,255,255,.1);padding-top:8px}.menu-divider{display:none}.menu-check{display:flex;gap:10px;align-items:center;font-size:13px;color:#e6e9ef;padding:7px 4px;border-radius:6px}.menu-check:hover{background:rgba(255,255,255,.05)}.menu-check input{accent-color:${COLORS.blue};width:20px;height:20px}.done-btn{width:100%;height:52px;margin-top:10px;border:.5px solid rgba(255,255,255,.12);background:#111a34;color:#fff;border-radius:16px;font-size:16px}.mode-head{font-size:12px;color:#9ba3b5;margin:2px 0 6px}.mode-radio{display:flex;gap:8px;margin-bottom:8px}.mode-radio label{display:flex;align-items:center;gap:6px;border:.5px solid rgba(255,255,255,.14);padding:6px 10px;border-radius:999px;background:#181d2d;color:#cbd5e6;font-size:12px}.mode-radio input{accent-color:#378ADD}.panel-actions{position:sticky;bottom:0;background:#10131f;display:flex;gap:8px;margin-top:10px;padding-top:8px;border-top:.5px solid rgba(255,255,255,.1)}.apply-mini{background:#2d67c6}.error{margin-top:10px;color:${COLORS.red}}.kpi-grid{margin-top:14px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.kpi .muted,.muted{font-size:12px;color:rgba(255,255,255,.55)}.kpi h3{margin:8px 0 7px;font-size:22px;font-weight:500}.mono{font-family:'DM Mono',monospace}.small{font-size:12px}.neg{color:${COLORS.red}}.pos{color:${COLORS.green}}.neutral{color:${COLORS.gray}}.divider{border-top:1px solid ${COLORS.border};margin:18px 0}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}.sub,.section-sub{font-size:13px;margin-bottom:12px;color:rgba(255,255,255,.6)}.section-title{margin:0}.chart-wrap{position:relative}.h220{height:220px}.h240{height:240px}.h320{height:320px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:rgba(255,255,255,.7)}.legend i{width:10px;height:10px;display:inline-block;border-radius:2px;margin-right:6px;vertical-align:middle}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-top:1px solid ${COLORS.border};white-space:nowrap}th{border-top:0;color:rgba(255,255,255,.55);font-size:12px;font-weight:500}.active-row td{background:rgba(55,138,221,.12)!important}.tint-red td{background:rgba(226,75,74,.05)}.badge-red{background:#FCEBEB;color:#A32D2D;border-radius:999px;font-size:12px;padding:3px 8px;font-weight:600}.mini-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}.mini h4{margin:8px 0 0;font-size:20px;font-weight:500}.info-box{margin-top:12px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:10px;padding:10px}.foot-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.52)}
       @media (max-width:1120px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.mini-kpis{grid-template-columns:1fr 1fr}.btn,.filter-right p,select,label span{font-size:14px}h1{font-size:36px}}
-      @media (max-width:1024px){.toolbar-row{flex-wrap:wrap}.toolbar-actions-tight{width:100%;justify-content:flex-end}}@media (max-width:840px){.header{flex-direction:column;align-items:flex-start}.toolbar-triggers{flex-wrap:wrap}.multi-filter{min-width:100%}.toolbar-actions-tight{justify-content:space-between}.two-col,.kpi-grid,.mini-kpis{grid-template-columns:1fr}.btn{height:42px;padding:0 14px;font-size:14px}.done-btn{font-size:16px;height:42px}}
+      @media (max-width:840px){.header{flex-direction:column;align-items:flex-start}.two-col,.kpi-grid,.mini-kpis{grid-template-columns:1fr}.btn{height:42px;padding:0 14px;font-size:14px}.done-btn{font-size:16px;height:42px}}
       `}</style>
       <style jsx global>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&display=swap');`}</style>
     </main>
