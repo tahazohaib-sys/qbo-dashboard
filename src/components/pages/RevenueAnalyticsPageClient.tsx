@@ -21,6 +21,7 @@ type GrowthTableRow = {
 type ChurnRow = {
   company: string;
   month: string;
+  prevMonth?: string | null;
   prevTotal: number;
   currentTotal: number;
   lostRevenue: number;
@@ -34,6 +35,7 @@ type ChurnRow = {
 };
 type ChurnDetail = ChurnRow & {
   lostCustomers: Array<{ customer: string; lastMonthRevenue: number }>;
+  addedCustomers: Array<{ customer: string; currentMonthRevenue: number }>;
   contractionCustomers: Array<{ customer: string; prevMonthRevenue: number; currentMonthRevenue: number; delta: number }>;
   expansionCustomers: Array<{ customer: string; prevMonthRevenue: number; currentMonthRevenue: number; delta: number }>;
 };
@@ -86,6 +88,10 @@ export default function RevenueAnalyticsPageClient() {
   const [month, setMonth] = useState("ALL");
   const [company, setCompany] = useState("ALL");
   const [source, setSource] = useState("ALL");
+  const [monthMode, setMonthMode] = useState<"include" | "exclude">("include");
+  const [companyMode, setCompanyMode] = useState<"include" | "exclude">("include");
+  const [sourceMode, setSourceMode] = useState<"include" | "exclude">("include");
+  const [selectedChurnKey, setSelectedChurnKey] = useState("");
 
   const symbol = data?.currencySymbol || "$";
 
@@ -97,6 +103,9 @@ export default function RevenueAnalyticsPageClient() {
       if (month !== "ALL") params.set("months", month);
       if (company !== "ALL") params.set("companies", company);
       if (source !== "ALL") params.set("sources", source);
+      params.set("months_mode", monthMode);
+      params.set("companies_mode", companyMode);
+      params.set("sources_mode", sourceMode);
       const res = await fetch(`/api/revenue-analytics?${params.toString()}`, { cache: "no-store" });
       const json = (await res.json()) as ApiResp;
       if (!json.ok) throw new Error(json.error || "Failed to load revenue data");
@@ -155,16 +164,43 @@ export default function RevenueAnalyticsPageClient() {
 
   const latestMonth = metrics?.latestMonth;
   const latestRows = useMemo(() => (data && latestMonth ? data.churnVsGrowth.filter((r) => r.month === latestMonth) : []), [data, latestMonth]);
+  const selectedDetail = useMemo(
+    () => (data ? data.churnDetails.find((d) => `${d.company}__${d.month}` === selectedChurnKey) : undefined),
+    [data, selectedChurnKey]
+  );
+  const analysisRows = useMemo(() => (selectedDetail ? [selectedDetail] : latestRows), [latestRows, selectedDetail]);
+  const analysisSummary = useMemo(() => {
+    const prev = analysisRows.reduce((s, r) => s + r.prevTotal, 0);
+    const current = analysisRows.reduce((s, r) => s + r.currentTotal, 0);
+    return {
+      net: current - prev,
+      lost: analysisRows.reduce((s, r) => s + r.lostRevenue, 0),
+      added: analysisRows.reduce((s, r) => s + r.addedRevenue, 0),
+      existingNet: analysisRows.reduce((s, r) => s + r.existingCustomerDelta, 0),
+      contraction: analysisRows.reduce((s, r) => s + r.contractionRevenue, 0),
+      expansion: analysisRows.reduce((s, r) => s + r.expansionRevenue, 0),
+    };
+  }, [analysisRows]);
 
   const lostCustomers = useMemo(() => {
+    if (selectedDetail) {
+      return selectedDetail.lostCustomers
+        .map((c) => ({ customer: c.customer, revenue: c.lastMonthRevenue }))
+        .sort((a, b) => b.revenue - a.revenue);
+    }
     if (!data || !latestMonth) return [] as Array<{ customer: string; revenue: number }>;
     return data.churnDetails
       .filter((r) => r.month === latestMonth)
       .flatMap((r) => r.lostCustomers.map((c) => ({ customer: c.customer, revenue: c.lastMonthRevenue })))
       .sort((a, b) => b.revenue - a.revenue);
-  }, [data, latestMonth]);
+  }, [data, latestMonth, selectedDetail]);
 
   const contractionCustomers = useMemo(() => {
+    if (selectedDetail) {
+      return selectedDetail.contractionCustomers
+        .map((c) => ({ customer: c.customer, mar: c.prevMonthRevenue, apr: c.currentMonthRevenue, delta: c.delta }))
+        .sort((a, b) => a.delta - b.delta);
+    }
     if (!data || !latestMonth) return [] as Array<{ customer: string; mar: number; apr: number; delta: number }>;
     return data.churnDetails
       .filter((r) => r.month === latestMonth)
@@ -172,7 +208,7 @@ export default function RevenueAnalyticsPageClient() {
         r.contractionCustomers.map((c) => ({ customer: c.customer, mar: c.prevMonthRevenue, apr: c.currentMonthRevenue, delta: c.delta }))
       )
       .sort((a, b) => a.delta - b.delta);
-  }, [data, latestMonth]);
+  }, [data, latestMonth, selectedDetail]);
 
   useEffect(() => {
     if (!data || !growthRef.current || !waterfallRef.current || !teamRef.current || !metrics) return;
@@ -224,12 +260,12 @@ export default function RevenueAnalyticsPageClient() {
         },
       });
 
-      const start = latestRows.reduce((s, r) => s + r.prevTotal, 0);
-      const lost = latestRows.reduce((s, r) => s + r.lostRevenue, 0);
-      const contraction = latestRows.reduce((s, r) => s + r.contractionRevenue, 0);
-      const expansion = latestRows.reduce((s, r) => s + r.expansionRevenue, 0);
-      const added = latestRows.reduce((s, r) => s + r.addedRevenue, 0);
-      const end = latestRows.reduce((s, r) => s + r.currentTotal, 0);
+      const start = analysisRows.reduce((s, r) => s + r.prevTotal, 0);
+      const lost = analysisRows.reduce((s, r) => s + r.lostRevenue, 0);
+      const contraction = analysisRows.reduce((s, r) => s + r.contractionRevenue, 0);
+      const expansion = analysisRows.reduce((s, r) => s + r.expansionRevenue, 0);
+      const added = analysisRows.reduce((s, r) => s + r.addedRevenue, 0);
+      const end = analysisRows.reduce((s, r) => s + r.currentTotal, 0);
       const base = [0, start - lost, start - lost - contraction, start - lost - contraction + expansion, start - lost - contraction + expansion + added, 0];
       const visible = [start, -lost, -contraction, expansion, added, end];
 
@@ -294,7 +330,7 @@ export default function RevenueAnalyticsPageClient() {
     let clean: (() => void) | undefined;
     loadChart().then((c) => (clean = c)).catch(() => undefined);
     return () => clean?.();
-  }, [data, growthDatasets, latestRows, metrics, symbol]);
+  }, [analysisRows, data, growthDatasets, metrics, symbol]);
 
   return (
     <main className="page">
@@ -312,9 +348,33 @@ export default function RevenueAnalyticsPageClient() {
 
         <section className="card filter-bar">
           <div className="filters">
-            <label><span>Month</span><select value={month} onChange={(e) => setMonth(e.target.value)}><option value="ALL">All</option>{data?.filters.months.map((m) => <option key={m} value={m}>{m}</option>)}</select></label>
-            <label><span>Company</span><select value={company} onChange={(e) => setCompany(e.target.value)}><option value="ALL">All</option>{data?.filters.companies.map((c) => <option key={c} value={c}>{c}</option>)}</select></label>
-            <label><span>Source</span><select value={source} onChange={(e) => setSource(e.target.value)}><option value="ALL">All</option>{data?.filters.sources.map((s) => <option key={s} value={s}>{s}</option>)}</select></label>
+            <label>
+              <span>Month</span>
+              <div className="filter-field">
+                <select value={month} onChange={(e) => setMonth(e.target.value)}><option value="ALL">All</option>{data?.filters.months.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+                <select value={monthMode} onChange={(e) => setMonthMode(e.target.value as "include" | "exclude")} className="mode">
+                  <option value="include">Include</option><option value="exclude">Exclude</option>
+                </select>
+              </div>
+            </label>
+            <label>
+              <span>Company</span>
+              <div className="filter-field">
+                <select value={company} onChange={(e) => setCompany(e.target.value)}><option value="ALL">All</option>{data?.filters.companies.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                <select value={companyMode} onChange={(e) => setCompanyMode(e.target.value as "include" | "exclude")} className="mode">
+                  <option value="include">Include</option><option value="exclude">Exclude</option>
+                </select>
+              </div>
+            </label>
+            <label>
+              <span>Source</span>
+              <div className="filter-field">
+                <select value={source} onChange={(e) => setSource(e.target.value)}><option value="ALL">All</option>{data?.filters.sources.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+                <select value={sourceMode} onChange={(e) => setSourceMode(e.target.value as "include" | "exclude")} className="mode">
+                  <option value="include">Include</option><option value="exclude">Exclude</option>
+                </select>
+              </div>
+            </label>
           </div>
           <div className="filter-right">
             <p>{data ? `${data.filteredCount} rows filtered (from ${data.rawCount})` : "Loading..."}</p>
@@ -329,10 +389,10 @@ export default function RevenueAnalyticsPageClient() {
             <section className="kpi-grid">
               <article className="card kpi"><p className="muted">Total revenue (filtered)</p><h3 className="mono neutral">{money(metrics.total, 2, symbol)}</h3><p className="small neutral">{metrics.monthCount} months selected</p></article>
               <article className="card kpi"><p className="muted">Latest month revenue</p><h3 className="mono neutral">{money(metrics.latest, 2, symbol)}</h3><p className="small neg">{metrics.prev ? `${metrics.net < 0 ? "↓" : "↑"} ${Math.abs((metrics.net / metrics.prev) * 100).toFixed(1)}% vs prior month` : "—"}</p></article>
-              <article className="card kpi"><p className="muted">Net revenue change</p><h3 className={`mono ${metrics.net < 0 ? "neg" : "pos"}`}>{money0(metrics.net, symbol)}</h3><p className="small neg">Apr vs Mar</p></article>
+              <article className="card kpi"><p className="muted">Net revenue change</p><h3 className={`mono ${metrics.net < 0 ? "neg" : "pos"}`}>{money0(analysisSummary.net, symbol)}</h3><p className="small neg">Apr vs Mar</p></article>
               <article className="card kpi"><p className="muted">Churned revenue</p><h3 className="mono neutral">{money(metrics.lost, 2, symbol)}</h3><p className="small neutral">{metrics.lostCount} lost customers</p></article>
               <article className="card kpi"><p className="muted">Contraction (existing)</p><h3 className="mono neutral">{money(metrics.contraction, 2, symbol)}</h3><p className="small neutral">{metrics.contractionCount} customers shrank</p></article>
-              <article className="card kpi"><p className="muted">New revenue added</p><h3 className="mono neutral">{money(metrics.added, 2, symbol)}</h3><p className="small neutral">{metrics.added > 0 ? "New customers added" : "No new customers"}</p></article>
+              <article className="card kpi"><p className="muted">New revenue added</p><h3 className="mono neutral">{money(analysisSummary.added, 2, symbol)}</h3><p className="small neutral">{metrics.added > 0 ? "New customers added" : "No new customers"}</p></article>
             </section>
 
             <div className="divider" />
@@ -342,21 +402,48 @@ export default function RevenueAnalyticsPageClient() {
             </section>
 
             <div className="divider" />
-            <section><h2 className="section-title">Churn & growth bridge</h2><p className="section-sub">Click a row to see detail — lost/new customers + expansion/contraction from existing</p><article className="card"><div className="table-wrap"><table><thead><tr><th>Company</th><th>Month</th><th>Prev total</th><th>Current total</th><th>Lost</th><th>Added</th><th>Existing net</th><th>Net Δ</th><th>Churn %</th><th>Growth %</th></tr></thead><tbody>{data.churnVsGrowth.map((r) => <tr key={`${r.company}-${r.month}`} className={latestMonth === r.month ? "tint-red" : ""}><td>{r.company}</td><td>{r.month}</td><td>{money0(r.prevTotal, symbol)}</td><td>{money0(r.currentTotal, symbol)}</td><td className="neg">{money0(r.lostRevenue, symbol)}</td><td>{money0(r.addedRevenue, symbol)}</td><td className={r.existingCustomerDelta < 0 ? "neg" : "pos"}>{money0(r.existingCustomerDelta, symbol)}</td><td className={r.netRevenueDelta < 0 ? "neg" : "pos"}>{money0(r.netRevenueDelta, symbol)}</td><td>{r.churnRate > 0 ? <span className="badge-red">{pct(r.churnRate)}</span> : "0%"}</td><td className={r.growthRate < 0 ? "neg" : "pos"}>{pct(r.growthRate)}</td></tr>)}</tbody></table></div></article>
+            <section>
+              <h2 className="section-title">Churn & growth bridge</h2>
+              <p className="section-sub">Click a row to inspect churn/lost/new/contraction versus that row&apos;s previous month.</p>
+              <article className="card">
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Company</th><th>Month</th><th>Prev total</th><th>Current total</th><th>Lost</th><th>Added</th><th>Existing net</th><th>Net Δ</th><th>Churn %</th><th>Growth %</th></tr></thead>
+                    <tbody>
+                      {data.churnVsGrowth.map((r) => {
+                        const key = `${r.company}__${r.month}`;
+                        return (
+                          <tr
+                            key={key}
+                            className={`${latestMonth === r.month ? "tint-red" : ""} ${selectedChurnKey === key ? "active-row" : ""}`}
+                            onClick={() => setSelectedChurnKey(key)}
+                          >
+                            <td>{r.company}</td><td>{r.month}</td><td>{money0(r.prevTotal, symbol)}</td><td>{money0(r.currentTotal, symbol)}</td>
+                            <td className="neg">{money0(r.lostRevenue, symbol)}</td><td>{money0(r.addedRevenue, symbol)}</td>
+                            <td className={r.existingCustomerDelta < 0 ? "neg" : "pos"}>{money0(r.existingCustomerDelta, symbol)}</td>
+                            <td className={r.netRevenueDelta < 0 ? "neg" : "pos"}>{money0(r.netRevenueDelta, symbol)}</td>
+                            <td>{r.churnRate > 0 ? <span className="badge-red">{pct(r.churnRate)}</span> : "0%"}</td><td className={r.growthRate < 0 ? "neg" : "pos"}>{pct(r.growthRate)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
               <div className="mini-kpis">
-                <article className="card mini"><p className="muted">Net change</p><h4 className="mono neg">{money0(metrics.net, symbol)}</h4></article>
-                <article className="card mini"><p className="muted">Lost (churned)</p><h4 className="mono neg">{money0(metrics.lost, symbol)}</h4></article>
-                <article className="card mini"><p className="muted">New added</p><h4 className="mono neutral">{money(metrics.added, 2, symbol)}</h4></article>
-                <article className="card mini"><p className="muted">Existing net</p><h4 className="mono neg">{money0(metrics.existingNet, symbol)}</h4></article>
-                <article className="card mini"><p className="muted">Existing contraction</p><h4 className="mono neg">{money0(metrics.contraction, symbol)}</h4></article>
+                <article className="card mini"><p className="muted">Net change</p><h4 className="mono neg">{money0(analysisSummary.net, symbol)}</h4></article>
+                <article className="card mini"><p className="muted">Lost (churned)</p><h4 className="mono neg">{money0(analysisSummary.lost, symbol)}</h4></article>
+                <article className="card mini"><p className="muted">New added</p><h4 className="mono neutral">{money(analysisSummary.added, 2, symbol)}</h4></article>
+                <article className="card mini"><p className="muted">Existing net</p><h4 className="mono neg">{money0(analysisSummary.existingNet, symbol)}</h4></article>
+                <article className="card mini"><p className="muted">Existing contraction</p><h4 className="mono neg">{money0(analysisSummary.contraction, symbol)}</h4></article>
               </div>
             </section>
 
-            <div className="divider" /><section><article className="card"><h2>Revenue waterfall — Mar → Apr 2026</h2><p className="sub">Visualizes how starting revenue flowed into ending revenue via churn, contraction, and expansion</p><div className="chart-wrap h240"><canvas ref={waterfallRef} /></div><div className="legend"><span><i style={{ background: COLORS.blue }} />Starting / ending revenue</span><span><i style={{ background: COLORS.red }} />Negative impact</span><span><i style={{ background: COLORS.green }} />Positive impact</span></div></article></section>
+            <div className="divider" /><section><article className="card"><h2>Revenue waterfall — {selectedDetail?.prevMonth ?? "Prev"} → {selectedDetail?.month ?? latestMonth ?? "Current"}</h2><p className="sub">Visualizes how starting revenue flowed into ending revenue via churn, contraction, and expansion</p><div className="chart-wrap h240"><canvas ref={waterfallRef} /></div><div className="legend"><span><i style={{ background: COLORS.blue }} />Starting / ending revenue</span><span><i style={{ background: COLORS.red }} />Negative impact</span><span><i style={{ background: COLORS.green }} />Positive impact</span></div></article></section>
 
             <div className="divider" />
-            <section className="two-col"><article className="card"><h2>Lost customers (previous month only)</h2><p className="sub">Present in Mar 2026 — missing in Apr 2026</p><div className="table-wrap"><table><thead><tr><th>Customer</th><th>Lost revenue</th><th>% of total loss</th></tr></thead><tbody>{lostCustomers.map((c) => <tr key={c.customer}><td>{c.customer}</td><td className="neg">{money(c.revenue, 2, symbol)}</td><td className="neutral">{metrics.lost ? `${((c.revenue / metrics.lost) * 100).toFixed(1)}%` : "0%"}</td></tr>)}</tbody></table></div></article>
-            <article className="card"><h2>Existing customers — revenue contraction</h2><p className="sub">Present in both months — revenue decreased in Apr 2026</p><div className="table-wrap"><table><thead><tr><th>Customer</th><th>Mar</th><th>Apr</th><th>Δ</th></tr></thead><tbody>{contractionCustomers.map((c) => <tr key={c.customer}><td>{c.customer}</td><td>{money(c.mar, 2, symbol)}</td><td>{money(c.apr, 2, symbol)}</td><td className="neg">{money(c.delta, 2, symbol)}</td></tr>)}</tbody></table></div><div className="info-box"><p>{metrics.expansion > 0 ? "Existing customer revenue increases found" : "No existing customer revenue increases this period"}</p><p className="mono">Expansion revenue: {money(metrics.expansion, 2, symbol)}</p></div></article></section>
+            <section className="two-col"><article className="card"><h2>Lost customers (previous month only)</h2><p className="sub">Compared period: {selectedDetail?.prevMonth ?? "previous"} → {selectedDetail?.month ?? latestMonth ?? "current"}</p><div className="table-wrap"><table><thead><tr><th>Customer</th><th>Lost revenue</th><th>% of total loss</th></tr></thead><tbody>{lostCustomers.map((c) => <tr key={c.customer}><td>{c.customer}</td><td className="neg">{money(c.revenue, 2, symbol)}</td><td className="neutral">{analysisSummary.lost ? `${((c.revenue / analysisSummary.lost) * 100).toFixed(1)}%` : "0%"}</td></tr>)}</tbody></table></div></article>
+            <article className="card"><h2>Existing customers — revenue contraction</h2><p className="sub">Present in both selected months — decreases in current period</p><div className="table-wrap"><table><thead><tr><th>Customer</th><th>{selectedDetail?.prevMonth ?? "Prev"}</th><th>{selectedDetail?.month ?? "Current"}</th><th>Δ</th></tr></thead><tbody>{contractionCustomers.map((c) => <tr key={c.customer}><td>{c.customer}</td><td>{money(c.mar, 2, symbol)}</td><td>{money(c.apr, 2, symbol)}</td><td className="neg">{money(c.delta, 2, symbol)}</td></tr>)}</tbody></table></div><div className="info-box"><p>{analysisSummary.expansion > 0 ? "Existing customer revenue increases found" : "No existing customer revenue increases this period"}</p><p className="mono">Expansion revenue: {money(analysisSummary.expansion, 2, symbol)}</p></div></article></section>
 
             <div className="divider" /><section><h2 className="section-title">Team revenue distribution</h2><p className="section-sub">Top customers by total revenue (filtered period)</p><article className="card"><div className="chart-wrap h320"><canvas ref={teamRef} /></div><p className="foot-note">Note: No &apos;Customer&apos; column in source data — using Team as customer label.</p></article></section>
           </>
@@ -364,9 +451,9 @@ export default function RevenueAnalyticsPageClient() {
       </div>
 
       <style jsx>{`
-      .page{background:${COLORS.bg};color:#e6e9ef;min-height:100vh;font-family:'DM Sans',sans-serif}.container{max-width:1320px;margin:0 auto;padding:28px 20px 44px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}h1{font-size:48px;margin:0;font-weight:700}h2{margin:0 0 4px;font-size:20px}p{margin:0;color:rgba(255,255,255,.7)}.actions{display:flex;gap:10px;align-items:center}.btn{height:56px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:0 24px;text-decoration:none;border:1px solid ${COLORS.border};color:#fff;background:transparent;cursor:pointer;font-size:14px}.btn-solid{background:${COLORS.blue};border-color:${COLORS.blue}}.btn-outline{background:transparent}.card{background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:12px;padding:16px}.filter-bar{display:flex;justify-content:space-between;align-items:flex-end;gap:18px}.filters{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:12px;flex:1}label span{font-size:12px;color:rgba(255,255,255,.65);display:block;margin-bottom:6px}select{height:56px;width:100%;background:${COLORS.surface};color:#fff;border:1px solid ${COLORS.border};border-radius:999px;padding:0 20px;font-size:14px}.filter-right{display:flex;align-items:center;gap:14px}.filter-right p{font-size:14px;white-space:nowrap}.error{margin-top:10px;color:${COLORS.red}}.kpi-grid{margin-top:14px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.kpi .muted,.muted{font-size:12px;color:rgba(255,255,255,.55)}.kpi h3{margin:8px 0 7px;font-size:22px;font-weight:500}.mono{font-family:'DM Mono',monospace}.small{font-size:12px}.neg{color:${COLORS.red}}.pos{color:${COLORS.green}}.neutral{color:${COLORS.gray}}.divider{border-top:1px solid ${COLORS.border};margin:18px 0}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}.sub,.section-sub{font-size:13px;margin-bottom:12px;color:rgba(255,255,255,.6)}.section-title{margin:0}.chart-wrap{position:relative}.h220{height:220px}.h240{height:240px}.h320{height:320px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:rgba(255,255,255,.7)}.legend i{width:10px;height:10px;display:inline-block;border-radius:2px;margin-right:6px;vertical-align:middle}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-top:1px solid ${COLORS.border};white-space:nowrap}th{border-top:0;color:rgba(255,255,255,.55);font-size:12px;font-weight:500}.tint-red td{background:rgba(226,75,74,.05)}.badge-red{background:#FCEBEB;color:#A32D2D;border-radius:999px;font-size:12px;padding:3px 8px;font-weight:600}.mini-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}.mini h4{margin:8px 0 0;font-size:20px;font-weight:500}.info-box{margin-top:12px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:10px;padding:10px}.foot-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.52)}
+      .page{background:${COLORS.bg};color:#e6e9ef;min-height:100vh;font-family:'DM Sans',sans-serif}.container{max-width:1320px;margin:0 auto;padding:28px 20px 44px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}h1{font-size:48px;margin:0;font-weight:700}h2{margin:0 0 4px;font-size:20px}p{margin:0;color:rgba(255,255,255,.7)}.actions{display:flex;gap:10px;align-items:center}.btn{height:56px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:0 24px;text-decoration:none;border:1px solid ${COLORS.border};color:#fff;background:transparent;cursor:pointer;font-size:14px}.btn-solid{background:${COLORS.blue};border-color:${COLORS.blue}}.btn-outline{background:transparent}.card{background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:12px;padding:16px}.filter-bar{display:flex;justify-content:space-between;align-items:flex-end;gap:18px}.filters{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:12px;flex:1}label span{font-size:12px;color:rgba(255,255,255,.65);display:block;margin-bottom:6px}.filter-field{display:grid;grid-template-columns:1fr 120px;gap:8px}select{height:56px;width:100%;background:${COLORS.surface};color:#fff;border:1px solid ${COLORS.border};border-radius:999px;padding:0 20px;font-size:14px}.mode{padding:0 10px}.filter-right{display:flex;align-items:center;gap:14px}.filter-right p{font-size:14px;white-space:nowrap}.error{margin-top:10px;color:${COLORS.red}}.kpi-grid{margin-top:14px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.kpi .muted,.muted{font-size:12px;color:rgba(255,255,255,.55)}.kpi h3{margin:8px 0 7px;font-size:22px;font-weight:500}.mono{font-family:'DM Mono',monospace}.small{font-size:12px}.neg{color:${COLORS.red}}.pos{color:${COLORS.green}}.neutral{color:${COLORS.gray}}.divider{border-top:1px solid ${COLORS.border};margin:18px 0}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}.sub,.section-sub{font-size:13px;margin-bottom:12px;color:rgba(255,255,255,.6)}.section-title{margin:0}.chart-wrap{position:relative}.h220{height:220px}.h240{height:240px}.h320{height:320px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:rgba(255,255,255,.7)}.legend i{width:10px;height:10px;display:inline-block;border-radius:2px;margin-right:6px;vertical-align:middle}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-top:1px solid ${COLORS.border};white-space:nowrap}th{border-top:0;color:rgba(255,255,255,.55);font-size:12px;font-weight:500}.active-row td{background:rgba(55,138,221,.12)!important}.tint-red td{background:rgba(226,75,74,.05)}.badge-red{background:#FCEBEB;color:#A32D2D;border-radius:999px;font-size:12px;padding:3px 8px;font-weight:600}.mini-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}.mini h4{margin:8px 0 0;font-size:20px;font-weight:500}.info-box{margin-top:12px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:10px;padding:10px}.foot-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.52)}
       @media (max-width:1120px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.mini-kpis{grid-template-columns:1fr 1fr}.btn,.filter-right p,select,label span{font-size:14px}h1{font-size:36px}}
-      @media (max-width:840px){.header{flex-direction:column;align-items:flex-start}.filter-bar{flex-direction:column;align-items:stretch}.filters{grid-template-columns:1fr}.filter-right{justify-content:space-between}.two-col,.kpi-grid,.mini-kpis{grid-template-columns:1fr}.btn{height:44px;padding:0 16px;font-size:16px}select{font-size:16px;height:44px}.filter-right p{font-size:14px}label span{font-size:14px}}
+      @media (max-width:840px){.header{flex-direction:column;align-items:flex-start}.filter-bar{flex-direction:column;align-items:stretch}.filters{grid-template-columns:1fr}.filter-field{grid-template-columns:1fr}.filter-right{justify-content:space-between}.two-col,.kpi-grid,.mini-kpis{grid-template-columns:1fr}.btn{height:44px;padding:0 16px;font-size:16px}select{font-size:16px;height:44px}.filter-right p{font-size:14px}label span{font-size:14px}}
       `}</style>
       <style jsx global>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&display=swap');`}</style>
     </main>
