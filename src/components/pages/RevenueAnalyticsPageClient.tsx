@@ -76,6 +76,66 @@ const money0 = (n: number, symbol = "$") => money(n, 0, symbol);
 const pct = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "—" : `${(n * 100).toFixed(1)}%`);
 const axisYk = (value: number) => `${value < 0 ? "-" : ""}$${Math.round(Math.abs(value) / 1000)}k`;
 
+function MultiFilter({
+  label,
+  options,
+  selected,
+  setSelected,
+  mode,
+  setMode,
+}: {
+  label: string;
+  options: string[];
+  selected: string[];
+  setSelected: (v: string[]) => void;
+  mode: "include" | "exclude";
+  setMode: (v: "include" | "exclude") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const allSelected = selected.length === 0 || selected.length === options.length;
+  return (
+    <div className="multi-filter">
+      <span>{label}</span>
+      <button className="multi-trigger" type="button" onClick={() => setOpen((s) => !s)}>
+        {selected.length === 0 ? "All" : `${selected.length} selected`} · {mode === "include" ? "Include" : "Exclude"}
+      </button>
+      {open ? (
+        <div className="multi-menu">
+          <div className="menu-row">
+            <strong>Mode</strong>
+            <select value={mode} onChange={(e) => setMode(e.target.value as "include" | "exclude")} className="mode">
+              <option value="include">Include checked</option>
+              <option value="exclude">Exclude checked</option>
+            </select>
+          </div>
+          <label className="menu-check">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={() => setSelected(allSelected ? [] : options)}
+            />
+            Select all
+          </label>
+          <div className="menu-list">
+            {options.map((opt) => (
+              <label key={opt} className="menu-check">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(opt)}
+                  onChange={() =>
+                    setSelected(selected.includes(opt) ? selected.filter((x) => x !== opt) : [...selected, opt])
+                  }
+                />
+                {opt}
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function RevenueAnalyticsPageClient() {
   const growthRef = useRef<HTMLCanvasElement | null>(null);
   const waterfallRef = useRef<HTMLCanvasElement | null>(null);
@@ -85,9 +145,9 @@ export default function RevenueAnalyticsPageClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [month, setMonth] = useState("ALL");
-  const [company, setCompany] = useState("ALL");
-  const [source, setSource] = useState("ALL");
+  const [months, setMonths] = useState<string[]>([]);
+  const [companies, setCompanies] = useState<string[]>([]);
+  const [sources, setSources] = useState<string[]>([]);
   const [monthMode, setMonthMode] = useState<"include" | "exclude">("include");
   const [companyMode, setCompanyMode] = useState<"include" | "exclude">("include");
   const [sourceMode, setSourceMode] = useState<"include" | "exclude">("include");
@@ -100,9 +160,9 @@ export default function RevenueAnalyticsPageClient() {
     setError("");
     try {
       const params = new URLSearchParams();
-      if (month !== "ALL") params.set("months", month);
-      if (company !== "ALL") params.set("companies", company);
-      if (source !== "ALL") params.set("sources", source);
+      if (months.length) params.set("months", months.join(","));
+      if (companies.length) params.set("companies", companies.join(","));
+      if (sources.length) params.set("sources", sources.join(","));
       params.set("months_mode", monthMode);
       params.set("companies_mode", companyMode);
       params.set("sources_mode", sourceMode);
@@ -348,33 +408,9 @@ export default function RevenueAnalyticsPageClient() {
 
         <section className="card filter-bar">
           <div className="filters">
-            <label>
-              <span>Month</span>
-              <div className="filter-field">
-                <select value={month} onChange={(e) => setMonth(e.target.value)}><option value="ALL">All</option>{data?.filters.months.map((m) => <option key={m} value={m}>{m}</option>)}</select>
-                <select value={monthMode} onChange={(e) => setMonthMode(e.target.value as "include" | "exclude")} className="mode">
-                  <option value="include">Include</option><option value="exclude">Exclude</option>
-                </select>
-              </div>
-            </label>
-            <label>
-              <span>Company</span>
-              <div className="filter-field">
-                <select value={company} onChange={(e) => setCompany(e.target.value)}><option value="ALL">All</option>{data?.filters.companies.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                <select value={companyMode} onChange={(e) => setCompanyMode(e.target.value as "include" | "exclude")} className="mode">
-                  <option value="include">Include</option><option value="exclude">Exclude</option>
-                </select>
-              </div>
-            </label>
-            <label>
-              <span>Source</span>
-              <div className="filter-field">
-                <select value={source} onChange={(e) => setSource(e.target.value)}><option value="ALL">All</option>{data?.filters.sources.map((s) => <option key={s} value={s}>{s}</option>)}</select>
-                <select value={sourceMode} onChange={(e) => setSourceMode(e.target.value as "include" | "exclude")} className="mode">
-                  <option value="include">Include</option><option value="exclude">Exclude</option>
-                </select>
-              </div>
-            </label>
+            <MultiFilter label="Month" options={data?.filters.months ?? []} selected={months} setSelected={setMonths} mode={monthMode} setMode={setMonthMode} />
+            <MultiFilter label="Company" options={data?.filters.companies ?? []} selected={companies} setSelected={setCompanies} mode={companyMode} setMode={setCompanyMode} />
+            <MultiFilter label="Source" options={data?.filters.sources ?? []} selected={sources} setSelected={setSources} mode={sourceMode} setMode={setSourceMode} />
           </div>
           <div className="filter-right">
             <p>{data ? `${data.filteredCount} rows filtered (from ${data.rawCount})` : "Loading..."}</p>
@@ -451,9 +487,9 @@ export default function RevenueAnalyticsPageClient() {
       </div>
 
       <style jsx>{`
-      .page{background:${COLORS.bg};color:#e6e9ef;min-height:100vh;font-family:'DM Sans',sans-serif}.container{max-width:1320px;margin:0 auto;padding:28px 20px 44px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}h1{font-size:48px;margin:0;font-weight:700}h2{margin:0 0 4px;font-size:20px}p{margin:0;color:rgba(255,255,255,.7)}.actions{display:flex;gap:10px;align-items:center}.btn{height:56px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:0 24px;text-decoration:none;border:1px solid ${COLORS.border};color:#fff;background:transparent;cursor:pointer;font-size:14px}.btn-solid{background:${COLORS.blue};border-color:${COLORS.blue}}.btn-outline{background:transparent}.card{background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:12px;padding:16px}.filter-bar{display:flex;justify-content:space-between;align-items:flex-end;gap:18px}.filters{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:12px;flex:1}label span{font-size:12px;color:rgba(255,255,255,.65);display:block;margin-bottom:6px}.filter-field{display:grid;grid-template-columns:1fr 120px;gap:8px}select{height:56px;width:100%;background:${COLORS.surface};color:#fff;border:1px solid ${COLORS.border};border-radius:999px;padding:0 20px;font-size:14px}.mode{padding:0 10px}.filter-right{display:flex;align-items:center;gap:14px}.filter-right p{font-size:14px;white-space:nowrap}.error{margin-top:10px;color:${COLORS.red}}.kpi-grid{margin-top:14px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.kpi .muted,.muted{font-size:12px;color:rgba(255,255,255,.55)}.kpi h3{margin:8px 0 7px;font-size:22px;font-weight:500}.mono{font-family:'DM Mono',monospace}.small{font-size:12px}.neg{color:${COLORS.red}}.pos{color:${COLORS.green}}.neutral{color:${COLORS.gray}}.divider{border-top:1px solid ${COLORS.border};margin:18px 0}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}.sub,.section-sub{font-size:13px;margin-bottom:12px;color:rgba(255,255,255,.6)}.section-title{margin:0}.chart-wrap{position:relative}.h220{height:220px}.h240{height:240px}.h320{height:320px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:rgba(255,255,255,.7)}.legend i{width:10px;height:10px;display:inline-block;border-radius:2px;margin-right:6px;vertical-align:middle}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-top:1px solid ${COLORS.border};white-space:nowrap}th{border-top:0;color:rgba(255,255,255,.55);font-size:12px;font-weight:500}.active-row td{background:rgba(55,138,221,.12)!important}.tint-red td{background:rgba(226,75,74,.05)}.badge-red{background:#FCEBEB;color:#A32D2D;border-radius:999px;font-size:12px;padding:3px 8px;font-weight:600}.mini-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}.mini h4{margin:8px 0 0;font-size:20px;font-weight:500}.info-box{margin-top:12px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:10px;padding:10px}.foot-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.52)}
+      .page{background:${COLORS.bg};color:#e6e9ef;min-height:100vh;font-family:'DM Sans',sans-serif}.container{max-width:1320px;margin:0 auto;padding:28px 20px 44px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}h1{font-size:48px;margin:0;font-weight:700}h2{margin:0 0 4px;font-size:20px}p{margin:0;color:rgba(255,255,255,.7)}.actions{display:flex;gap:10px;align-items:center}.btn{height:56px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:0 24px;text-decoration:none;border:1px solid ${COLORS.border};color:#fff;background:transparent;cursor:pointer;font-size:14px}.btn-solid{background:${COLORS.blue};border-color:${COLORS.blue}}.btn-outline{background:transparent}.card{background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:12px;padding:16px}.filter-bar{display:flex;justify-content:space-between;align-items:flex-end;gap:18px}.filters{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;flex:1}.multi-filter{position:relative}.multi-filter span{font-size:12px;color:rgba(255,255,255,.65);display:block;margin-bottom:6px}.multi-trigger{height:56px;width:100%;text-align:left;background:${COLORS.surface};color:#fff;border:1px solid ${COLORS.border};border-radius:999px;padding:0 18px;font-size:14px}.multi-menu{position:absolute;z-index:25;left:0;right:0;top:66px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:12px;padding:10px}.menu-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}.menu-list{max-height:180px;overflow:auto;padding-right:4px}.menu-check{display:flex;gap:8px;align-items:center;font-size:13px;color:#e6e9ef;padding:4px 0}.menu-check input{accent-color:${COLORS.blue}}select{height:40px;width:100%;background:${COLORS.surface};color:#fff;border:1px solid ${COLORS.border};border-radius:10px;padding:0 10px;font-size:13px}.mode{max-width:170px}.filter-right{display:flex;align-items:center;gap:14px}.filter-right p{font-size:14px;white-space:nowrap}.error{margin-top:10px;color:${COLORS.red}}.kpi-grid{margin-top:14px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.kpi .muted,.muted{font-size:12px;color:rgba(255,255,255,.55)}.kpi h3{margin:8px 0 7px;font-size:22px;font-weight:500}.mono{font-family:'DM Mono',monospace}.small{font-size:12px}.neg{color:${COLORS.red}}.pos{color:${COLORS.green}}.neutral{color:${COLORS.gray}}.divider{border-top:1px solid ${COLORS.border};margin:18px 0}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}.sub,.section-sub{font-size:13px;margin-bottom:12px;color:rgba(255,255,255,.6)}.section-title{margin:0}.chart-wrap{position:relative}.h220{height:220px}.h240{height:240px}.h320{height:320px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:rgba(255,255,255,.7)}.legend i{width:10px;height:10px;display:inline-block;border-radius:2px;margin-right:6px;vertical-align:middle}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-top:1px solid ${COLORS.border};white-space:nowrap}th{border-top:0;color:rgba(255,255,255,.55);font-size:12px;font-weight:500}.active-row td{background:rgba(55,138,221,.12)!important}.tint-red td{background:rgba(226,75,74,.05)}.badge-red{background:#FCEBEB;color:#A32D2D;border-radius:999px;font-size:12px;padding:3px 8px;font-weight:600}.mini-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}.mini h4{margin:8px 0 0;font-size:20px;font-weight:500}.info-box{margin-top:12px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:10px;padding:10px}.foot-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.52)}
       @media (max-width:1120px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.mini-kpis{grid-template-columns:1fr 1fr}.btn,.filter-right p,select,label span{font-size:14px}h1{font-size:36px}}
-      @media (max-width:840px){.header{flex-direction:column;align-items:flex-start}.filter-bar{flex-direction:column;align-items:stretch}.filters{grid-template-columns:1fr}.filter-field{grid-template-columns:1fr}.filter-right{justify-content:space-between}.two-col,.kpi-grid,.mini-kpis{grid-template-columns:1fr}.btn{height:44px;padding:0 16px;font-size:16px}select{font-size:16px;height:44px}.filter-right p{font-size:14px}label span{font-size:14px}}
+      @media (max-width:840px){.header{flex-direction:column;align-items:flex-start}.filter-bar{flex-direction:column;align-items:stretch}.filters{grid-template-columns:1fr}.filter-right{justify-content:space-between}.two-col,.kpi-grid,.mini-kpis{grid-template-columns:1fr}.btn{height:44px;padding:0 16px;font-size:16px}select{font-size:16px;height:44px}.filter-right p{font-size:14px}label span{font-size:14px}}
       `}</style>
       <style jsx global>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&display=swap');`}</style>
     </main>
