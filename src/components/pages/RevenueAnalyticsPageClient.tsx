@@ -299,6 +299,30 @@ export default function RevenueAnalyticsPageClient() {
       )
       .sort((a, b) => a.delta - b.delta);
   }, [data, latestMonth, selectedDetail]);
+  const expansionCustomers = useMemo(() => {
+    if (selectedDetail) {
+      return selectedDetail.expansionCustomers
+        .map((c) => ({ customer: c.customer, prev: c.prevMonthRevenue, current: c.currentMonthRevenue, delta: c.delta }))
+        .sort((a, b) => b.delta - a.delta);
+    }
+    if (!data || !latestMonth) return [] as Array<{ customer: string; prev: number; current: number; delta: number }>;
+    return data.churnDetails
+      .filter((r) => r.month === latestMonth)
+      .flatMap((r) => r.expansionCustomers.map((c) => ({ customer: c.customer, prev: c.prevMonthRevenue, current: c.currentMonthRevenue, delta: c.delta })))
+      .sort((a, b) => b.delta - a.delta);
+  }, [data, latestMonth, selectedDetail]);
+  const addedCustomers = useMemo(() => {
+    if (selectedDetail) {
+      return selectedDetail.addedCustomers
+        .map((c) => ({ customer: c.customer, revenue: c.currentMonthRevenue }))
+        .sort((a, b) => b.revenue - a.revenue);
+    }
+    if (!data || !latestMonth) return [] as Array<{ customer: string; revenue: number }>;
+    return data.churnDetails
+      .filter((r) => r.month === latestMonth)
+      .flatMap((r) => r.addedCustomers.map((c) => ({ customer: c.customer, revenue: c.currentMonthRevenue })))
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [data, latestMonth, selectedDetail]);
 
   useEffect(() => {
     if (!data || !growthRef.current || !waterfallRef.current || !teamRef.current || !metrics) return;
@@ -519,8 +543,76 @@ export default function RevenueAnalyticsPageClient() {
             <div className="divider" /><section><article className="card"><h2>Revenue waterfall — {selectedDetail?.prevMonth ?? "Prev"} → {selectedDetail?.month ?? latestMonth ?? "Current"}</h2><p className="sub">Visualizes how starting revenue flowed into ending revenue via churn, contraction, and expansion</p><div className="chart-wrap h240"><canvas ref={waterfallRef} /></div><div className="legend"><span><i style={{ background: COLORS.blue }} />Starting / ending revenue</span><span><i style={{ background: COLORS.red }} />Negative impact</span><span><i style={{ background: COLORS.green }} />Positive impact</span></div></article></section>
 
             <div className="divider" />
-            <section className="two-col"><article className="card"><h2>Lost customers (previous month only)</h2><p className="sub">Compared period: {selectedDetail?.prevMonth ?? "previous"} → {selectedDetail?.month ?? latestMonth ?? "current"}</p><div className="table-wrap"><table><thead><tr><th>Customer</th><th>Lost revenue</th><th>% of total loss</th></tr></thead><tbody>{lostCustomers.map((c) => <tr key={c.customer}><td>{c.customer}</td><td className="neg">{money(c.revenue, 2, symbol)}</td><td className="neutral">{analysisSummary.lost ? `${((c.revenue / analysisSummary.lost) * 100).toFixed(1)}%` : "0%"}</td></tr>)}</tbody></table></div></article>
-            <article className="card"><h2>Existing customers — revenue contraction</h2><p className="sub">Present in both selected months — decreases in current period</p><div className="table-wrap"><table><thead><tr><th>Customer</th><th>{selectedDetail?.prevMonth ?? "Prev"}</th><th>{selectedDetail?.month ?? "Current"}</th><th>Δ</th></tr></thead><tbody>{contractionCustomers.map((c) => <tr key={c.customer}><td>{c.customer}</td><td>{money(c.mar, 2, symbol)}</td><td>{money(c.apr, 2, symbol)}</td><td className="neg">{money(c.delta, 2, symbol)}</td></tr>)}</tbody></table></div><div className="info-box"><p>{analysisSummary.expansion > 0 ? "Existing customer revenue increases found" : "No existing customer revenue increases this period"}</p><p className="mono">Expansion revenue: {money(analysisSummary.expansion, 2, symbol)}</p></div></article></section>
+            <section className="two-col">
+              <article className="card">
+                <h2>Lost customers (previous month only)</h2>
+                <p className="sub">Compared period: {selectedDetail?.prevMonth ?? "previous"} → {selectedDetail?.month ?? latestMonth ?? "current"}</p>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Customer</th><th>Lost revenue</th><th>% of total loss</th></tr></thead>
+                    <tbody>
+                      {lostCustomers.map((c) => (
+                        <tr key={c.customer}>
+                          <td>{c.customer}</td>
+                          <td className="neg">{money(c.revenue, 2, symbol)}</td>
+                          <td className="neutral">{analysisSummary.lost ? `${((c.revenue / analysisSummary.lost) * 100).toFixed(1)}%` : "0%"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="card">
+                <h2>Existing customers — revenue contraction</h2>
+                <p className="sub">Present in both selected months — decreases in current period</p>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Customer</th><th>{selectedDetail?.prevMonth ?? "Prev"}</th><th>{selectedDetail?.month ?? "Current"}</th><th>Δ</th></tr></thead>
+                    <tbody>
+                      {contractionCustomers.map((c) => (
+                        <tr key={c.customer}>
+                          <td>{c.customer}</td><td>{money(c.mar, 2, symbol)}</td><td>{money(c.apr, 2, symbol)}</td><td className="neg">{money(c.delta, 2, symbol)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <h3 className="subhead">Existing customers — revenue increases</h3>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Customer</th><th>{selectedDetail?.prevMonth ?? "Prev"}</th><th>{selectedDetail?.month ?? "Current"}</th><th>Δ</th></tr></thead>
+                    <tbody>
+                      {expansionCustomers.length ? expansionCustomers.map((c) => (
+                        <tr key={`exp-${c.customer}`}>
+                          <td>{c.customer}</td><td>{money(c.prev, 2, symbol)}</td><td>{money(c.current, 2, symbol)}</td><td className="pos">{money(c.delta, 2, symbol)}</td>
+                        </tr>
+                      )) : <tr><td colSpan={4} className="neutral">No existing customer revenue increases this period.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+
+                <h3 className="subhead">New customers added — revenue detail</h3>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Customer</th><th>Added revenue</th><th>% of total added</th></tr></thead>
+                    <tbody>
+                      {addedCustomers.length ? addedCustomers.map((c) => (
+                        <tr key={`add-${c.customer}`}>
+                          <td>{c.customer}</td><td className="pos">{money(c.revenue, 2, symbol)}</td><td className="neutral">{analysisSummary.added ? `${((c.revenue / analysisSummary.added) * 100).toFixed(1)}%` : "0%"}</td>
+                        </tr>
+                      )) : <tr><td colSpan={3} className="neutral">No newly added customers in this selected period.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="info-box">
+                  <p>{analysisSummary.expansion > 0 ? "Existing customer revenue increases found" : "No existing customer revenue increases this period"}</p>
+                  <p className="mono">Expansion revenue: {money(analysisSummary.expansion, 2, symbol)}</p>
+                </div>
+              </article>
+            </section>
 
             <div className="divider" /><section><h2 className="section-title">Team revenue distribution</h2><p className="section-sub">Top customers by total revenue (filtered period)</p><article className="card"><div className="chart-wrap h320"><canvas ref={teamRef} /></div><p className="foot-note">Note: No &apos;Customer&apos; column in source data — using Team as customer label.</p></article></section>
           </>
@@ -528,7 +620,7 @@ export default function RevenueAnalyticsPageClient() {
       </div>
 
       <style jsx>{`
-      .page{background:${COLORS.bg};color:#e6e9ef;min-height:100vh;font-family:'DM Sans',sans-serif}.container{max-width:1320px;margin:0 auto;padding:28px 20px 44px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}h1{font-size:48px;margin:0;font-weight:700}h2{margin:0 0 4px;font-size:20px}p{margin:0;color:rgba(255,255,255,.7)}.actions{display:flex;gap:10px;align-items:center}.btn{height:56px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;padding:0 24px;text-decoration:none;border:1px solid ${COLORS.border};color:#fff;background:transparent;cursor:pointer;font-size:14px}.btn-solid{background:#185FA5;border-color:#185FA5;color:#B5D4F4}.btn-outline{background:transparent}.card{background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:12px;padding:16px}.multi-filter{position:relative;min-width:210px}.multi-trigger > span:first-child{overflow:hidden;text-overflow:ellipsis}.chev{opacity:.7;color:#6ea4df}.menu-top{display:grid;grid-template-columns:1fr 140px;gap:10px;margin-bottom:8px}.search{height:38px;width:100%;background:#0e1322;color:#f0f4f9;border:.5px solid rgba(255,255,255,.12);border-radius:10px;padding:0 12px}.mode{height:44px;background:#02071b;color:#fff;border:.5px solid rgba(255,255,255,.15);border-radius:16px;padding:0 14px}.menu-actions{display:flex;gap:8px;margin-bottom:8px}.mini-btn{height:34px;border:.5px solid rgba(255,255,255,.12);background:#1b2238;color:#fff;border-radius:10px;padding:0 12px;font-size:12px}.tip{font-size:13px;color:#9ca8bb;margin:8px 2px}.menu-list{max-height:190px;overflow:auto;padding-right:4px;border-top:.5px solid rgba(255,255,255,.1);padding-top:8px}.menu-divider{display:none}.menu-check{display:flex;gap:10px;align-items:center;font-size:13px;color:#e6e9ef;padding:7px 4px;border-radius:6px}.menu-check:hover{background:rgba(255,255,255,.05)}.menu-check input{accent-color:${COLORS.blue};width:20px;height:20px}.done-btn{width:100%;height:52px;margin-top:10px;border:.5px solid rgba(255,255,255,.12);background:#111a34;color:#fff;border-radius:16px;font-size:16px}.mode-head{font-size:12px;color:#9ba3b5;margin:2px 0 6px}.mode-radio{display:flex;gap:8px;margin-bottom:8px}.mode-radio label{display:flex;align-items:center;gap:6px;border:.5px solid rgba(255,255,255,.14);padding:6px 10px;border-radius:999px;background:#181d2d;color:#cbd5e6;font-size:12px}.mode-radio input{accent-color:#378ADD}.panel-actions{position:sticky;bottom:0;background:#10131f;display:flex;gap:8px;margin-top:10px;padding-top:8px;border-top:.5px solid rgba(255,255,255,.1)}.apply-mini{background:#2d67c6}.error{margin-top:10px;color:${COLORS.red}}.kpi-grid{margin-top:14px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.kpi .muted,.muted{font-size:12px;color:rgba(255,255,255,.55)}.kpi h3{margin:8px 0 7px;font-size:22px;font-weight:500}.mono{font-family:'DM Mono',monospace}.small{font-size:12px}.neg{color:${COLORS.red}}.pos{color:${COLORS.green}}.neutral{color:${COLORS.gray}}.divider{border-top:1px solid ${COLORS.border};margin:18px 0}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}.sub,.section-sub{font-size:13px;margin-bottom:12px;color:rgba(255,255,255,.6)}.section-title{margin:0}.chart-wrap{position:relative}.h220{height:220px}.h240{height:240px}.h320{height:320px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:rgba(255,255,255,.7)}.legend i{width:10px;height:10px;display:inline-block;border-radius:2px;margin-right:6px;vertical-align:middle}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-top:1px solid ${COLORS.border};white-space:nowrap}th{border-top:0;color:rgba(255,255,255,.55);font-size:12px;font-weight:500}.active-row td{background:rgba(55,138,221,.12)!important}.tint-red td{background:rgba(226,75,74,.05)}.badge-red{background:#FCEBEB;color:#A32D2D;border-radius:999px;font-size:12px;padding:3px 8px;font-weight:600}.mini-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}.mini h4{margin:8px 0 0;font-size:20px;font-weight:500}.info-box{margin-top:12px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:10px;padding:10px}.foot-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.52)}
+      .page{background:${COLORS.bg};color:#e6e9ef;min-height:100vh;font-family:'DM Sans',sans-serif}.container{max-width:1320px;margin:0 auto;padding:28px 20px 44px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}h1{font-size:48px;margin:0;font-weight:700}h2{margin:0 0 4px;font-size:20px}p{margin:0;color:rgba(255,255,255,.7)}.actions{display:flex;gap:10px;align-items:center}.btn{height:56px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;padding:0 24px;text-decoration:none;border:1px solid ${COLORS.border};color:#fff;background:transparent;cursor:pointer;font-size:14px}.btn-solid{background:#185FA5;border-color:#185FA5;color:#B5D4F4}.btn-outline{background:transparent}.card{background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:12px;padding:16px}.multi-filter{position:relative;min-width:210px}.multi-trigger > span:first-child{overflow:hidden;text-overflow:ellipsis}.chev{opacity:.7;color:#6ea4df}.menu-top{display:grid;grid-template-columns:1fr 140px;gap:10px;margin-bottom:8px}.search{height:38px;width:100%;background:#0e1322;color:#f0f4f9;border:.5px solid rgba(255,255,255,.12);border-radius:10px;padding:0 12px}.mode{height:44px;background:#02071b;color:#fff;border:.5px solid rgba(255,255,255,.15);border-radius:16px;padding:0 14px}.menu-actions{display:flex;gap:8px;margin-bottom:8px}.mini-btn{height:34px;border:.5px solid rgba(255,255,255,.12);background:#1b2238;color:#fff;border-radius:10px;padding:0 12px;font-size:12px}.tip{font-size:13px;color:#9ca8bb;margin:8px 2px}.menu-list{max-height:190px;overflow:auto;padding-right:4px;border-top:.5px solid rgba(255,255,255,.1);padding-top:8px}.menu-divider{display:none}.menu-check{display:flex;gap:10px;align-items:center;font-size:13px;color:#e6e9ef;padding:7px 4px;border-radius:6px}.menu-check:hover{background:rgba(255,255,255,.05)}.menu-check input{accent-color:${COLORS.blue};width:20px;height:20px}.done-btn{width:100%;height:52px;margin-top:10px;border:.5px solid rgba(255,255,255,.12);background:#111a34;color:#fff;border-radius:16px;font-size:16px}.mode-head{font-size:12px;color:#9ba3b5;margin:2px 0 6px}.mode-radio{display:flex;gap:8px;margin-bottom:8px}.mode-radio label{display:flex;align-items:center;gap:6px;border:.5px solid rgba(255,255,255,.14);padding:6px 10px;border-radius:999px;background:#181d2d;color:#cbd5e6;font-size:12px}.mode-radio input{accent-color:#378ADD}.panel-actions{position:sticky;bottom:0;background:#10131f;display:flex;gap:8px;margin-top:10px;padding-top:8px;border-top:.5px solid rgba(255,255,255,.1)}.apply-mini{background:#2d67c6}.error{margin-top:10px;color:${COLORS.red}}.kpi-grid{margin-top:14px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.kpi .muted,.muted{font-size:12px;color:rgba(255,255,255,.55)}.kpi h3{margin:8px 0 7px;font-size:22px;font-weight:500}.mono{font-family:'DM Mono',monospace}.small{font-size:12px}.neg{color:${COLORS.red}}.pos{color:${COLORS.green}}.neutral{color:${COLORS.gray}}.divider{border-top:1px solid ${COLORS.border};margin:18px 0}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}.sub,.section-sub{font-size:13px;margin-bottom:12px;color:rgba(255,255,255,.6)}.subhead{margin:14px 0 8px;font-size:14px;color:rgba(255,255,255,.82)}.section-title{margin:0}.chart-wrap{position:relative}.h220{height:220px}.h240{height:240px}.h320{height:320px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:rgba(255,255,255,.7)}.legend i{width:10px;height:10px;display:inline-block;border-radius:2px;margin-right:6px;vertical-align:middle}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-top:1px solid ${COLORS.border};white-space:nowrap}th{border-top:0;color:rgba(255,255,255,.55);font-size:12px;font-weight:500}.active-row td{background:rgba(55,138,221,.12)!important}.tint-red td{background:rgba(226,75,74,.05)}.badge-red{background:#FCEBEB;color:#A32D2D;border-radius:999px;font-size:12px;padding:3px 8px;font-weight:600}.mini-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}.mini h4{margin:8px 0 0;font-size:20px;font-weight:500}.info-box{margin-top:12px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:10px;padding:10px}.foot-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.52)}
       @media (max-width:1120px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.mini-kpis{grid-template-columns:1fr 1fr}.btn,.filter-right p,select,label span{font-size:14px}h1{font-size:36px}}
       @media (max-width:840px){.header{flex-direction:column;align-items:flex-start}.two-col,.kpi-grid,.mini-kpis{grid-template-columns:1fr}.btn{height:42px;padding:0 14px;font-size:14px}.done-btn{font-size:16px;height:42px}}
       `}</style>
