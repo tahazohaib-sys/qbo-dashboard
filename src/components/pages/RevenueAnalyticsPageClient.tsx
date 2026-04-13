@@ -111,7 +111,7 @@ function MultiFilter({
   const summary = `${selected.length} selected`;
 
   return (
-    <div className="relative">
+    <div className="multi-filter relative">
       <button
         className="h-11 min-w-[210px] max-w-[240px] px-4 rounded-2xl border border-white/10 bg-white/5 text-sm text-slate-100 hover:bg-white/10 transition flex items-center justify-between whitespace-nowrap"
         type="button"
