@@ -1,835 +1,630 @@
 "use client";
 
 import Link from "next/link";
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-  BarChart,
-  Bar,
-} from "recharts";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type ApiResp =
-  | {
-      ok: true;
-      currencySymbol: string;
-      filters: { months: string[]; companies: string[]; sources: string[] };
-      selected: {
-        months: string[];
-        companies: string[];
-        sources: string[];
-        months_mode: "include" | "exclude";
-        companies_mode: "include" | "exclude";
-        sources_mode: "include" | "exclude";
-      };
-      rawCount: number;
-      filteredCount: number;
+type ChartCtor = new (
+  item: HTMLCanvasElement,
+  config: Record<string, unknown>
+) => { destroy: () => void };
 
-      monthTotals: Array<{ month: string; totalRevenue: number }>;
-      growthSeries: Array<Record<string, any>>;
-      growthTable: Array<{
-        month: string;
-        company: string;
-        revenue: number;
-        prevRevenue: number;
-        change: number;
-        changePct: number;
-        totalRevenue: number;
-        prevTotalRevenue: number;
-        totalChange: number;
-        totalChangePct: number;
-      }>;
-      churnVsGrowth: Array<{
-        company: string;
-        month: string;
-        prevMonth: string | null;
-        prevTotal: number;
-        currentTotal: number;
-        lostRevenue: number;
-        addedRevenue: number;
-        expansionRevenue: number;
-        contractionRevenue: number;
-        existingCustomerDelta: number;
-        netRevenueDelta: number;
-        churnRate: number;
-        growthRate: number;
-      }>;
-      churnDetails: Array<{
-        company: string;
-        month: string;
-        prevMonth: string | null;
-        prevTotal: number;
-        currentTotal: number;
-        lostRevenue: number;
-        addedRevenue: number;
-        expansionRevenue: number;
-        contractionRevenue: number;
-        existingCustomerDelta: number;
-        netRevenueDelta: number;
-        churnRate: number;
-        growthRate: number;
-        lostCustomers: Array<{ customer: string; lastMonthRevenue: number }>;
-        addedCustomers: Array<{ customer: string; currentMonthRevenue: number }>;
-        expansionCustomers: Array<{ customer: string; prevMonthRevenue: number; currentMonthRevenue: number; delta: number }>;
-        contractionCustomers: Array<{ customer: string; prevMonthRevenue: number; currentMonthRevenue: number; delta: number }>;
-      }>;
-      teamRevenue: Array<{ team: string; revenue: number }>;
-    }
-  | { ok: false; error: string };
+type Filters = { months: string[]; companies: string[]; sources: string[] };
+type GrowthSeriesRow = { month: string; totalRevenue: number; [key: string]: string | number };
+type GrowthTableRow = {
+  month: string;
+  company: string;
+  revenue: number;
+  change: number;
+  changePct: number;
+  totalRevenue: number;
+};
+type ChurnRow = {
+  company: string;
+  month: string;
+  prevMonth?: string | null;
+  prevTotal: number;
+  currentTotal: number;
+  lostRevenue: number;
+  addedRevenue: number;
+  expansionRevenue: number;
+  contractionRevenue: number;
+  existingCustomerDelta: number;
+  netRevenueDelta: number;
+  churnRate: number;
+  growthRate: number;
+};
+type ChurnDetail = ChurnRow & {
+  lostCustomers: Array<{ customer: string; lastMonthRevenue: number }>;
+  addedCustomers: Array<{ customer: string; currentMonthRevenue: number }>;
+  contractionCustomers: Array<{ customer: string; prevMonthRevenue: number; currentMonthRevenue: number; delta: number }>;
+  expansionCustomers: Array<{ customer: string; prevMonthRevenue: number; currentMonthRevenue: number; delta: number }>;
+};
+type ApiResp = {
+  ok: boolean;
+  currencySymbol: string;
+  rawCount: number;
+  filteredCount: number;
+  filters: Filters;
+  growthSeries: GrowthSeriesRow[];
+  growthTable: GrowthTableRow[];
+  churnVsGrowth: ChurnRow[];
+  churnDetails: ChurnDetail[];
+  teamRevenue: Array<{ team: string; revenue: number }>;
+  monthTotals: Array<{ month: string; totalRevenue: number }>;
+  error?: string;
+};
 
-function fmtMoney(n: number, symbol: string) {
-  const sign = n < 0 ? "-" : "";
-  const abs = Math.abs(n);
-  return `${sign}${symbol}${new Intl.NumberFormat("en", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(abs)}`;
-}
+const COLORS = {
+  bg: "#0f1117",
+  card: "#1a1d27",
+  surface: "#232636",
+  blue: "#378ADD",
+  green: "#639922",
+  red: "#E24B4A",
+  gray: "#888780",
+  border: "rgba(255,255,255,0.07)",
+  grid: "rgba(255,255,255,0.07)",
+  tick: "rgba(255,255,255,0.45)",
+};
+const DEFAULT_MONTH_OPTIONS = ["2025/06", "2025/07", "2025/08", "2025/09", "2025/10", "2025/11", "2025/12", "2026/01", "2026/02", "2026/03", "2026/04"];
+const DEFAULT_COMPANY_OPTIONS = ["Burac AI", "RTC League", "Stratager AI"];
+const DEFAULT_SOURCE_OPTIONS = ["Agency", "Asif", "Direct", "khubaib", "Nasir", "Aslam", "Saad", "Usman"];
 
-function fmtPct(n: number) {
-  if (!Number.isFinite(n)) return "0.0%";
-  return `${(n * 100).toFixed(1)}%`;
-}
+const money = (n: number, decimals = 2, symbol = "$") =>
+  `${n < 0 ? "-" : ""}${symbol}${Math.abs(n).toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })}`;
+const money0 = (n: number, symbol = "$") => money(n, 0, symbol);
+const pct = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "—" : `${(n * 100).toFixed(1)}%`);
+const axisYk = (value: number) => `${value < 0 ? "-" : ""}$${Math.round(Math.abs(value) / 1000)}k`;
 
-const AXIS_TICK = { fill: "#e2e8f0", fontSize: 12, fontWeight: 600 } as const;
-const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
-const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
-const GRID = { strokeDasharray: "3 3", opacity: 0.22 } as const;
-
-function classDelta(n: number) {
-  return n > 0 ? "text-emerald-300" : n < 0 ? "text-rose-300" : "text-slate-200";
-}
-
-function MoneyTooltip({ active, payload, label, symbol }: any) {
-  if (!active || !payload || !payload.length) return null;
-  return (
-    <div className="rounded-xl border border-white/10 bg-black/80 px-3 py-2 text-xs text-slate-100">
-      <div className="font-semibold">{label}</div>
-      {payload.map((p: any) => (
-        <div key={p.dataKey} className="flex items-center justify-between gap-4">
-          <span className="text-slate-300">{p.name ?? p.dataKey}</span>
-          <span className="font-semibold">{fmtMoney(Number(p.value ?? 0), symbol)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Panel({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
-      <div className="mb-3">
-        <div className="text-sm font-semibold">{title}</div>
-        {subtitle ? <div className="text-xs text-slate-300">{subtitle}</div> : null}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function MultiSelect({
+function MultiFilter({
+  id,
   label,
   options,
   selected,
   setSelected,
   mode,
   setMode,
-  placeholder = "All",
+  openKey,
+  setOpenKey,
+  searchable = true,
+  onApply,
 }: {
+  id: string;
   label: string;
   options: string[];
   selected: string[];
   setSelected: (v: string[]) => void;
   mode: "include" | "exclude";
   setMode: (v: "include" | "exclude") => void;
-  placeholder?: string;
+  openKey: string | null;
+  setOpenKey: (v: string | null) => void;
+  searchable?: boolean;
+  onApply: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-
-  const filtered = useMemo(() => {
-    const qq = q.trim().toLowerCase();
-    if (!qq) return options;
-    return options.filter((x) => x.toLowerCase().includes(qq));
-  }, [options, q]);
-
-  const allSelected = selected.length === 0;
+  const open = openKey === id;
+  const allSelected = selected.length === options.length;
+  const visibleOptions = searchable ? options.filter((o) => o.toLowerCase().includes(q.toLowerCase())) : options;
+  const summary = `${selected.length} selected`;
 
   return (
-    <div className="relative">
-      <div className="text-xs text-slate-300">{label}</div>
-
+    <div className="multi-filter relative">
       <button
-        onClick={() => setOpen((s) => !s)}
-        className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-left"
+        className="h-11 min-w-[210px] max-w-[240px] px-4 rounded-2xl border border-white/10 bg-white/5 text-sm text-slate-100 hover:bg-white/10 transition flex items-center justify-between whitespace-nowrap"
         type="button"
+        onClick={() => setOpenKey(open ? null : id)}
       >
-        <div className="flex items-center justify-between gap-2">
-          <div className="truncate">
-            {allSelected ? placeholder : `${selected.length} selected (${mode === "include" ? "Include" : "Exclude"})`}
-          </div>
-          <span className="text-slate-400">{open ? "▲" : "▼"}</span>
-        </div>
+        <span className="min-w-0 overflow-hidden text-ellipsis">{label}: {summary}</span>
+        <span className="chev">{open ? "▲" : "▼"}</span>
       </button>
-
-      {open ? (
-        <div className="absolute z-20 mt-2 w-full rounded-2xl border border-white/10 bg-[#050814] shadow-[0_20px_80px_rgba(0,0,0,0.55)]">
-          <div className="p-3 border-b border-white/10">
-            <div className="flex items-center justify-between gap-2">
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search…"
-                className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none"
-              />
-              <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as any)}
-                className="rounded-xl border border-white/10 bg-black/40 px-2 py-2 text-sm outline-none"
-                title="Include / Exclude mode"
-              >
-                <option value="include">Include</option>
-                <option value="exclude">Exclude</option>
-              </select>
-            </div>
-
-            <div className="mt-2 flex gap-2 flex-wrap">
-              <button
-                className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10"
-                onClick={() => setSelected([])}
-                type="button"
-                title="Empty selection means ALL"
-              >
-                All
-              </button>
-              <button
-                className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10"
-                onClick={() => setSelected(filtered)}
-                type="button"
-                title="Select all currently filtered"
-              >
-                All (filtered)
-              </button>
-              <button
-                className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs hover:bg-white/10"
-                onClick={() => setSelected([])}
-                type="button"
-                title="Same as All"
-              >
-                Clear
-              </button>
-            </div>
-
-            <div className="mt-2 text-[11px] text-slate-400">
-              Tip: choose <b>Exclude</b> + tick items = “All except selected”.
-            </div>
-          </div>
-
-          <div className="max-h-64 overflow-auto p-2">
-            {filtered.length ? (
-              filtered.map((opt) => {
-                const checked = selected.includes(opt);
-                return (
-                  <label
-                    key={opt}
-                    className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-white/5 cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => {
-                        if (checked) setSelected(selected.filter((x) => x !== opt));
-                        else setSelected([...selected, opt]);
-                      }}
-                    />
-                    <span className="text-sm text-slate-200">{opt}</span>
-                  </label>
-                );
-              })
-            ) : (
-              <div className="p-3 text-sm text-slate-400">No matches.</div>
-            )}
-          </div>
-
-          <div className="p-2 border-t border-white/10">
-            <button
-              className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm hover:bg-white/10"
-              onClick={() => setOpen(false)}
-              type="button"
-            >
-              Done
-            </button>
-          </div>
+      <div className={`absolute left-0 top-[calc(100%+8px)] z-[80] w-[340px] rounded-2xl border border-white/10 bg-[#10131f] p-3 shadow-2xl ${open ? "opacity-100 visible" : "opacity-0 invisible pointer-events-none"}`}>
+        <div className="text-xs text-slate-300 mb-2">Mode</div>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <button type="button" className={`h-9 rounded-xl border border-white/10 text-sm ${mode === "include" ? "bg-blue-600/30 text-blue-200" : "bg-white/5 text-slate-300"}`} onClick={() => setMode("include")}>Include</button>
+          <button type="button" className={`h-9 rounded-xl border border-white/10 text-sm ${mode === "exclude" ? "bg-amber-500/20 text-amber-200" : "bg-white/5 text-slate-300"}`} onClick={() => setMode("exclude")}>Exclude</button>
         </div>
-      ) : null}
+        <input className="h-10 w-full rounded-xl border border-white/10 bg-[#0e1322] px-3 text-sm text-slate-100 mb-3" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" />
+        <div className="border-t border-white/10 my-2" />
+        <label className="flex items-center gap-2 text-sm text-slate-200 py-2">
+          <input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? [] : [...options])} />
+          Select all
+        </label>
+        <div className="max-h-44 overflow-auto space-y-1 pr-1">
+          {visibleOptions.map((opt) => (
+            <label key={opt} className="flex items-center gap-2 text-sm text-slate-200 py-1 hover:bg-white/5 rounded-md px-1">
+              <input
+                type="checkbox"
+                checked={selected.includes(opt)}
+                onChange={() => setSelected(selected.includes(opt) ? selected.filter((x) => x !== opt) : [...selected, opt])}
+              />
+              {opt}
+            </label>
+          ))}
+        </div>
+        <div className="sticky bottom-0 mt-3 bg-[#10131f] border-t border-white/10 pt-2 flex gap-2">
+          <button type="button" className="h-9 px-3 rounded-lg border border-white/10 bg-white/5 text-sm text-slate-200" onClick={() => setSelected([])}>Clear</button>
+          <button type="button" className="h-9 px-3 rounded-lg border border-white/10 bg-white/5 text-sm text-slate-200" onClick={() => setOpenKey(null)}>Done</button>
+          <button type="button" className="h-9 px-3 rounded-lg bg-blue-600 text-sm text-white ml-auto" onClick={() => { onApply(); setOpenKey(null); }}>Apply</button>
+        </div>
+      </div>
     </div>
   );
 }
 
-export default function RevenueAnalyticsPage() {
+export default function RevenueAnalyticsPageClient() {
+  const growthRef = useRef<HTMLCanvasElement | null>(null);
+  const waterfallRef = useRef<HTMLCanvasElement | null>(null);
+  const teamRef = useRef<HTMLCanvasElement | null>(null);
+
   const [data, setData] = useState<ApiResp | null>(null);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
+  const [error, setError] = useState("");
 
-  const [months, setMonths] = useState<string[]>([]);
-  const [companies, setCompanies] = useState<string[]>([]);
-  const [sources, setSources] = useState<string[]>([]);
+  const [months, setMonths] = useState<string[]>(["2026/03"]);
+  const [companies, setCompanies] = useState<string[]>(["RTC League"]);
+  const [sources, setSources] = useState<string[]>([...DEFAULT_SOURCE_OPTIONS]);
+  const [monthMode, setMonthMode] = useState<"include" | "exclude">("exclude");
+  const [companyMode, setCompanyMode] = useState<"include" | "exclude">("include");
+  const [sourceMode, setSourceMode] = useState<"include" | "exclude">("include");
+  const [selectedChurnKey, setSelectedChurnKey] = useState("");
+  const [openFilter, setOpenFilter] = useState<string | null>(null);
 
-  const [monthsMode, setMonthsMode] = useState<"include" | "exclude">("include");
-  const [companiesMode, setCompaniesMode] = useState<"include" | "exclude">("include");
-  const [sourcesMode, setSourcesMode] = useState<"include" | "exclude">("include");
+  const symbol = data?.currencySymbol || "$";
+  const monthOptions = data?.filters.months?.length ? data.filters.months : DEFAULT_MONTH_OPTIONS;
+  const companyOptions = data?.filters.companies?.length ? data.filters.companies : DEFAULT_COMPANY_OPTIONS;
+  const sourceOptions = data?.filters.sources?.length ? data.filters.sources : DEFAULT_SOURCE_OPTIONS;
 
-  const [selectedChurnKey, setSelectedChurnKey] = useState<string | null>(null);
-
-  async function fetchData() {
+  const fetchData = async () => {
     setLoading(true);
-    setErr("");
+    setError("");
     try {
-      const sp = new URLSearchParams();
-
-      if (months.length) sp.set("months", months.join(","));
-      if (companies.length) sp.set("companies", companies.join(","));
-      if (sources.length) sp.set("sources", sources.join(","));
-
-      sp.set("months_mode", monthsMode);
-      sp.set("companies_mode", companiesMode);
-      sp.set("sources_mode", sourcesMode);
-
-      const res = await fetch(`/api/revenue-analytics?${sp.toString()}`, { cache: "no-store" });
+      const params = new URLSearchParams();
+      if (months.length) params.set("months", months.join(","));
+      if (companies.length) params.set("companies", companies.join(","));
+      if (sources.length) params.set("sources", sources.join(","));
+      params.set("months_mode", monthMode);
+      params.set("companies_mode", companyMode);
+      params.set("sources_mode", sourceMode);
+      const res = await fetch(`/api/revenue-analytics?${params.toString()}`, { cache: "no-store" });
       const json = (await res.json()) as ApiResp;
-
-      if (!json || (json as any).ok !== true) throw new Error((json as any)?.error || "Failed to load revenue analytics");
+      if (!json.ok) throw new Error(json.error || "Failed to load revenue data");
       setData(json);
-    } catch (e: any) {
-      setErr(e?.message ?? "Failed to load revenue analytics");
-      setData(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load revenue data");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const ok = !!data && (data as any).ok === true;
-  const filters = ok ? (data as any).filters : { months: [], companies: [], sources: [] };
-  const symbol = ok ? (data as any).currencySymbol || "$" : "$";
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".multi-filter")) setOpenFilter(null);
+    };
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
 
-  const monthTotals = ok ? ((data as any).monthTotals as Array<{ month: string; totalRevenue: number }>) : [];
-  const totalRevenueFiltered = useMemo(
-    () => monthTotals.reduce((s, x) => s + (x.totalRevenue || 0), 0),
-    [monthTotals]
-  );
+  const metrics = useMemo(() => {
+    if (!data) return null;
+    const months = [...data.monthTotals].sort((a, b) => a.month.localeCompare(b.month));
+    const latest = months[months.length - 1]?.totalRevenue ?? 0;
+    const prev = months[months.length - 2]?.totalRevenue ?? 0;
+    const latestMonth = months[months.length - 1]?.month;
+    const latestRows = data.churnVsGrowth.filter((r) => r.month === latestMonth);
+    const latestDetails = data.churnDetails.filter((r) => r.month === latestMonth);
 
-  const churnRows = ok ? (((data as any).churnVsGrowth as any[]) ?? []) : [];
-  const churnDetails = ok ? (((data as any).churnDetails as any[]) ?? []) : [];
+    const lost = latestRows.reduce((s, r) => s + r.lostRevenue, 0);
+    const added = latestRows.reduce((s, r) => s + r.addedRevenue, 0);
+    const contraction = latestRows.reduce((s, r) => s + r.contractionRevenue, 0);
+    const expansion = latestRows.reduce((s, r) => s + r.expansionRevenue, 0);
+    const existingNet = latestRows.reduce((s, r) => s + r.existingCustomerDelta, 0);
+    const total = months.reduce((s, r) => s + r.totalRevenue, 0);
 
-  const churnSelected = useMemo(() => {
-    if (!ok || !selectedChurnKey) return null;
-    const [company, month] = selectedChurnKey.split("||");
-    return churnDetails.find((x) => x.company === company && x.month === month) ?? null;
-  }, [ok, selectedChurnKey, churnDetails]);
+    return {
+      total,
+      latest,
+      prev,
+      net: latest - prev,
+      lost,
+      added,
+      contraction,
+      expansion,
+      existingNet,
+      latestMonth,
+      lostCount: latestDetails.reduce((s, r) => s + r.lostCustomers.length, 0),
+      contractionCount: latestDetails.reduce((s, r) => s + r.contractionCustomers.length, 0),
+      monthCount: months.length,
+    };
+  }, [data]);
 
-  const growthSeries = ok ? ((data as any).growthSeries as any[]) : [];
-  const growthLineKeys = useMemo(() => {
+  const growthDatasets = useMemo(() => {
+    if (!data) return { labels: [], companyKeys: [] as string[] };
     const keys = new Set<string>();
-    for (const row of growthSeries) {
-      Object.keys(row || {}).forEach((k) => {
-        if (k !== "month" && k !== "totalRevenue") keys.add(k);
-      });
+    data.growthSeries.forEach((r) => Object.keys(r).forEach((k) => k !== "month" && k !== "totalRevenue" && keys.add(k)));
+    return { labels: data.growthSeries.map((r) => r.month), companyKeys: [...keys] };
+  }, [data]);
+
+  const latestMonth = metrics?.latestMonth;
+  const latestRows = useMemo(() => (data && latestMonth ? data.churnVsGrowth.filter((r) => r.month === latestMonth) : []), [data, latestMonth]);
+  const selectedDetail = useMemo(
+    () => (data ? data.churnDetails.find((d) => `${d.company}__${d.month}` === selectedChurnKey) : undefined),
+    [data, selectedChurnKey]
+  );
+  const analysisRows = useMemo(() => (selectedDetail ? [selectedDetail] : latestRows), [latestRows, selectedDetail]);
+  const analysisSummary = useMemo(() => {
+    const prev = analysisRows.reduce((s, r) => s + r.prevTotal, 0);
+    const current = analysisRows.reduce((s, r) => s + r.currentTotal, 0);
+    return {
+      net: current - prev,
+      lost: analysisRows.reduce((s, r) => s + r.lostRevenue, 0),
+      added: analysisRows.reduce((s, r) => s + r.addedRevenue, 0),
+      existingNet: analysisRows.reduce((s, r) => s + r.existingCustomerDelta, 0),
+      contraction: analysisRows.reduce((s, r) => s + r.contractionRevenue, 0),
+      expansion: analysisRows.reduce((s, r) => s + r.expansionRevenue, 0),
+    };
+  }, [analysisRows]);
+  const lostCustomers = useMemo(() => {
+    if (selectedDetail) {
+      return selectedDetail.lostCustomers
+        .map((c) => ({ customer: c.customer, revenue: c.lastMonthRevenue }))
+        .sort((a, b) => b.revenue - a.revenue);
     }
-    return Array.from(keys);
-  }, [growthSeries]);
+    if (!data || !latestMonth) return [] as Array<{ customer: string; revenue: number }>;
+    return data.churnDetails
+      .filter((r) => r.month === latestMonth)
+      .flatMap((r) => r.lostCustomers.map((c) => ({ customer: c.customer, revenue: c.lastMonthRevenue })))
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [data, latestMonth, selectedDetail]);
+
+  const contractionCustomers = useMemo(() => {
+    if (selectedDetail) {
+      return selectedDetail.contractionCustomers
+        .map((c) => ({ customer: c.customer, mar: c.prevMonthRevenue, apr: c.currentMonthRevenue, delta: c.delta }))
+        .sort((a, b) => a.delta - b.delta);
+    }
+    if (!data || !latestMonth) return [] as Array<{ customer: string; mar: number; apr: number; delta: number }>;
+    return data.churnDetails
+      .filter((r) => r.month === latestMonth)
+      .flatMap((r) =>
+        r.contractionCustomers.map((c) => ({ customer: c.customer, mar: c.prevMonthRevenue, apr: c.currentMonthRevenue, delta: c.delta }))
+      )
+      .sort((a, b) => a.delta - b.delta);
+  }, [data, latestMonth, selectedDetail]);
+  const expansionCustomers = useMemo(() => {
+    if (selectedDetail) {
+      return selectedDetail.expansionCustomers
+        .map((c) => ({ customer: c.customer, prev: c.prevMonthRevenue, current: c.currentMonthRevenue, delta: c.delta }))
+        .sort((a, b) => b.delta - a.delta);
+    }
+    if (!data || !latestMonth) return [] as Array<{ customer: string; prev: number; current: number; delta: number }>;
+    return data.churnDetails
+      .filter((r) => r.month === latestMonth)
+      .flatMap((r) => r.expansionCustomers.map((c) => ({ customer: c.customer, prev: c.prevMonthRevenue, current: c.currentMonthRevenue, delta: c.delta })))
+      .sort((a, b) => b.delta - a.delta);
+  }, [data, latestMonth, selectedDetail]);
+  const addedCustomers = useMemo(() => {
+    if (selectedDetail) {
+      return selectedDetail.addedCustomers
+        .map((c) => ({ customer: c.customer, revenue: c.currentMonthRevenue }))
+        .sort((a, b) => b.revenue - a.revenue);
+    }
+    if (!data || !latestMonth) return [] as Array<{ customer: string; revenue: number }>;
+    return data.churnDetails
+      .filter((r) => r.month === latestMonth)
+      .flatMap((r) => r.addedCustomers.map((c) => ({ customer: c.customer, revenue: c.currentMonthRevenue })))
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [data, latestMonth, selectedDetail]);
+
+  useEffect(() => {
+    if (!data || !growthRef.current || !waterfallRef.current || !teamRef.current || !metrics) return;
+
+    const loadChart = async () => {
+      if (!(window as { Chart?: ChartCtor }).Chart) {
+        await new Promise<void>((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js";
+          s.async = true;
+          s.onload = () => resolve();
+          s.onerror = () => reject(new Error("Failed to load Chart.js"));
+          document.head.appendChild(s);
+        });
+      }
+      const ChartLib = (window as { Chart?: ChartCtor }).Chart;
+      if (!ChartLib) return () => undefined;
+
+      const growth = new ChartLib(growthRef.current!, {
+        type: "line",
+        data: {
+          labels: growthDatasets.labels,
+          datasets: [
+            ...growthDatasets.companyKeys.map((k, idx) => ({
+              label: k,
+              data: data.growthSeries.map((r) => Number(r[k] || 0)),
+              borderColor: idx === 0 ? COLORS.blue : COLORS.green,
+              backgroundColor: idx === 0 ? "rgba(55,138,221,0.08)" : "rgba(99,153,34,0.08)",
+              fill: true,
+              tension: 0.35,
+            })),
+            {
+              label: "Total",
+              data: data.growthSeries.map((r) => r.totalRevenue),
+              borderColor: COLORS.gray,
+              borderDash: [5, 3],
+              fill: false,
+              tension: 0.35,
+            },
+          ],
+        },
+        options: {
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: COLORS.tick }, grid: { color: COLORS.grid } },
+            y: { ticks: { color: COLORS.tick, callback: (v: number | string) => axisYk(Number(v)) }, grid: { color: COLORS.grid } },
+          },
+        },
+      });
+
+      const start = analysisRows.reduce((s, r) => s + r.prevTotal, 0);
+      const lost = analysisRows.reduce((s, r) => s + r.lostRevenue, 0);
+      const contraction = analysisRows.reduce((s, r) => s + r.contractionRevenue, 0);
+      const expansion = analysisRows.reduce((s, r) => s + r.expansionRevenue, 0);
+      const added = analysisRows.reduce((s, r) => s + r.addedRevenue, 0);
+      const end = analysisRows.reduce((s, r) => s + r.currentTotal, 0);
+      const base = [0, start - lost, start - lost - contraction, start - lost - contraction + expansion, start - lost - contraction + expansion + added, 0];
+      const visible = [start, -lost, -contraction, expansion, added, end];
+
+      const waterfall = new ChartLib(waterfallRef.current!, {
+        type: "bar",
+        data: {
+          labels: ["Mar revenue", "Lost customers", "Contraction", "Expansion", "New customers", "Apr revenue"],
+          datasets: [
+            { label: "base", data: base, backgroundColor: "rgba(0,0,0,0)", stack: "wf" },
+            {
+              label: "bridge",
+              data: visible,
+              stack: "wf",
+              backgroundColor: [COLORS.blue, COLORS.red, COLORS.red, expansion > 0 ? COLORS.green : COLORS.gray, added > 0 ? COLORS.green : COLORS.gray, COLORS.blue],
+              borderRadius: 4,
+            },
+          ],
+        },
+        options: {
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              filter: (item: { datasetIndex: number }) => item.datasetIndex !== 0,
+              callbacks: { label: (ctx: { raw?: unknown }) => money0(Number(ctx.raw || 0), symbol) },
+            },
+          },
+          scales: {
+            x: { stacked: true, ticks: { color: COLORS.tick }, grid: { color: COLORS.grid } },
+            y: { stacked: true, ticks: { color: COLORS.tick, callback: (v: number | string) => axisYk(Number(v)) }, grid: { color: COLORS.grid } },
+          },
+        },
+      });
+
+      const team = new ChartLib(teamRef.current!, {
+        type: "bar",
+        data: {
+          labels: data.teamRevenue.map((t) => t.team),
+          datasets: [{ label: "Revenue", data: data.teamRevenue.map((t) => t.revenue), backgroundColor: COLORS.blue, borderRadius: 4 }],
+        },
+        options: {
+          indexAxis: "y",
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: {
+              ticks: { color: COLORS.tick, callback: (v: number | string) => `$${Number(v).toLocaleString("en-US")}` },
+              grid: { color: COLORS.grid },
+            },
+            y: { ticks: { color: COLORS.tick, font: { size: 12 } }, grid: { display: false } },
+          },
+        },
+      });
+
+      return () => {
+        growth.destroy();
+        waterfall.destroy();
+        team.destroy();
+      };
+    };
+
+    let clean: (() => void) | undefined;
+    loadChart().then((c) => (clean = c)).catch(() => undefined);
+    return () => clean?.();
+  }, [analysisRows, data, growthDatasets, metrics, symbol]);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
-      <div className="mx-auto max-w-7xl px-5 py-8">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+    <main className="page">
+      <div className="container">
+        <header className="header">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Revenue Analytics</h1>
-            <p className="mt-1 text-sm text-slate-300">Slicer-driven Revenue Growth + Churn + Team Revenue distribution.</p>
+            <h1>Revenue Analytics</h1>
+            <p>Slicer-driven revenue growth · churn · team distribution</p>
           </div>
-
-          <div className="flex items-center gap-2">
-            <Link
-              href="/dashboard"
-              prefetch={false}
-              className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium hover:bg-white/10"
-            >
-              ← Back to Dashboard
-            </Link>
-            <button
-              onClick={fetchData}
-              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20"
-              disabled={loading}
-            >
-              {loading ? "Refreshing..." : "Refresh"}
-            </button>
+          <div className="actions">
+            <Link href="/dashboard" className="btn btn-outline">← Dashboard</Link>
+            <button className="btn btn-solid" type="button" onClick={fetchData}>{loading ? "Refreshing..." : "Refresh"}</button>
           </div>
-        </div>
+        </header>
 
-        {/* Slicers */}
-        <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <MultiSelect
-              label="Month"
-              options={filters.months}
-              selected={months}
-              setSelected={setMonths}
-              mode={monthsMode}
-              setMode={setMonthsMode}
-            />
-            <MultiSelect
-              label="Company"
-              options={filters.companies}
-              selected={companies}
-              setSelected={setCompanies}
-              mode={companiesMode}
-              setMode={setCompaniesMode}
-            />
-            <MultiSelect
-              label="Source"
-              options={filters.sources}
-              selected={sources}
-              setSelected={setSources}
-              mode={sourcesMode}
-              setMode={setSourcesMode}
-            />
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs text-slate-300">
-              {ok ? (
-                <span>
-                  Rows: <span className="text-slate-100 font-semibold">{(data as any).filteredCount}</span> filtered (from{" "}
-                  {(data as any).rawCount})
-                </span>
-              ) : (
-                <span>Waiting for data…</span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  setSelectedChurnKey(null);
-                  fetchData();
-                }}
-                className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-semibold hover:bg-white/15"
-                disabled={loading}
-                type="button"
-              >
-                Apply
-              </button>
-            </div>
-          </div>
-
-          {err ? (
-            <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
-              {err}
-            </div>
-          ) : null}
-        </div>
-
-        {/* KPI */}
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs text-slate-300">Total Revenue (Filtered)</div>
-            <div className="mt-2 text-2xl font-semibold">{fmtMoney(totalRevenueFiltered, symbol)}</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs text-slate-300">Selected Months</div>
-            <div className="mt-2 text-xl font-semibold">{months.length ? months.length : "All"}</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs text-slate-300">Selected Companies</div>
-            <div className="mt-2 text-xl font-semibold">{companies.length ? companies.length : "All"}</div>
-          </div>
-        </div>
-
-        {/* Growth chart + Growth table (PRIMARY) */}
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Panel title="Revenue Growth (Monthly, Company-wise)" subtitle="Lines per company (includes Total Revenue line)">
-            <div className="h-[320px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={ok ? (data as any).growthSeries : []} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                  <CartesianGrid {...GRID} />
-                  <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                  <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                  <Tooltip content={<MoneyTooltip symbol={symbol} />} />
-                  <Legend />
-                  <Line type="monotone" dataKey="totalRevenue" name="Total Revenue" stroke="#60a5fa" strokeWidth={3} dot={false} />
-                  {growthLineKeys.map((k) => (
-                    <Line key={k} type="monotone" dataKey={k} name={k} strokeWidth={2} dot={false} />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </Panel>
-
-          <Panel title="Revenue Growth Table" subtitle="Change (Δ) and Change % (green = positive, red = negative)">
-            {ok ? (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-left text-xs text-slate-300">
-                    <tr>
-                      <th className="py-2 pr-3">Month</th>
-                      <th className="py-2 pr-3">Company</th>
-                      <th className="py-2 text-right">Revenue</th>
-                      <th className="py-2 text-right">Δ</th>
-                      <th className="py-2 text-right">Δ%</th>
-                      <th className="py-2 text-right">Total (Month)</th>
-                      <th className="py-2 text-right">Total Δ%</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(data as any).growthTable?.length ? (
-                      (data as any).growthTable.map((r: any, i: number) => (
-                        <tr key={i} className="border-t border-white/10">
-                          <td className="py-2 pr-3">{r.month}</td>
-                          <td className="py-2 pr-3">{r.company}</td>
-                          <td className="py-2 text-right font-semibold">{fmtMoney(Number(r.revenue ?? 0), symbol)}</td>
-                          <td className={`py-2 text-right font-semibold ${classDelta(Number(r.change ?? 0))}`}>
-                            {fmtMoney(Number(r.change ?? 0), symbol)}
-                          </td>
-                          <td className={`py-2 text-right font-semibold ${classDelta(Number(r.changePct ?? 0))}`}>
-                            {fmtPct(Number(r.changePct ?? 0))}
-                          </td>
-                          <td className="py-2 text-right font-semibold text-slate-200">
-                            {fmtMoney(Number(r.totalRevenue ?? 0), symbol)}
-                          </td>
-                          <td className={`py-2 text-right font-semibold ${classDelta(Number(r.totalChangePct ?? 0))}`}>
-                            {fmtPct(Number(r.totalChangePct ?? 0))}
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={7} className="py-3 text-slate-300">
-                          No growth rows for selected slicers.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+        <section className="w-full">
+          <div className="max-w-[1200px] mx-auto">
+            <div className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur-md max-[1100px]:flex-wrap">
+              <div className="flex min-w-0 items-center gap-3">
+                <MultiFilter id="month" label="Month" options={monthOptions} selected={months} setSelected={setMonths} mode={monthMode} setMode={setMonthMode} openKey={openFilter} setOpenKey={setOpenFilter} onApply={fetchData} />
+                <MultiFilter id="company" label="Company" options={companyOptions} selected={companies} setSelected={setCompanies} mode={companyMode} setMode={setCompanyMode} openKey={openFilter} setOpenKey={setOpenFilter} onApply={fetchData} />
+                <MultiFilter id="source" label="Source" options={sourceOptions} selected={sources} setSelected={setSources} mode={sourceMode} setMode={setSourceMode} openKey={openFilter} setOpenKey={setOpenFilter} onApply={fetchData} />
               </div>
-            ) : (
-              <div className="py-3 text-slate-300">Loading…</div>
-            )}
-          </Panel>
-        </div>
 
-        {/* Churn vs Growth + row-click drill */}
-        <div className="mt-4">
-          <Panel
-            title="Monthly Revenue Churn Rate vs Growth Rate (Company-wise)"
-            subtitle="Click a row to see revenue bridge: lost/new customers + expansion/contraction from existing customers."
-          >
-            {ok ? (
-              <>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-left text-xs text-slate-300">
-                      <tr>
-                        <th className="py-2 pr-3">Company</th>
-                        <th className="py-2 pr-3">Month</th>
-                        <th className="py-2 text-right">Prev Total</th>
-                        <th className="py-2 text-right">Current Total</th>
-                        <th className="py-2 text-right">Lost Revenue</th>
-                        <th className="py-2 text-right">Added Revenue</th>
-                        <th className="py-2 text-right">Existing ↑</th>
-                        <th className="py-2 text-right">Existing ↓</th>
-                        <th className="py-2 text-right">Existing Net</th>
-                        <th className="py-2 text-right">Net Δ</th>
-                        <th className="py-2 text-right">Churn Rate</th>
-                        <th className="py-2 text-right">Growth Rate</th>
-                      </tr>
-                    </thead>
+              <div className="flex shrink-0 items-center gap-3 max-[1100px]:w-full max-[1100px]:justify-end">
+                <span className="text-sm text-slate-400 whitespace-nowrap">{data ? `${data.filteredCount} rows` : "— rows"}</span>
+                <button className="text-sm text-slate-400 hover:text-white transition" type="button" onClick={() => { setMonths([]); setCompanies([]); setSources([]); }}>
+                  Clear All
+                </button>
+                <button className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium shadow-md" type="button" onClick={fetchData}>
+                  Apply
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+        {openFilter ? <div className="h-[380px] max-[840px]:h-[440px]" /> : null}
+
+        {error ? <div className="error">{error}</div> : null}
+
+        {data && metrics ? (
+          <>
+            <section className="kpi-grid">
+              <article className="card kpi"><p className="muted">Total revenue (filtered)</p><h3 className="mono neutral">{money(metrics.total, 2, symbol)}</h3><p className="small neutral">{metrics.monthCount} months selected</p></article>
+              <article className="card kpi"><p className="muted">Latest month revenue</p><h3 className="mono neutral">{money(metrics.latest, 2, symbol)}</h3><p className="small neg">{metrics.prev ? `${metrics.net < 0 ? "↓" : "↑"} ${Math.abs((metrics.net / metrics.prev) * 100).toFixed(1)}% vs prior month` : "—"}</p></article>
+              <article className="card kpi"><p className="muted">Net revenue change</p><h3 className={`mono ${metrics.net < 0 ? "neg" : "pos"}`}>{money0(analysisSummary.net, symbol)}</h3><p className="small neg">Apr vs Mar</p></article>
+              <article className="card kpi"><p className="muted">Churned revenue</p><h3 className="mono neutral">{money(metrics.lost, 2, symbol)}</h3><p className="small neutral">{metrics.lostCount} lost customers</p></article>
+              <article className="card kpi"><p className="muted">Contraction (existing)</p><h3 className="mono neutral">{money(metrics.contraction, 2, symbol)}</h3><p className="small neutral">{metrics.contractionCount} customers shrank</p></article>
+              <article className="card kpi"><p className="muted">New revenue added</p><h3 className="mono neutral">{money(analysisSummary.added, 2, symbol)}</h3><p className="small neutral">{metrics.added > 0 ? "New customers added" : "No new customers"}</p></article>
+            </section>
+
+            <div className="divider" />
+            <section className="two-col">
+              <article className="card"><h2>Revenue growth — monthly, by company</h2><p className="sub">Total revenue line + per-company breakdown</p><div className="chart-wrap h220"><canvas ref={growthRef} /></div><div className="legend">{growthDatasets.companyKeys.map((k, i) => <span key={k}><i style={{ background: i === 0 ? COLORS.blue : COLORS.green }} />{k}</span>)}<span><i style={{ background: COLORS.gray }} />Total</span></div></article>
+              <article className="card"><h2>Revenue growth table</h2><p className="sub">Δ and Δ% per company per month (green = positive, red = negative)</p><div className="table-wrap"><table><thead><tr><th>Month</th><th>Company</th><th>Revenue</th><th>Δ</th><th>Δ%</th><th>Month total</th></tr></thead><tbody>{data.growthTable.map((r) => <tr key={`${r.month}-${r.company}`} className={latestMonth === r.month ? "tint-red" : ""}><td>{r.month}</td><td>{r.company}</td><td>{money0(r.revenue, symbol)}</td><td className={r.change >= 0 ? "pos" : "neg"}>{r.change >= 0 ? "+" : ""}{money0(r.change, symbol)}</td><td className={r.changePct >= 0 ? "pos" : "neg"}>{pct(r.changePct)}</td><td>{money0(r.totalRevenue, symbol)}</td></tr>)}</tbody></table></div></article>
+            </section>
+
+            <div className="divider" />
+            <section>
+              <h2 className="section-title">Churn & growth bridge</h2>
+              <p className="section-sub">Click a row to inspect churn/lost/new/contraction versus that row&apos;s previous month.</p>
+              <article className="card">
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Company</th><th>Month</th><th>Prev total</th><th>Current total</th><th>Lost</th><th>Added</th><th>Existing net</th><th>Net Δ</th><th>Churn %</th><th>Growth %</th></tr></thead>
                     <tbody>
-                      {churnRows.length ? (
-                        churnRows.slice(-36).map((r: any, i: number) => {
-                          const key = `${r.company}||${r.month}`;
-                          const active = selectedChurnKey === key;
-                          return (
-                            <tr
-                              key={i}
-                              className={`border-t border-white/10 cursor-pointer hover:bg-white/5 ${active ? "bg-white/5" : ""}`}
-                              onClick={() => setSelectedChurnKey(key)}
-                              title="Click to view customer drill"
-                            >
-                              <td className="py-2 pr-3 font-semibold">{r.company}</td>
-                              <td className="py-2 pr-3">{r.month}</td>
-                              <td className="py-2 text-right">{fmtMoney(Number(r.prevTotal ?? 0), symbol)}</td>
-                              <td className="py-2 text-right font-semibold">{fmtMoney(Number(r.currentTotal ?? 0), symbol)}</td>
-                              <td className="py-2 text-right font-semibold text-rose-300">
-                                {fmtMoney(Number(r.lostRevenue ?? 0), symbol)}
-                              </td>
-                              <td className="py-2 text-right font-semibold text-emerald-300">
-                                {fmtMoney(Number(r.addedRevenue ?? 0), symbol)}
-                              </td>
-                              <td className="py-2 text-right font-semibold text-emerald-300">
-                                {fmtMoney(Number(r.expansionRevenue ?? 0), symbol)}
-                              </td>
-                              <td className="py-2 text-right font-semibold text-rose-300">
-                                {fmtMoney(Number(r.contractionRevenue ?? 0), symbol)}
-                              </td>
-                              <td className={`py-2 text-right font-semibold ${classDelta(Number(r.existingCustomerDelta ?? 0))}`}>
-                                {fmtMoney(Number(r.existingCustomerDelta ?? 0), symbol)}
-                              </td>
-                              <td className={`py-2 text-right font-semibold ${classDelta(Number(r.netRevenueDelta ?? 0))}`}>
-                                {fmtMoney(Number(r.netRevenueDelta ?? 0), symbol)}
-                              </td>
-                              <td className="py-2 text-right">{fmtPct(Number(r.churnRate ?? 0))}</td>
-                              <td className={`py-2 text-right font-semibold ${classDelta(Number(r.growthRate ?? 0))}`}>
-                                {fmtPct(Number(r.growthRate ?? 0))}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan={12} className="py-3 text-slate-300">
-                            No churn rows for selected slicers.
-                          </td>
+                      {data.churnVsGrowth.map((r) => {
+                        const key = `${r.company}__${r.month}`;
+                        return (
+                          <tr
+                            key={key}
+                            className={`${latestMonth === r.month ? "tint-red" : ""} ${selectedChurnKey === key ? "active-row" : ""}`}
+                            onClick={() => setSelectedChurnKey(key)}
+                          >
+                            <td>{r.company}</td><td>{r.month}</td><td>{money0(r.prevTotal, symbol)}</td><td>{money0(r.currentTotal, symbol)}</td>
+                            <td className="neg">{money0(r.lostRevenue, symbol)}</td><td>{money0(r.addedRevenue, symbol)}</td>
+                            <td className={r.existingCustomerDelta < 0 ? "neg" : "pos"}>{money0(r.existingCustomerDelta, symbol)}</td>
+                            <td className={r.netRevenueDelta < 0 ? "neg" : "pos"}>{money0(r.netRevenueDelta, symbol)}</td>
+                            <td>{r.churnRate > 0 ? <span className="badge-red">{pct(r.churnRate)}</span> : "0%"}</td><td className={r.growthRate < 0 ? "neg" : "pos"}>{pct(r.growthRate)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+              <div className="mini-kpis">
+                <article className="card mini"><p className="muted">Net change</p><h4 className="mono neg">{money0(analysisSummary.net, symbol)}</h4></article>
+                <article className="card mini"><p className="muted">Lost (churned)</p><h4 className="mono neg">{money0(analysisSummary.lost, symbol)}</h4></article>
+                <article className="card mini"><p className="muted">New added</p><h4 className="mono neutral">{money(analysisSummary.added, 2, symbol)}</h4></article>
+                <article className="card mini"><p className="muted">Existing net</p><h4 className="mono neg">{money0(analysisSummary.existingNet, symbol)}</h4></article>
+                <article className="card mini"><p className="muted">Existing contraction</p><h4 className="mono neg">{money0(analysisSummary.contraction, symbol)}</h4></article>
+              </div>
+            </section>
+
+            <div className="divider" /><section><article className="card"><h2>Revenue waterfall — {selectedDetail?.prevMonth ?? "Prev"} → {selectedDetail?.month ?? latestMonth ?? "Current"}</h2><p className="sub">Visualizes how starting revenue flowed into ending revenue via churn, contraction, and expansion</p><div className="chart-wrap h240"><canvas ref={waterfallRef} /></div><div className="legend"><span><i style={{ background: COLORS.blue }} />Starting / ending revenue</span><span><i style={{ background: COLORS.red }} />Negative impact</span><span><i style={{ background: COLORS.green }} />Positive impact</span></div></article></section>
+
+            <div className="divider" />
+            <section className="two-col">
+              <article className="card">
+                <h2>Lost customers (previous month only)</h2>
+                <p className="sub">Compared period: {selectedDetail?.prevMonth ?? "previous"} → {selectedDetail?.month ?? latestMonth ?? "current"}</p>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Customer</th><th>Lost revenue</th><th>% of total loss</th></tr></thead>
+                    <tbody>
+                      {lostCustomers.map((c) => (
+                        <tr key={c.customer}>
+                          <td>{c.customer}</td>
+                          <td className="neg">{money(c.revenue, 2, symbol)}</td>
+                          <td className="neutral">{analysisSummary.lost ? `${((c.revenue / analysisSummary.lost) * 100).toFixed(1)}%` : "0%"}</td>
                         </tr>
-                      )}
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+
+              <article className="card">
+                <h2>Existing customers — revenue contraction</h2>
+                <p className="sub">Present in both selected months — decreases in current period</p>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Customer</th><th>{selectedDetail?.prevMonth ?? "Prev"}</th><th>{selectedDetail?.month ?? "Current"}</th><th>Δ</th></tr></thead>
+                    <tbody>
+                      {contractionCustomers.map((c) => (
+                        <tr key={c.customer}>
+                          <td>{c.customer}</td><td>{money(c.mar, 2, symbol)}</td><td>{money(c.apr, 2, symbol)}</td><td className="neg">{money(c.delta, 2, symbol)}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-6">
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Net Change (Current - Prev)</div>
-                    <div className={`mt-1 text-base font-semibold ${classDelta(Number(churnSelected?.netRevenueDelta ?? 0))}`}>
-                      {churnSelected ? fmtMoney(Number(churnSelected.netRevenueDelta ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Lost (Churned Customers)</div>
-                    <div className="mt-1 text-base font-semibold text-rose-300">
-                      {churnSelected ? fmtMoney(Number(churnSelected.lostRevenue ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">New (Added Customers)</div>
-                    <div className="mt-1 text-base font-semibold text-emerald-300">
-                      {churnSelected ? fmtMoney(Number(churnSelected.addedRevenue ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Existing Customer Net</div>
-                    <div className={`mt-1 text-base font-semibold ${classDelta(Number(churnSelected?.existingCustomerDelta ?? 0))}`}>
-                      {churnSelected ? fmtMoney(Number(churnSelected.existingCustomerDelta ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Existing Expansion (↑)</div>
-                    <div className="mt-1 text-base font-semibold text-emerald-300">
-                      {churnSelected ? fmtMoney(Number(churnSelected.expansionRevenue ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Existing Contraction (↓)</div>
-                    <div className="mt-1 text-base font-semibold text-rose-300">
-                      {churnSelected ? fmtMoney(Number(churnSelected.contractionRevenue ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
+                <h3 className="subhead">Existing customers — revenue increases</h3>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Customer</th><th>{selectedDetail?.prevMonth ?? "Prev"}</th><th>{selectedDetail?.month ?? "Current"}</th><th>Δ</th></tr></thead>
+                    <tbody>
+                      {expansionCustomers.length ? expansionCustomers.map((c) => (
+                        <tr key={`exp-${c.customer}`}>
+                          <td>{c.customer}</td><td>{money(c.prev, 2, symbol)}</td><td>{money(c.current, 2, symbol)}</td><td className="pos">{money(c.delta, 2, symbol)}</td>
+                        </tr>
+                      )) : <tr><td colSpan={4} className="neutral">No existing customer revenue increases this period.</td></tr>}
+                    </tbody>
+                  </table>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <Panel
-                    title="Lost Customers (Previous month only)"
-                    subtitle="Customers present in previous month but missing in current month (shows last month revenue)"
-                  >
-                    {!churnSelected ? (
-                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
-                    ) : churnSelected.lostCustomers?.length ? (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
-                            <tr>
-                              <th className="py-2 pr-3">Customer</th>
-                              <th className="py-2 text-right">Last Month Revenue</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {churnSelected.lostCustomers.slice(0, 30).map((x: any, i: number) => (
-                              <tr key={i} className="border-t border-white/10">
-                                <td className="py-2 pr-3">{x.customer}</td>
-                                <td className="py-2 text-right font-semibold text-rose-300">
-                                  {fmtMoney(Number(x.lastMonthRevenue ?? 0), symbol)}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-slate-300">No lost customers for this selection.</div>
-                    )}
-                  </Panel>
-
-                  <Panel
-                    title="New Customers (Current month only)"
-                    subtitle="Customers present in current month but missing in previous month (shows current month revenue)"
-                  >
-                    {!churnSelected ? (
-                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
-                    ) : churnSelected.addedCustomers?.length ? (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
-                            <tr>
-                              <th className="py-2 pr-3">Customer</th>
-                              <th className="py-2 text-right">Current Month Revenue</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {churnSelected.addedCustomers.slice(0, 30).map((x: any, i: number) => (
-                              <tr key={i} className="border-t border-white/10">
-                                <td className="py-2 pr-3">{x.customer}</td>
-                                <td className="py-2 text-right font-semibold text-emerald-300">
-                                  {fmtMoney(Number(x.currentMonthRevenue ?? 0), symbol)}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-slate-300">No new customers for this selection.</div>
-                    )}
-                  </Panel>
+                <h3 className="subhead">New customers added — revenue detail</h3>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Customer</th><th>Added revenue</th><th>% of total added</th></tr></thead>
+                    <tbody>
+                      {addedCustomers.length ? addedCustomers.map((c) => (
+                        <tr key={`add-${c.customer}`}>
+                          <td>{c.customer}</td><td className="pos">{money(c.revenue, 2, symbol)}</td><td className="neutral">{analysisSummary.added ? `${((c.revenue / analysisSummary.added) * 100).toFixed(1)}%` : "0%"}</td>
+                        </tr>
+                      )) : <tr><td colSpan={3} className="neutral">No newly added customers in this selected period.</td></tr>}
+                    </tbody>
+                  </table>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <Panel
-                    title="Existing Customers: Revenue Increased"
-                    subtitle="Customers present in both months with higher current revenue"
-                  >
-                    {!churnSelected ? (
-                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
-                    ) : churnSelected.expansionCustomers?.length ? (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
-                            <tr>
-                              <th className="py-2 pr-3">Customer</th>
-                              <th className="py-2 text-right">Prev</th>
-                              <th className="py-2 text-right">Current</th>
-                              <th className="py-2 text-right">Δ</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {churnSelected.expansionCustomers.slice(0, 30).map((x: any, i: number) => (
-                              <tr key={i} className="border-t border-white/10">
-                                <td className="py-2 pr-3">{x.customer}</td>
-                                <td className="py-2 text-right">{fmtMoney(Number(x.prevMonthRevenue ?? 0), symbol)}</td>
-                                <td className="py-2 text-right">{fmtMoney(Number(x.currentMonthRevenue ?? 0), symbol)}</td>
-                                <td className="py-2 text-right font-semibold text-emerald-300">
-                                  {fmtMoney(Number(x.delta ?? 0), symbol)}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-slate-300">No existing-customer revenue increases for this selection.</div>
-                    )}
-                  </Panel>
-
-                  <Panel
-                    title="Existing Customers: Revenue Decreased"
-                    subtitle="Customers present in both months with lower current revenue"
-                  >
-                    {!churnSelected ? (
-                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
-                    ) : churnSelected.contractionCustomers?.length ? (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
-                            <tr>
-                              <th className="py-2 pr-3">Customer</th>
-                              <th className="py-2 text-right">Prev</th>
-                              <th className="py-2 text-right">Current</th>
-                              <th className="py-2 text-right">Δ</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {churnSelected.contractionCustomers.slice(0, 30).map((x: any, i: number) => (
-                              <tr key={i} className="border-t border-white/10">
-                                <td className="py-2 pr-3">{x.customer}</td>
-                                <td className="py-2 text-right">{fmtMoney(Number(x.prevMonthRevenue ?? 0), symbol)}</td>
-                                <td className="py-2 text-right">{fmtMoney(Number(x.currentMonthRevenue ?? 0), symbol)}</td>
-                                <td className="py-2 text-right font-semibold text-rose-300">
-                                  {fmtMoney(Number(x.delta ?? 0), symbol)}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-slate-300">No existing-customer revenue decreases for this selection.</div>
-                    )}
-                  </Panel>
+                <div className="info-box">
+                  <p>{analysisSummary.expansion > 0 ? "Existing customer revenue increases found" : "No existing customer revenue increases this period"}</p>
+                  <p className="mono">Expansion revenue: {money(analysisSummary.expansion, 2, symbol)}</p>
                 </div>
+              </article>
+            </section>
 
-                {/* Team-wise revenue */}
-                <div className="mt-4">
-                  <Panel
-                    title="Team Wise Revenue Bar Chart"
-                    subtitle="Top 20 teams by revenue (strictly based on slicer-filtered data)."
-                  >
-                    <div className="h-[360px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={(data as any).teamRevenue ?? []} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
-                          <XAxis
-                            dataKey="team"
-                            tick={AXIS_TICK}
-                            axisLine={AXIS_LINE}
-                            tickLine={TICK_LINE}
-                            interval={0}
-                            angle={-15}
-                            height={70}
-                          />
-                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                          <Tooltip content={<MoneyTooltip symbol={symbol} />} />
-                          <Legend />
-                          <Bar dataKey="revenue" name="Revenue" fill="#22c55e" radius={[8, 8, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="mt-2 text-xs text-slate-400">
-                      Note: Your sheet has no “Customer” column — this uses <b>Team</b> as customer label.
-                    </div>
-                  </Panel>
-                </div>
-              </>
-            ) : (
-              <div className="py-3 text-slate-300">Loading…</div>
-            )}
-          </Panel>
-        </div>
+            <div className="divider" /><section><h2 className="section-title">Team revenue distribution</h2><p className="section-sub">Top customers by total revenue (filtered period)</p><article className="card"><div className="chart-wrap h320"><canvas ref={teamRef} /></div><p className="foot-note">Note: No &apos;Customer&apos; column in source data — using Team as customer label.</p></article></section>
+          </>
+        ) : null}
       </div>
-    </div>
+
+      <style jsx>{`
+      .page{background:${COLORS.bg};color:#e6e9ef;min-height:100vh;font-family:'DM Sans',sans-serif}.container{max-width:1320px;margin:0 auto;padding:28px 20px 44px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}h1{font-size:48px;margin:0;font-weight:700}h2{margin:0 0 4px;font-size:20px}p{margin:0;color:rgba(255,255,255,.7)}.actions{display:flex;gap:10px;align-items:center}.btn{height:56px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;padding:0 24px;text-decoration:none;border:1px solid ${COLORS.border};color:#fff;background:transparent;cursor:pointer;font-size:14px}.btn-solid{background:#185FA5;border-color:#185FA5;color:#B5D4F4}.btn-outline{background:transparent}.card{background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:12px;padding:16px}.multi-filter{position:relative;min-width:210px}.multi-trigger > span:first-child{overflow:hidden;text-overflow:ellipsis}.chev{opacity:.7;color:#6ea4df}.menu-top{display:grid;grid-template-columns:1fr 140px;gap:10px;margin-bottom:8px}.search{height:38px;width:100%;background:#0e1322;color:#f0f4f9;border:.5px solid rgba(255,255,255,.12);border-radius:10px;padding:0 12px}.mode{height:44px;background:#02071b;color:#fff;border:.5px solid rgba(255,255,255,.15);border-radius:16px;padding:0 14px}.menu-actions{display:flex;gap:8px;margin-bottom:8px}.mini-btn{height:34px;border:.5px solid rgba(255,255,255,.12);background:#1b2238;color:#fff;border-radius:10px;padding:0 12px;font-size:12px}.tip{font-size:13px;color:#9ca8bb;margin:8px 2px}.menu-list{max-height:190px;overflow:auto;padding-right:4px;border-top:.5px solid rgba(255,255,255,.1);padding-top:8px}.menu-divider{display:none}.menu-check{display:flex;gap:10px;align-items:center;font-size:13px;color:#e6e9ef;padding:7px 4px;border-radius:6px}.menu-check:hover{background:rgba(255,255,255,.05)}.menu-check input{accent-color:${COLORS.blue};width:20px;height:20px}.done-btn{width:100%;height:52px;margin-top:10px;border:.5px solid rgba(255,255,255,.12);background:#111a34;color:#fff;border-radius:16px;font-size:16px}.mode-head{font-size:12px;color:#9ba3b5;margin:2px 0 6px}.mode-radio{display:flex;gap:8px;margin-bottom:8px}.mode-radio label{display:flex;align-items:center;gap:6px;border:.5px solid rgba(255,255,255,.14);padding:6px 10px;border-radius:999px;background:#181d2d;color:#cbd5e6;font-size:12px}.mode-radio input{accent-color:#378ADD}.panel-actions{position:sticky;bottom:0;background:#10131f;display:flex;gap:8px;margin-top:10px;padding-top:8px;border-top:.5px solid rgba(255,255,255,.1)}.apply-mini{background:#2d67c6}.error{margin-top:10px;color:${COLORS.red}}.kpi-grid{margin-top:14px;display:grid;grid-template-columns:repeat(6,1fr);gap:12px}.kpi .muted,.muted{font-size:12px;color:rgba(255,255,255,.55)}.kpi h3{margin:8px 0 7px;font-size:22px;font-weight:500}.mono{font-family:'DM Mono',monospace}.small{font-size:12px}.neg{color:${COLORS.red}}.pos{color:${COLORS.green}}.neutral{color:${COLORS.gray}}.divider{border-top:1px solid ${COLORS.border};margin:18px 0}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}.sub,.section-sub{font-size:13px;margin-bottom:12px;color:rgba(255,255,255,.6)}.subhead{margin:14px 0 8px;font-size:14px;color:rgba(255,255,255,.82)}.section-title{margin:0}.chart-wrap{position:relative}.h220{height:220px}.h240{height:240px}.h320{height:320px}.legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;font-size:12px;color:rgba(255,255,255,.7)}.legend i{width:10px;height:10px;display:inline-block;border-radius:2px;margin-right:6px;vertical-align:middle}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-top:1px solid ${COLORS.border};white-space:nowrap}th{border-top:0;color:rgba(255,255,255,.55);font-size:12px;font-weight:500}.active-row td{background:rgba(55,138,221,.12)!important}.tint-red td{background:rgba(226,75,74,.05)}.badge-red{background:#FCEBEB;color:#A32D2D;border-radius:999px;font-size:12px;padding:3px 8px;font-weight:600}.mini-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:12px}.mini h4{margin:8px 0 0;font-size:20px;font-weight:500}.info-box{margin-top:12px;background:${COLORS.surface};border:1px solid ${COLORS.border};border-radius:10px;padding:10px}.foot-note{margin-top:10px;font-size:12px;color:rgba(255,255,255,.52)}
+      @media (max-width:1120px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.mini-kpis{grid-template-columns:1fr 1fr}.btn,.filter-right p,select,label span{font-size:14px}h1{font-size:36px}}
+      @media (max-width:840px){.header{flex-direction:column;align-items:flex-start}.two-col,.kpi-grid,.mini-kpis{grid-template-columns:1fr}.btn{height:42px;padding:0 14px;font-size:14px}.done-btn{font-size:16px;height:42px}}
+      `}</style>
+      <style jsx global>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&display=swap');`}</style>
+    </main>
   );
 }
