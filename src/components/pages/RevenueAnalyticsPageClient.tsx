@@ -100,7 +100,7 @@ export default function RevenueAnalyticsPageClient() {
           y: {
             ticks: {
               color: COLORS.tick,
-              callback: (v) => axisYk(Number(v)),
+              callback: (v: number | string) => axisYk(Number(v)),
             },
             grid: { color: COLORS.grid },
           },
@@ -135,12 +135,12 @@ export default function RevenueAnalyticsPageClient() {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (ctx) => {
+              label: (ctx: { datasetIndex: number; raw?: unknown }) => {
                 if (ctx.datasetIndex === 0) return "";
                 return money(Number(ctx.raw ?? 0));
               },
             },
-            filter: (item) => item.datasetIndex !== 0,
+            filter: (item: { datasetIndex: number }) => item.datasetIndex !== 0,
           },
         },
         scales: {
@@ -149,7 +149,7 @@ export default function RevenueAnalyticsPageClient() {
             stacked: true,
             ticks: {
               color: COLORS.tick,
-              callback: (v) => axisYk(Number(v)),
+              callback: (v: number | string) => axisYk(Number(v)),
             },
             grid: { color: COLORS.grid },
           },
@@ -189,7 +189,7 @@ export default function RevenueAnalyticsPageClient() {
           x: {
             ticks: {
               color: COLORS.tick,
-              callback: (v) => `$${Number(v).toLocaleString("en-US")}`,
+              callback: (v: number | string) => `$${Number(v).toLocaleString("en-US")}`,
             },
             grid: { color: COLORS.grid },
           },
