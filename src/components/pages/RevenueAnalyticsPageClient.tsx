@@ -457,6 +457,7 @@ export default function RevenueAnalyticsPageClient() {
             </div>
           </div>
         </section>
+        {openFilter ? <div className="h-[380px] max-[840px]:h-[440px]" /> : null}
 
         {error ? <div className="error">{error}</div> : null}
 
