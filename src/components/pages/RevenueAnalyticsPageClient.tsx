@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useRef } from "react";
-import Chart from "chart.js/auto";
+
+type ChartCtor = new (
+  item: HTMLCanvasElement,
+  config: Record<string, unknown>
+) => { destroy: () => void };
 
 const COLORS = {
   bg: "#0f1117",
@@ -36,7 +40,22 @@ export default function RevenueAnalyticsPageClient() {
   useEffect(() => {
     if (!growthRef.current || !waterfallRef.current || !teamRef.current) return;
 
-    const growthChart = new Chart(growthRef.current, {
+    const loadChart = async () => {
+      if (!(window as unknown as { Chart?: ChartCtor }).Chart) {
+        await new Promise<void>((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js";
+          s.async = true;
+          s.onload = () => resolve();
+          s.onerror = () => reject(new Error("Failed to load Chart.js"));
+          document.head.appendChild(s);
+        });
+      }
+
+      const ChartLib = (window as unknown as { Chart?: ChartCtor }).Chart;
+      if (!ChartLib) return;
+
+      const growthChart = new ChartLib(growthRef.current!, {
       type: "line",
       data: {
         labels: ["2026/03", "2026/04"],
@@ -89,7 +108,7 @@ export default function RevenueAnalyticsPageClient() {
       },
     });
 
-    const waterfallChart = new Chart(waterfallRef.current, {
+      const waterfallChart = new ChartLib(waterfallRef.current!, {
       type: "bar",
       data: {
         labels: ["Mar revenue", "Lost customers", "Contraction", "Expansion", "New customers", "Apr revenue"],
@@ -138,7 +157,7 @@ export default function RevenueAnalyticsPageClient() {
       },
     });
 
-    const teamChart = new Chart(teamRef.current, {
+      const teamChart = new ChartLib(teamRef.current!, {
       type: "bar",
       data: {
         labels: [
@@ -182,10 +201,22 @@ export default function RevenueAnalyticsPageClient() {
       },
     });
 
+      return () => {
+        growthChart.destroy();
+        waterfallChart.destroy();
+        teamChart.destroy();
+      };
+    };
+
+    let destroyCharts: (() => void) | undefined;
+    loadChart()
+      .then((cleanup) => {
+        destroyCharts = cleanup;
+      })
+      .catch(() => undefined);
+
     return () => {
-      growthChart.destroy();
-      waterfallChart.destroy();
-      teamChart.destroy();
+      if (destroyCharts) destroyCharts();
     };
   }, []);
 
