@@ -8,17 +8,21 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
+  AreaChart,
   Line,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
   BarChart,
+  ComposedChart,
   Bar,
   PieChart,
   Pie,
   Cell,
   Legend,
+  ReferenceLine,
 } from "recharts";
 
 type DashboardResp = {
@@ -993,6 +997,27 @@ export default function DashboardPage() {
 
   const expenseTotal = useMemo(() => expenseComposition.reduce((sum, item) => sum + item.value, 0), [expenseComposition]);
 
+  const momRevenue = series.length >= 2
+    ? (series[series.length - 1].revenue - series[series.length - 2].revenue) / (series[series.length - 2].revenue || 1)
+    : 0;
+  const momExpenses = series.length >= 2
+    ? (series[series.length - 1].expenses - series[series.length - 2].expenses) / (series[series.length - 2].expenses || 1)
+    : 0;
+  const momProfit = series.length >= 2
+    ? (series[series.length - 1].profit - series[series.length - 2].profit) / Math.abs(series[series.length - 2].profit || 1)
+    : 0;
+
+  const marginSeries = useMemo(
+    () => series.map(s => ({ month: s.month, margin: s.revenue ? +(s.profit / s.revenue * 100).toFixed(1) : 0 })),
+    [series]
+  );
+  const avgMargin = marginSeries.length > 0 ? marginSeries.reduce((sum, m) => sum + m.margin, 0) / marginSeries.length : 0;
+
+  const bestProfitMonth = series.length > 0
+    ? series.reduce((best, s) => s.profit > best.profit ? s : best, series[0])
+    : { month: "—", profit: 0 };
+  const expenseRatio = kpi.revenue > 0 ? kpi.expenses / kpi.revenue : 0;
+
   const headerAsOf = useMemo(() => {
     if (!data?.asOf) return "";
     return new Date(data.asOf).toLocaleString();
@@ -1720,95 +1745,184 @@ export default function DashboardPage() {
         {/* PNL TAB */}
         {tab === "pnl" ? (
           <>
+            {/* KPI CARDS */}
             <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <KpiCard
-                title="Total Income"
-                numericValue={kpi.revenue}
-                formatValue={formatPKRCompact}
-                subtext="Year-to-date inflows"
-                highlight="good"
-              />
-              <KpiCard
-                title="Total Expenses"
-                numericValue={kpi.expenses}
-                formatValue={formatPKRCompact}
-                subtext="Year-to-date outflows"
-                highlight="bad"
-              />
-              <KpiCard
-                title="Net Profit (Loss)"
-                numericValue={kpi.profit}
-                formatValue={formatPKRCompact}
-                highlight={kpi.profit < 0 ? "bad" : "good"}
-              />
-              <KpiCard title="Months" numericValue={series.length} formatValue={(n) => `${Math.round(n)}`} subtext="Period coverage" />
+              {/* Total Income */}
+              <div className="glass-breathe group rounded-2xl border border-emerald-300/20 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_16px_45px_rgba(6,182,212,0.12)] backdrop-blur-xl transition hover:border-emerald-300/35">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Income</span>
+                </div>
+                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.revenue)}</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  {momRevenue >= 0
+                    ? <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↑ {(momRevenue * 100).toFixed(1)}% MoM</span>
+                    : <span className="flex items-center gap-0.5 rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↓ {(Math.abs(momRevenue) * 100).toFixed(1)}% MoM</span>
+                  }
+                  <span className="text-[11px] text-slate-500">vs prev month</span>
+                </div>
+              </div>
+
+              {/* Total Expenses */}
+              <div className="glass-breathe group rounded-2xl border border-rose-300/20 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_16px_45px_rgba(244,63,94,0.10)] backdrop-blur-xl transition hover:border-rose-300/35">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M20 12H4" />
+                  </svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Expenses</span>
+                </div>
+                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.expenses)}</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  {momExpenses <= 0
+                    ? <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↓ {(Math.abs(momExpenses) * 100).toFixed(1)}% MoM</span>
+                    : <span className="flex items-center gap-0.5 rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↑ {(momExpenses * 100).toFixed(1)}% MoM</span>
+                  }
+                  <span className="text-[11px] text-slate-500">vs prev month</span>
+                </div>
+              </div>
+
+              {/* Net Profit */}
+              <div className={`glass-breathe group rounded-2xl border bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl transition ${kpi.profit >= 0 ? "border-cyan-300/20 shadow-[0_16px_45px_rgba(6,182,212,0.12)] hover:border-cyan-300/35" : "border-rose-300/20 shadow-[0_16px_45px_rgba(244,63,94,0.10)] hover:border-rose-300/35"}`}>
+                <div className="flex items-center gap-2">
+                  <svg className={`h-4 w-4 ${kpi.profit >= 0 ? "text-cyan-400" : "text-rose-400"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                  </svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Net Profit</span>
+                </div>
+                <div className={`mt-3 text-[26px] font-semibold tracking-tight ${kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatPKRCompact(kpi.profit)}</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  {momProfit >= 0
+                    ? <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↑ {(momProfit * 100).toFixed(1)}% MoM</span>
+                    : <span className="flex items-center gap-0.5 rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↓ {(Math.abs(momProfit) * 100).toFixed(1)}% MoM</span>
+                  }
+                  <span className="text-[11px] text-slate-500">vs prev month</span>
+                </div>
+              </div>
+
+              {/* Expense Ratio */}
+              <div className="glass-breathe group rounded-2xl border border-amber-300/20 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_16px_45px_rgba(245,158,11,0.08)] backdrop-blur-xl transition hover:border-amber-300/35">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Expense Ratio</span>
+                </div>
+                <div className={`mt-3 text-[26px] font-semibold tracking-tight ${expenseRatio > 0.9 ? "text-rose-300" : expenseRatio > 0.7 ? "text-amber-300" : "text-emerald-300"}`}>
+                  {(expenseRatio * 100).toFixed(1)}%
+                </div>
+                <div className="mt-2">
+                  <div className="h-1.5 w-full rounded-full bg-white/10">
+                    <div className={`h-full rounded-full transition-all duration-700 ${expenseRatio > 0.9 ? "bg-rose-400" : expenseRatio > 0.7 ? "bg-amber-400" : "bg-emerald-400"}`} style={{ width: `${Math.min(expenseRatio * 100, 100)}%` }} />
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">of revenue spent</div>
+                </div>
+              </div>
             </div>
 
-            <div className="mt-8">
-              <Panel title="Financial Insight">
-                <div className="relative rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/85 via-[#10243f]/70 to-[#130f2f]/80 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_24px_64px_rgba(2,6,23,0.5)] backdrop-blur-xl before:absolute before:inset-0 before:rounded-2xl before:p-px before:[background:linear-gradient(120deg,rgba(34,211,238,0.5),rgba(99,102,241,0.15),rgba(244,63,94,0.35))] before:[mask:linear-gradient(#fff_0_0)_content-box,linear-gradient(#fff_0_0)] before:[mask-composite:xor] md:p-10">
-                  <div className="mx-auto max-w-4xl text-center">
-                    <div className={`mx-auto mb-2 inline-block rounded-3xl px-6 py-2 text-6xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}>
+            {/* HERO FINANCIAL SUMMARY */}
+            <div className="mt-6">
+              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900/90 via-[#0d1f3a]/80 to-[#130f2f]/85 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_24px_64px_rgba(2,6,23,0.55)] backdrop-blur-xl before:absolute before:inset-0 before:rounded-2xl before:p-px before:[background:linear-gradient(120deg,rgba(34,211,238,0.4),rgba(99,102,241,0.1),rgba(244,63,94,0.3))] before:[mask:linear-gradient(#fff_0_0)_content-box,linear-gradient(#fff_0_0)] before:[mask-composite:xor] md:p-10">
+                {/* ambient glow orbs */}
+                <div className={`pointer-events-none absolute -left-20 -top-20 h-60 w-60 rounded-full blur-[80px] ${isProfit ? "bg-emerald-500/10" : "bg-rose-500/10"}`} />
+                <div className="pointer-events-none absolute -bottom-10 -right-10 h-48 w-48 rounded-full bg-indigo-500/8 blur-[60px]" />
+
+                <div className="relative grid grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-12">
+                  {/* Left: big margin display */}
+                  <div className="flex flex-col items-center justify-center text-center lg:items-start lg:text-left">
+                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">{financialLabel}</div>
+                    <div className={`text-7xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}>
                       {formatPct(netMargin)}
                     </div>
-                    <div className="text-[12px] font-semibold uppercase tracking-[0.24em] text-slate-300 md:text-[13px]">{financialLabel.toUpperCase()}</div>
+                    <div className="mt-3 flex items-center gap-2">
+                      {netMargin >= 0
+                        ? <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300">Profitable Period</span>
+                        : <span className="rounded-full bg-rose-500/15 px-3 py-1 text-xs font-semibold text-rose-300">Loss Period</span>
+                      }
+                      <span className="text-xs text-slate-500">{series.length} month{series.length !== 1 ? "s" : ""} tracked</span>
+                    </div>
+                    <p className="mt-5 max-w-sm text-sm leading-relaxed text-slate-300/90">{financialSummary}</p>
+                  </div>
 
-                    <p className="mx-auto mt-5 max-w-3xl text-sm leading-relaxed text-slate-200/95 md:text-base">{financialSummary}</p>
+                  {/* Right: metric rows with progress bars */}
+                  <div className="flex flex-col justify-center gap-5">
+                    {/* Revenue row */}
+                    <div>
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                          <span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />
+                          Revenue
+                        </span>
+                        <span className="text-sm font-semibold text-white">{formatPKRMillions(kpi.revenue)}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-white/8">
+                        <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-cyan-300" style={{ width: "100%" }} />
+                      </div>
+                    </div>
 
-                    <div className="mt-8 grid grid-cols-1 gap-2 border-t border-white/10 pt-4 text-xs text-slate-400 sm:grid-cols-3 md:text-sm">
-                      <div className="sm:border-r sm:border-white/10">Revenue: {formatPKRMillions(kpi.revenue)}</div>
-                      <div className="sm:border-r sm:border-white/10">Expenses: {formatPKRMillions(kpi.expenses)}</div>
-                      <div>Net: {formatPKRMillions(kpi.profit, true)}</div>
+                    {/* Expenses row */}
+                    <div>
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                          <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
+                          Expenses
+                        </span>
+                        <span className="text-sm font-semibold text-white">{formatPKRMillions(kpi.expenses)}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-white/8">
+                        <div className="h-full rounded-full bg-gradient-to-r from-rose-600 to-rose-400 transition-all duration-700" style={{ width: `${Math.min(kpi.revenue > 0 ? (kpi.expenses / kpi.revenue) * 100 : 100, 100)}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Net Profit row */}
+                    <div>
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                          <span className={`h-2.5 w-2.5 rounded-full ${kpi.profit >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} />
+                          Net Profit
+                        </span>
+                        <span className={`text-sm font-semibold ${kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatPKRMillions(kpi.profit, true)}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-white/8">
+                        <div className={`h-full rounded-full transition-all duration-700 ${kpi.profit >= 0 ? "bg-gradient-to-r from-emerald-600 to-emerald-400" : "bg-gradient-to-r from-rose-600 to-rose-400"}`} style={{ width: `${Math.min(kpi.revenue > 0 ? (Math.abs(kpi.profit) / kpi.revenue) * 100 : 0, 100)}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Margin gauge */}
+                    <div className="mt-1 rounded-xl border border-white/8 bg-white/5 px-4 py-3">
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span>Margin Health</span>
+                        <span className={`font-semibold ${netMargin >= 0.15 ? "text-emerald-300" : netMargin >= 0 ? "text-amber-300" : "text-rose-300"}`}>
+                          {netMargin >= 0.15 ? "Strong" : netMargin >= 0 ? "Moderate" : "Negative"}
+                        </span>
+                      </div>
+                      <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
+                        <div className={`h-full rounded-full transition-all duration-700 ${netMargin >= 0.15 ? "bg-emerald-400" : netMargin >= 0 ? "bg-amber-400" : "bg-rose-400"}`} style={{ width: `${Math.min(Math.abs(netMargin) * 200, 100)}%` }} />
+                      </div>
                     </div>
                   </div>
                 </div>
-              </Panel>
+              </div>
             </div>
 
+            {/* CHARTS ROW 1 */}
             <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-2">
-              <ChartCard title="Income vs Expenses" legend={[{ label: "Income", color: "bg-cyan-300" }, { label: "Expenses", color: "bg-rose-300" }]}>
+              {/* Composed Chart: Revenue + Expenses bars + Net Profit line */}
+              <ChartCard title="Revenue, Expenses & Net Profit" legend={[{ label: "Revenue", color: "bg-cyan-300" }, { label: "Expenses", color: "bg-rose-300" }, { label: "Net Profit", color: "bg-emerald-300" }]}>
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                    <ComposedChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                       <defs>
-                        <linearGradient id="incomeBars" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#67e8f9" stopOpacity={0.95} />
-                          <stop offset="100%" stopColor="#0891b2" stopOpacity={0.65} />
+                        <linearGradient id="incomeBars2" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#67e8f9" stopOpacity={0.9} />
+                          <stop offset="100%" stopColor="#0891b2" stopOpacity={0.55} />
                         </linearGradient>
-                        <linearGradient id="expenseBars" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#fda4af" stopOpacity={0.92} />
-                          <stop offset="100%" stopColor="#be123c" stopOpacity={0.58} />
+                        <linearGradient id="expenseBars2" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#fda4af" stopOpacity={0.88} />
+                          <stop offset="100%" stopColor="#be123c" stopOpacity={0.52} />
                         </linearGradient>
-                      </defs>
-                      <CartesianGrid {...GRID} />
-                      <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                      <Tooltip content={<MoneyTooltip />} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
-                      <Bar
-                        dataKey="revenue"
-                        name="Income"
-                        fill="url(#incomeBars)"
-                        radius={[10, 10, 0, 0]}
-                        style={{ filter: "drop-shadow(0 0 8px rgba(103,232,249,0.2))" }}
-                      />
-                      <Bar
-                        dataKey="expenses"
-                        name="Expenses"
-                        fill="url(#expenseBars)"
-                        radius={[10, 10, 0, 0]}
-                        style={{ filter: "drop-shadow(0 0 8px rgba(251,113,133,0.18))" }}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
-
-              <ChartCard title="Net Profit Trend" legend={[{ label: "Net Profit", color: "bg-emerald-300" }]}>
-                <div className="h-[320px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                      <defs>
-                        <linearGradient id="netProfitLine" x1="0" y1="0" x2="1" y2="0">
+                        <linearGradient id="profitLineGrad" x1="0" y1="0" x2="1" y2="0">
                           <stop offset="0%" stopColor="#5eead4" />
                           <stop offset="100%" stopColor="#34d399" />
                         </linearGradient>
@@ -1816,58 +1930,165 @@ export default function DashboardPage() {
                       <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                      <Tooltip content={<MoneyTooltip />} cursor={{ stroke: "rgba(255,255,255,0.22)", strokeDasharray: "4 4" }} />
+                      <Tooltip content={<MoneyTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                      <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" strokeDasharray="4 4" />
+                      <Bar dataKey="revenue" name="Revenue" fill="url(#incomeBars2)" radius={[6, 6, 0, 0]} style={{ filter: "drop-shadow(0 0 6px rgba(103,232,249,0.18))" }} />
+                      <Bar dataKey="expenses" name="Expenses" fill="url(#expenseBars2)" radius={[6, 6, 0, 0]} style={{ filter: "drop-shadow(0 0 6px rgba(251,113,133,0.16))" }} />
                       <Line
                         type="monotone"
                         dataKey="profit"
                         name="Net Profit"
-                        stroke="url(#netProfitLine)"
+                        stroke="url(#profitLineGrad)"
                         strokeWidth={3}
-                        dot={(props) => <LastPointPulseDot {...props} dataLength={series.length} color="#5eead4" />}
+                        dot={(props: any) => <LastPointPulseDot {...props} dataLength={series.length} color="#5eead4" />}
                         activeDot={{ r: 5.5, fill: "#5eead4", stroke: "#ccfbf1", strokeWidth: 2 }}
-                        style={{ filter: "drop-shadow(0 0 10px rgba(52,211,153,0.28))" }}
+                        style={{ filter: "drop-shadow(0 0 8px rgba(52,211,153,0.3))" }}
                       />
-                    </LineChart>
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </ChartCard>
+
+              {/* Profit Margin Trend (AreaChart) */}
+              <ChartCard title="Profit Margin Trend %" legend={[{ label: "Margin %", color: "bg-teal-300" }, { label: "Average", color: "bg-amber-300" }]}>
+                <div className="h-[320px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={marginSeries} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                      <defs>
+                        <linearGradient id="marginAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#2dd4bf" stopOpacity={0.45} />
+                          <stop offset="100%" stopColor="#2dd4bf" stopOpacity={0.03} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid {...GRID} />
+                      <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={(v) => `${v}%`} />
+                      <Tooltip
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          return (
+                            <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
+                              <div className="font-semibold">{label}</div>
+                              <div className="text-teal-300">{Number(payload[0]?.value ?? 0).toFixed(1)}% margin</div>
+                            </div>
+                          );
+                        }}
+                        cursor={{ stroke: "rgba(255,255,255,0.18)", strokeDasharray: "4 4" }}
+                      />
+                      <ReferenceLine y={0} stroke="rgba(255,255,255,0.22)" strokeDasharray="4 4" />
+                      <ReferenceLine y={avgMargin} stroke="#f59e0b" strokeDasharray="6 3" strokeOpacity={0.6} label={{ value: `avg ${avgMargin.toFixed(1)}%`, fill: "#f59e0b", fontSize: 10, position: "insideTopRight" }} />
+                      <Area
+                        type="monotone"
+                        dataKey="margin"
+                        name="Margin %"
+                        stroke="#2dd4bf"
+                        strokeWidth={2.5}
+                        fill="url(#marginAreaGrad)"
+                        dot={(props: any) => <LastPointPulseDot {...props} dataLength={marginSeries.length} color="#2dd4bf" />}
+                        activeDot={{ r: 5, fill: "#2dd4bf", stroke: "#99f6e4", strokeWidth: 2 }}
+                        style={{ filter: "drop-shadow(0 0 8px rgba(45,212,191,0.25))" }}
+                      />
+                    </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </ChartCard>
             </div>
 
+            {/* EXPENSE BREAKDOWN: Donut + Ranked List */}
             <div className="mt-6">
-              <ChartCard
-                title="Expense Composition"
-                legend={expenseComposition.map((entry, idx) => ({
-                  label: entry.name,
-                  color: DONUT_COLOR_CLASSES[idx % DONUT_COLOR_CLASSES.length],
-                }))}
-              >
-                <div className="h-[340px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Tooltip content={<MoneyTooltip pie />} />
-                      <Pie
-                        data={expenseComposition}
-                        dataKey="value"
-                        nameKey="name"
-                        innerRadius={78}
-                        outerRadius={116}
-                        paddingAngle={2}
-                        cornerRadius={6}
-                      >
-                        {expenseComposition.map((_, i) => (
-                          <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <text x="50%" y="46%" textAnchor="middle" className="fill-slate-300 text-[11px] uppercase tracking-[0.18em]">
-                        Total
-                      </text>
-                      <text x="50%" y="54%" textAnchor="middle" className="fill-white text-sm font-semibold md:text-base">
-                        {formatPKRCompact(expenseTotal)}
-                      </text>
-                    </PieChart>
-                  </ResponsiveContainer>
+              <ChartCard title="Expense Composition" legend={expenseComposition.map((entry, idx) => ({ label: entry.name, color: DONUT_COLOR_CLASSES[idx % DONUT_COLOR_CLASSES.length] }))}>
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  {/* Donut chart */}
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Tooltip content={<MoneyTooltip pie />} />
+                        <Pie data={expenseComposition} dataKey="value" nameKey="name" innerRadius={72} outerRadius={108} paddingAngle={2} cornerRadius={6}>
+                          {expenseComposition.map((_, i) => (
+                            <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <text x="50%" y="46%" textAnchor="middle" fill="rgba(148,163,184,0.8)" fontSize={10} letterSpacing="0.18em">TOTAL</text>
+                        <text x="50%" y="56%" textAnchor="middle" fill="#f1f5f9" fontSize={13} fontWeight={600}>{formatPKRCompact(expenseTotal)}</text>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Ranked horizontal bars */}
+                  <div className="flex flex-col justify-center gap-3 py-2">
+                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</div>
+                    {expenseComposition.map((item, idx) => {
+                      const pct = expenseTotal > 0 ? (item.value / expenseTotal) * 100 : 0;
+                      return (
+                        <div key={item.name}>
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5 text-xs text-slate-300">
+                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
+                              {item.name}
+                            </span>
+                            <span className="text-xs font-semibold text-slate-200">{pct.toFixed(1)}% &middot; {formatPKRCompact(item.value)}</span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-white/8">
+                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </ChartCard>
+            </div>
+
+            {/* KEY INSIGHTS STRIP */}
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {/* Best Month */}
+              <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/8 to-white/4 p-5 backdrop-blur-xl">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  <svg className="h-3.5 w-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 3l14 9-14 9V3z" />
+                  </svg>
+                  Best Month
+                </div>
+                <div className="mt-3 text-xl font-bold text-white">{bestProfitMonth.month || "—"}</div>
+                <div className={`mt-1 text-sm font-semibold ${bestProfitMonth.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                  {formatPKRCompact(bestProfitMonth.profit)}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">highest net profit in period</div>
+              </div>
+
+              {/* Avg Monthly Margin */}
+              <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/8 to-white/4 p-5 backdrop-blur-xl">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  <svg className="h-3.5 w-3.5 text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  Avg Monthly Margin
+                </div>
+                <div className={`mt-3 text-xl font-bold ${avgMargin >= 0 ? "text-teal-300" : "text-rose-300"}`}>
+                  {avgMargin.toFixed(1)}%
+                </div>
+                <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
+                  <div className={`h-full rounded-full transition-all duration-700 ${avgMargin >= 10 ? "bg-teal-400" : avgMargin >= 0 ? "bg-amber-400" : "bg-rose-400"}`} style={{ width: `${Math.min(Math.abs(avgMargin) * 2, 100)}%` }} />
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">average across {marginSeries.length} months</div>
+              </div>
+
+              {/* Cost Efficiency */}
+              <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/8 to-white/4 p-5 backdrop-blur-xl">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  <svg className="h-3.5 w-3.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Cost Efficiency
+                </div>
+                <div className={`mt-3 text-xl font-bold ${expenseRatio <= 0.7 ? "text-emerald-300" : expenseRatio <= 0.9 ? "text-amber-300" : "text-rose-300"}`}>
+                  {((1 - expenseRatio) * 100).toFixed(1)}%
+                </div>
+                <div className="mt-1 text-sm text-slate-400">
+                  {expenseRatio <= 0.7 ? "Lean & efficient" : expenseRatio <= 0.9 ? "Room to optimize" : "High cost pressure"}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">{(expenseRatio * 100).toFixed(1)}% of revenue goes to expenses</div>
+              </div>
             </div>
           </>
         ) : null}
