@@ -997,15 +997,15 @@ export default function DashboardPage() {
 
   const expenseTotal = useMemo(() => expenseComposition.reduce((sum, item) => sum + item.value, 0), [expenseComposition]);
 
-  const momRevenue = series.length >= 2
-    ? (series[series.length - 1].revenue - series[series.length - 2].revenue) / (series[series.length - 2].revenue || 1)
-    : 0;
-  const momExpenses = series.length >= 2
-    ? (series[series.length - 1].expenses - series[series.length - 2].expenses) / (series[series.length - 2].expenses || 1)
-    : 0;
-  const momProfit = series.length >= 2
-    ? (series[series.length - 1].profit - series[series.length - 2].profit) / Math.abs(series[series.length - 2].profit || 1)
-    : 0;
+  const momRevenue: number | null = series.length >= 2 && series[series.length - 2].revenue !== 0
+    ? (series[series.length - 1].revenue - series[series.length - 2].revenue) / series[series.length - 2].revenue
+    : null;
+  const momExpenses: number | null = series.length >= 2 && series[series.length - 2].expenses !== 0
+    ? (series[series.length - 1].expenses - series[series.length - 2].expenses) / series[series.length - 2].expenses
+    : null;
+  const momProfit: number | null = series.length >= 2 && series[series.length - 2].profit !== 0
+    ? (series[series.length - 1].profit - series[series.length - 2].profit) / Math.abs(series[series.length - 2].profit)
+    : null;
 
   const marginSeries = useMemo(
     () => series.map(s => ({ month: s.month, margin: s.revenue ? +(s.profit / s.revenue * 100).toFixed(1) : 0 })),
@@ -1016,7 +1016,7 @@ export default function DashboardPage() {
   const bestProfitMonth = series.length > 0
     ? series.reduce((best, s) => s.profit > best.profit ? s : best, series[0])
     : { month: "—", profit: 0 };
-  const expenseRatio = kpi.revenue > 0 ? kpi.expenses / kpi.revenue : 0;
+  const expenseRatio: number | null = kpi.revenue > 0 ? kpi.expenses / kpi.revenue : null;
 
   const headerAsOf = useMemo(() => {
     if (!data?.asOf) return "";
@@ -1757,11 +1757,13 @@ export default function DashboardPage() {
                 </div>
                 <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.revenue)}</div>
                 <div className="mt-2 flex items-center gap-1.5">
-                  {momRevenue >= 0
-                    ? <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↑ {(momRevenue * 100).toFixed(1)}% MoM</span>
-                    : <span className="flex items-center gap-0.5 rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↓ {(Math.abs(momRevenue) * 100).toFixed(1)}% MoM</span>
+                  {momRevenue === null
+                    ? <span className="text-[11px] text-slate-500">No prior data</span>
+                    : momRevenue >= 0
+                      ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↑ {(momRevenue * 100).toFixed(1)}% MoM</span>
+                      : <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↓ {(Math.abs(momRevenue) * 100).toFixed(1)}% MoM</span>
                   }
-                  <span className="text-[11px] text-slate-500">vs prev month</span>
+                  {momRevenue !== null && <span className="text-[11px] text-slate-500">vs prev month</span>}
                 </div>
               </div>
 
@@ -1775,11 +1777,13 @@ export default function DashboardPage() {
                 </div>
                 <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.expenses)}</div>
                 <div className="mt-2 flex items-center gap-1.5">
-                  {momExpenses <= 0
-                    ? <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↓ {(Math.abs(momExpenses) * 100).toFixed(1)}% MoM</span>
-                    : <span className="flex items-center gap-0.5 rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↑ {(momExpenses * 100).toFixed(1)}% MoM</span>
+                  {momExpenses === null
+                    ? <span className="text-[11px] text-slate-500">No prior data</span>
+                    : momExpenses <= 0
+                      ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↓ {(Math.abs(momExpenses) * 100).toFixed(1)}% MoM</span>
+                      : <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↑ {(momExpenses * 100).toFixed(1)}% MoM</span>
                   }
-                  <span className="text-[11px] text-slate-500">vs prev month</span>
+                  {momExpenses !== null && <span className="text-[11px] text-slate-500">vs prev month</span>}
                 </div>
               </div>
 
@@ -1793,11 +1797,13 @@ export default function DashboardPage() {
                 </div>
                 <div className={`mt-3 text-[26px] font-semibold tracking-tight ${kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatPKRCompact(kpi.profit)}</div>
                 <div className="mt-2 flex items-center gap-1.5">
-                  {momProfit >= 0
-                    ? <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↑ {(momProfit * 100).toFixed(1)}% MoM</span>
-                    : <span className="flex items-center gap-0.5 rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↓ {(Math.abs(momProfit) * 100).toFixed(1)}% MoM</span>
+                  {momProfit === null
+                    ? <span className="text-[11px] text-slate-500">No prior data</span>
+                    : momProfit >= 0
+                      ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↑ {(momProfit * 100).toFixed(1)}% MoM</span>
+                      : <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↓ {(Math.abs(momProfit) * 100).toFixed(1)}% MoM</span>
                   }
-                  <span className="text-[11px] text-slate-500">vs prev month</span>
+                  {momProfit !== null && <span className="text-[11px] text-slate-500">vs prev month</span>}
                 </div>
               </div>
 
@@ -1809,14 +1815,16 @@ export default function DashboardPage() {
                   </svg>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Expense Ratio</span>
                 </div>
-                <div className={`mt-3 text-[26px] font-semibold tracking-tight ${expenseRatio > 0.9 ? "text-rose-300" : expenseRatio > 0.7 ? "text-amber-300" : "text-emerald-300"}`}>
-                  {(expenseRatio * 100).toFixed(1)}%
+                <div className={`mt-3 text-[26px] font-semibold tracking-tight ${expenseRatio === null ? "text-slate-400" : expenseRatio > 0.9 ? "text-rose-300" : expenseRatio > 0.7 ? "text-amber-300" : "text-emerald-300"}`}>
+                  {expenseRatio === null ? "N/A" : `${(expenseRatio * 100).toFixed(1)}%`}
                 </div>
                 <div className="mt-2">
                   <div className="h-1.5 w-full rounded-full bg-white/10">
-                    <div className={`h-full rounded-full transition-all duration-700 ${expenseRatio > 0.9 ? "bg-rose-400" : expenseRatio > 0.7 ? "bg-amber-400" : "bg-emerald-400"}`} style={{ width: `${Math.min(expenseRatio * 100, 100)}%` }} />
+                    {expenseRatio !== null && (
+                      <div className={`h-full rounded-full transition-all duration-700 ${expenseRatio > 0.9 ? "bg-rose-400" : expenseRatio > 0.7 ? "bg-amber-400" : "bg-emerald-400"}`} style={{ width: `${Math.min(expenseRatio * 100, 100)}%` }} />
+                    )}
                   </div>
-                  <div className="mt-1 text-[11px] text-slate-500">of revenue spent</div>
+                  <div className="mt-1 text-[11px] text-slate-500">{expenseRatio === null ? "no revenue in period" : "of revenue spent"}</div>
                 </div>
               </div>
             </div>
@@ -1871,7 +1879,7 @@ export default function DashboardPage() {
                         <span className="text-sm font-semibold text-white">{formatPKRMillions(kpi.expenses)}</span>
                       </div>
                       <div className="h-2 w-full rounded-full bg-white/8">
-                        <div className="h-full rounded-full bg-gradient-to-r from-rose-600 to-rose-400 transition-all duration-700" style={{ width: `${Math.min(kpi.revenue > 0 ? (kpi.expenses / kpi.revenue) * 100 : 100, 100)}%` }} />
+                        <div className="h-full rounded-full bg-gradient-to-r from-rose-600 to-rose-400 transition-all duration-700" style={{ width: `${kpi.revenue > 0 ? Math.min((kpi.expenses / kpi.revenue) * 100, 100) : 0}%` }} />
                       </div>
                     </div>
 
@@ -2081,13 +2089,15 @@ export default function DashboardPage() {
                   </svg>
                   Cost Efficiency
                 </div>
-                <div className={`mt-3 text-xl font-bold ${expenseRatio <= 0.7 ? "text-emerald-300" : expenseRatio <= 0.9 ? "text-amber-300" : "text-rose-300"}`}>
-                  {((1 - expenseRatio) * 100).toFixed(1)}%
+                <div className={`mt-3 text-xl font-bold ${expenseRatio === null ? "text-slate-400" : expenseRatio <= 0.7 ? "text-emerald-300" : expenseRatio <= 0.9 ? "text-amber-300" : "text-rose-300"}`}>
+                  {expenseRatio === null ? "N/A" : `${((1 - expenseRatio) * 100).toFixed(1)}%`}
                 </div>
                 <div className="mt-1 text-sm text-slate-400">
-                  {expenseRatio <= 0.7 ? "Lean & efficient" : expenseRatio <= 0.9 ? "Room to optimize" : "High cost pressure"}
+                  {expenseRatio === null ? "No revenue to compare" : expenseRatio <= 0.7 ? "Lean & efficient" : expenseRatio <= 0.9 ? "Room to optimize" : "High cost pressure"}
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500">{(expenseRatio * 100).toFixed(1)}% of revenue goes to expenses</div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  {expenseRatio === null ? "expense ratio unavailable without revenue" : `${(expenseRatio * 100).toFixed(1)}% of revenue goes to expenses`}
+                </div>
               </div>
             </div>
           </>
