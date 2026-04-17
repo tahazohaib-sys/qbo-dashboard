@@ -6,13 +6,19 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
+  BarChart,
+  Bar,
+  AreaChart,
+  Area,
+  ComposedChart,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
   Legend,
-  BarChart,
-  Bar,
+  ReferenceLine,
+  Cell,
+  LabelList,
 } from "recharts";
 
 type ApiResp =
@@ -102,8 +108,73 @@ const AXIS_LINE = { stroke: "rgba(226,232,240,0.55)" } as const;
 const TICK_LINE = { stroke: "rgba(226,232,240,0.35)" } as const;
 const GRID = { strokeDasharray: "3 3", opacity: 0.22 } as const;
 
+const LINE_PALETTE = [
+  "#22d3ee", "#34d399", "#fb923c", "#a78bfa",
+  "#f472b6", "#facc15", "#60a5fa", "#4ade80",
+  "#f87171", "#94a3b8",
+] as const;
+
+function fmtAxisShort(v: any) {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return "0";
+  if (Math.abs(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return `${Math.round(n)}`;
+}
+
 function classDelta(n: number) {
   return n > 0 ? "text-emerald-300" : n < 0 ? "text-rose-300" : "text-slate-200";
+}
+
+function KpiCard({
+  icon, label, value, sub, tone, sparkData,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  sub?: string;
+  tone: "emerald" | "sky" | "rose" | "amber" | "neutral";
+  sparkData?: Array<{ v: number }>;
+}) {
+  const borderColor = {
+    emerald: "border-l-emerald-400/60",
+    sky: "border-l-sky-400/60",
+    rose: "border-l-rose-400/60",
+    amber: "border-l-amber-400/60",
+    neutral: "border-l-white/20",
+  }[tone];
+  const areaColor = {
+    emerald: "#34d399", sky: "#38bdf8",
+    rose: "#fb7185", amber: "#fbbf24", neutral: "#94a3b8",
+  }[tone];
+  return (
+    <div className={`rounded-2xl border border-white/10 border-l-4 ${borderColor} bg-white/5 p-4 flex flex-col gap-2`}>
+      <div className="text-[11px] uppercase tracking-widest text-slate-400">{icon} {label}</div>
+      <div className="text-xl font-semibold text-white">{value}</div>
+      {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
+      {sparkData && sparkData.length > 1 && (
+        <div className="h-10 w-full mt-1">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={sparkData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id={`spark-${tone}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={areaColor} stopOpacity={0.4} />
+                  <stop offset="95%" stopColor={areaColor} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area
+                type="monotone" dataKey="v"
+                stroke={areaColor} strokeWidth={1.5}
+                fill={`url(#spark-${tone})`} dot={false}
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function MoneyTooltip({ active, payload, label, symbol }: any) {
@@ -125,16 +196,24 @@ function Panel({
   title,
   subtitle,
   children,
+  accent,
 }: {
   title: string;
   subtitle?: string;
   children: React.ReactNode;
+  accent?: "rose" | "emerald" | "sky" | "amber";
 }) {
+  const accentClass = accent ? {
+    rose: "border-l-4 border-l-rose-400/60",
+    emerald: "border-l-4 border-l-emerald-400/60",
+    sky: "border-l-4 border-l-sky-400/60",
+    amber: "border-l-4 border-l-amber-400/60",
+  }[accent] : "";
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
+    <div className={`rounded-2xl border border-white/10 ${accentClass} bg-white/5 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.35)]`}>
       <div className="mb-3">
         <div className="text-sm font-semibold">{title}</div>
-        {subtitle ? <div className="text-xs text-slate-300">{subtitle}</div> : null}
+        {subtitle ? <div className="text-xs text-slate-400">{subtitle}</div> : null}
       </div>
       {children}
     </div>
@@ -235,7 +314,7 @@ function MultiSelect({
             </div>
 
             <div className="mt-2 text-[11px] text-slate-400">
-              Tip: choose <b>Exclude</b> + tick items = “All except selected”.
+              Tip: choose <b>Exclude</b> + tick items = "All except selected".
             </div>
           </div>
 
@@ -357,13 +436,33 @@ export default function RevenueAnalyticsPage() {
     return Array.from(keys);
   }, [growthSeries]);
 
+  const avgMonthlyRevenue = useMemo(
+    () => (monthTotals.length ? totalRevenueFiltered / monthTotals.length : 0),
+    [monthTotals, totalRevenueFiltered]
+  );
+
+  const peakMonth = useMemo(
+    () => monthTotals.reduce((best, x) => (!best || x.totalRevenue > best.totalRevenue ? x : best), monthTotals[0] ?? null),
+    [monthTotals]
+  );
+
+  const churnCards = useMemo(() => churnRows.slice(-12), [churnRows]);
+
   return (
     <div className="min-h-screen bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(16,185,129,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(99,102,241,0.10),transparent_55%),linear-gradient(180deg,#050814_0%,#070b1a_45%,#050814_100%)] text-slate-100">
       <div className="mx-auto max-w-7xl px-5 py-8">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Revenue Analytics</h1>
-            <p className="mt-1 text-sm text-slate-300">Slicer-driven Revenue Growth + Churn + Team Revenue distribution.</p>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-semibold tracking-tight">Revenue Analytics</h1>
+              {ok && (
+                <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-0.5 text-xs font-semibold text-emerald-300">
+                  {(data as any).filteredCount} rows
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-sm text-slate-400">Slicer-driven Revenue Growth · Churn · Team Distribution</p>
+            <div className="mt-2 h-[2px] w-32 rounded-full bg-gradient-to-r from-emerald-400/80 via-sky-400/60 to-transparent" />
           </div>
 
           <div className="flex items-center gap-2">
@@ -448,221 +547,333 @@ export default function RevenueAnalyticsPage() {
         </div>
 
         {/* KPI */}
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs text-slate-300">Total Revenue (Filtered)</div>
-            <div className="mt-2 text-2xl font-semibold">{fmtMoney(totalRevenueFiltered, symbol)}</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs text-slate-300">Selected Months</div>
-            <div className="mt-2 text-xl font-semibold">{months.length ? months.length : "All"}</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs text-slate-300">Selected Companies</div>
-            <div className="mt-2 text-xl font-semibold">{companies.length ? companies.length : "All"}</div>
-          </div>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <KpiCard
+            icon="$" label="Total Revenue"
+            value={fmtMoney(totalRevenueFiltered, symbol)}
+            sub="Filtered period"
+            tone="emerald"
+            sparkData={monthTotals.map((x) => ({ v: x.totalRevenue }))}
+          />
+          <KpiCard
+            icon="~" label="Avg Monthly"
+            value={fmtMoney(avgMonthlyRevenue, symbol)}
+            sub={`Over ${monthTotals.length} month${monthTotals.length !== 1 ? "s" : ""}`}
+            tone="sky"
+            sparkData={monthTotals.map((x) => ({ v: x.totalRevenue }))}
+          />
+          <KpiCard
+            icon="^" label="Peak Month"
+            value={peakMonth ? peakMonth.month : "—"}
+            sub={peakMonth ? fmtMoney(peakMonth.totalRevenue, symbol) : ""}
+            tone="amber"
+          />
+          <KpiCard
+            icon="#" label="Months Shown"
+            value={String(monthTotals.length || "—")}
+            sub={months.length ? `${months.length} selected` : "All months"}
+            tone="neutral"
+          />
+          <KpiCard
+            icon="@" label="Companies"
+            value={companies.length ? String(companies.length) : (ok ? String((data as any).filters.companies.length) : "—")}
+            sub={companies.length ? `${companiesMode} filter` : "All companies"}
+            tone="sky"
+          />
+          <KpiCard
+            icon="!" label="Data Sources"
+            value={sources.length ? String(sources.length) : "All"}
+            sub={sources.length ? `${sourcesMode} filter` : "No filter"}
+            tone="neutral"
+          />
         </div>
 
-        {/* Growth chart + Growth table (PRIMARY) */}
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Panel title="Revenue Growth (Monthly, Company-wise)" subtitle="Lines per company (includes Total Revenue line)">
-            <div className="h-[320px]">
+        {/* Section 2: Revenue Overview Chart (full-width) */}
+        <div className="mt-4">
+          <Panel
+            title="Revenue Overview — Monthly Trend"
+            subtitle="Total revenue area (sky fill) + per-company lines. Amber dashed line = average monthly revenue."
+          >
+            <div className="h-[400px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={ok ? (data as any).growthSeries : []} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                <ComposedChart
+                  data={ok ? (data as any).growthSeries : []}
+                  margin={{ top: 14, right: 20, left: 8, bottom: 8 }}
+                >
+                  <defs>
+                    <linearGradient id="totalRevGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#38bdf8" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid {...GRID} />
                   <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                  <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                  <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisShort} width={56} />
                   <Tooltip content={<MoneyTooltip symbol={symbol} />} />
-                  <Legend />
-                  <Line type="monotone" dataKey="totalRevenue" name="Total Revenue" stroke="#60a5fa" strokeWidth={3} dot={false} />
-                  {growthLineKeys.map((k) => (
-                    <Line key={k} type="monotone" dataKey={k} name={k} strokeWidth={2} dot={false} />
+                  <Legend wrapperStyle={{ paddingTop: 8 }} />
+                  <Area
+                    type="monotone" dataKey="totalRevenue" name="Total Revenue"
+                    stroke="#38bdf8" strokeWidth={2.5}
+                    fill="url(#totalRevGrad)" dot={false}
+                    activeDot={{ r: 5, fill: "#38bdf8", stroke: "#e0f2fe", strokeWidth: 2 }}
+                  />
+                  {growthLineKeys.map((k, i) => (
+                    <Line
+                      key={k} type="monotone" dataKey={k} name={k}
+                      stroke={LINE_PALETTE[i % LINE_PALETTE.length]}
+                      strokeWidth={1.8} dot={false}
+                      strokeDasharray={i % 3 === 2 ? "5 3" : undefined}
+                    />
                   ))}
-                </LineChart>
+                  {avgMonthlyRevenue > 0 && (
+                    <ReferenceLine
+                      y={avgMonthlyRevenue} stroke="#fbbf24"
+                      strokeDasharray="6 4" strokeWidth={1.5}
+                      label={{ value: `Avg ${fmtAxisShort(avgMonthlyRevenue)}`, fill: "#fbbf24", fontSize: 11, position: "right" }}
+                    />
+                  )}
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           </Panel>
+        </div>
 
-          <Panel title="Revenue Growth Table" subtitle="Change (Δ) and Change % (green = positive, red = negative)">
+        {/* Section 3: Monthly Revenue Bar + Redesigned Growth Table */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Panel title="Monthly Revenue Totals" subtitle="Bar height = total revenue for that month. Amber bar = peak month.">
+            <div className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthTotals} margin={{ top: 10, right: 12, left: 4, bottom: 6 }}>
+                  <defs>
+                    <linearGradient id="monthBarGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#34d399" stopOpacity={0.9} />
+                      <stop offset="100%" stopColor="#059669" stopOpacity={0.6} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid {...GRID} />
+                  <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} interval={0} angle={-20} height={50} />
+                  <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisShort} width={52} />
+                  <Tooltip content={<MoneyTooltip symbol={symbol} />} />
+                  <Bar dataKey="totalRevenue" name="Revenue" radius={[6, 6, 0, 0]}>
+                    {monthTotals.map((entry, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={entry.month === peakMonth?.month ? "#fbbf24" : "url(#monthBarGrad)"}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="mt-2 flex items-center gap-4 text-[11px] text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-400" /> Peak month
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" /> Other months
+              </span>
+            </div>
+          </Panel>
+
+          <Panel title="Revenue Growth Table" subtitle="Pill badges: emerald = positive Δ%, rose = negative. Best/worst rows highlighted.">
             {ok ? (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
                 <table className="w-full text-sm">
-                  <thead className="text-left text-xs text-slate-300">
+                  <thead className="sticky top-0 bg-[#070b1a] text-left text-xs text-slate-400 z-10">
                     <tr>
                       <th className="py-2 pr-3">Month</th>
                       <th className="py-2 pr-3">Company</th>
                       <th className="py-2 text-right">Revenue</th>
                       <th className="py-2 text-right">Δ</th>
                       <th className="py-2 text-right">Δ%</th>
-                      <th className="py-2 text-right">Total (Month)</th>
                       <th className="py-2 text-right">Total Δ%</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(data as any).growthTable?.length ? (
-                      (data as any).growthTable.map((r: any, i: number) => (
-                        <tr key={i} className="border-t border-white/10">
-                          <td className="py-2 pr-3">{r.month}</td>
-                          <td className="py-2 pr-3">{r.company}</td>
-                          <td className="py-2 text-right font-semibold">{fmtMoney(Number(r.revenue ?? 0), symbol)}</td>
-                          <td className={`py-2 text-right font-semibold ${classDelta(Number(r.change ?? 0))}`}>
-                            {fmtMoney(Number(r.change ?? 0), symbol)}
-                          </td>
-                          <td className={`py-2 text-right font-semibold ${classDelta(Number(r.changePct ?? 0))}`}>
-                            {fmtPct(Number(r.changePct ?? 0))}
-                          </td>
-                          <td className="py-2 text-right font-semibold text-slate-200">
-                            {fmtMoney(Number(r.totalRevenue ?? 0), symbol)}
-                          </td>
-                          <td className={`py-2 text-right font-semibold ${classDelta(Number(r.totalChangePct ?? 0))}`}>
-                            {fmtPct(Number(r.totalChangePct ?? 0))}
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
+                    {(data as any).growthTable?.length ? (() => {
+                      const rows = (data as any).growthTable as any[];
+                      const maxPct = Math.max(...rows.map((r: any) => Number(r.changePct ?? 0)));
+                      const minPct = Math.min(...rows.map((r: any) => Number(r.changePct ?? 0)));
+                      return rows.map((r: any, i: number) => {
+                        const pct = Number(r.changePct ?? 0);
+                        const isBest = pct === maxPct && maxPct > 0;
+                        const isWorst = pct === minPct && minPct < 0;
+                        return (
+                          <tr
+                            key={i}
+                            className={`border-t border-white/10 ${isBest ? "bg-emerald-500/5" : isWorst ? "bg-rose-500/5" : ""}`}
+                          >
+                            <td className="py-1.5 pr-3 text-xs">{r.month}</td>
+                            <td className="py-1.5 pr-3 font-medium text-xs">{r.company}</td>
+                            <td className="py-1.5 text-right text-xs font-semibold">{fmtMoney(Number(r.revenue ?? 0), symbol)}</td>
+                            <td className={`py-1.5 text-right text-xs font-semibold ${classDelta(Number(r.change ?? 0))}`}>
+                              {fmtMoney(Number(r.change ?? 0), symbol)}
+                            </td>
+                            <td className="py-1.5 text-right">
+                              <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                pct > 0 ? "bg-emerald-500/15 text-emerald-300"
+                                : pct < 0 ? "bg-rose-500/15 text-rose-300"
+                                : "bg-white/5 text-slate-400"
+                              }`}>
+                                {fmtPct(pct)}
+                              </span>
+                            </td>
+                            <td className="py-1.5 text-right">
+                              <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                Number(r.totalChangePct ?? 0) > 0 ? "bg-sky-500/15 text-sky-300"
+                                : Number(r.totalChangePct ?? 0) < 0 ? "bg-rose-500/15 text-rose-300"
+                                : "bg-white/5 text-slate-400"
+                              }`}>
+                                {fmtPct(Number(r.totalChangePct ?? 0))}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })() : (
                       <tr>
-                        <td colSpan={7} className="py-3 text-slate-300">
-                          No growth rows for selected slicers.
-                        </td>
+                        <td colSpan={6} className="py-3 text-slate-400">No growth rows for selected slicers.</td>
                       </tr>
                     )}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <div className="py-3 text-slate-300">Loading…</div>
+              <div className="py-3 text-slate-400">Loading…</div>
             )}
           </Panel>
         </div>
 
-        {/* Churn vs Growth + row-click drill */}
+        {/* Section 4: Revenue Health Cards */}
         <div className="mt-4">
           <Panel
-            title="Monthly Revenue Churn Rate vs Growth Rate (Company-wise)"
-            subtitle="Click a row to see revenue bridge: lost/new customers + expansion/contraction from existing customers."
+            title="Revenue Health — Churn vs Growth"
+            subtitle="Last 12 company-month entries. Click a card to open the Revenue Bridge + customer drill detail below."
           >
             {ok ? (
               <>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-left text-xs text-slate-300">
-                      <tr>
-                        <th className="py-2 pr-3">Company</th>
-                        <th className="py-2 pr-3">Month</th>
-                        <th className="py-2 text-right">Prev Total</th>
-                        <th className="py-2 text-right">Current Total</th>
-                        <th className="py-2 text-right">Lost Revenue</th>
-                        <th className="py-2 text-right">Added Revenue</th>
-                        <th className="py-2 text-right">Existing ↑</th>
-                        <th className="py-2 text-right">Existing ↓</th>
-                        <th className="py-2 text-right">Existing Net</th>
-                        <th className="py-2 text-right">Net Δ</th>
-                        <th className="py-2 text-right">Churn Rate</th>
-                        <th className="py-2 text-right">Growth Rate</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {churnRows.length ? (
-                        churnRows.slice(-36).map((r: any, i: number) => {
-                          const key = `${r.company}||${r.month}`;
-                          const active = selectedChurnKey === key;
-                          return (
-                            <tr
-                              key={i}
-                              className={`border-t border-white/10 cursor-pointer hover:bg-white/5 ${active ? "bg-white/5" : ""}`}
-                              onClick={() => setSelectedChurnKey(key)}
-                              title="Click to view customer drill"
-                            >
-                              <td className="py-2 pr-3 font-semibold">{r.company}</td>
-                              <td className="py-2 pr-3">{r.month}</td>
-                              <td className="py-2 text-right">{fmtMoney(Number(r.prevTotal ?? 0), symbol)}</td>
-                              <td className="py-2 text-right font-semibold">{fmtMoney(Number(r.currentTotal ?? 0), symbol)}</td>
-                              <td className="py-2 text-right font-semibold text-rose-300">
-                                {fmtMoney(Number(r.lostRevenue ?? 0), symbol)}
-                              </td>
-                              <td className="py-2 text-right font-semibold text-emerald-300">
-                                {fmtMoney(Number(r.addedRevenue ?? 0), symbol)}
-                              </td>
-                              <td className="py-2 text-right font-semibold text-emerald-300">
-                                {fmtMoney(Number(r.expansionRevenue ?? 0), symbol)}
-                              </td>
-                              <td className="py-2 text-right font-semibold text-rose-300">
-                                {fmtMoney(Number(r.contractionRevenue ?? 0), symbol)}
-                              </td>
-                              <td className={`py-2 text-right font-semibold ${classDelta(Number(r.existingCustomerDelta ?? 0))}`}>
-                                {fmtMoney(Number(r.existingCustomerDelta ?? 0), symbol)}
-                              </td>
-                              <td className={`py-2 text-right font-semibold ${classDelta(Number(r.netRevenueDelta ?? 0))}`}>
-                                {fmtMoney(Number(r.netRevenueDelta ?? 0), symbol)}
-                              </td>
-                              <td className="py-2 text-right">{fmtPct(Number(r.churnRate ?? 0))}</td>
-                              <td className={`py-2 text-right font-semibold ${classDelta(Number(r.growthRate ?? 0))}`}>
-                                {fmtPct(Number(r.growthRate ?? 0))}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan={12} className="py-3 text-slate-300">
-                            No churn rows for selected slicers.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                <div className="max-h-[480px] overflow-y-auto space-y-2 pr-1">
+                  {churnCards.length ? churnCards.map((r: any) => {
+                    const key = `${r.company}||${r.month}`;
+                    const active = selectedChurnKey === key;
+                    const churn = Number(r.churnRate ?? 0);
+                    const growth = Number(r.growthRate ?? 0);
+                    const lost = Math.abs(Number(r.lostRevenue ?? 0));
+                    const added = Number(r.addedRevenue ?? 0);
+                    const total = lost + added || 1;
+                    const lostPct = Math.round((lost / total) * 100);
+                    const addedPct = Math.round((added / total) * 100);
+                    return (
+                      <div
+                        key={key}
+                        onClick={() => setSelectedChurnKey(active ? null : key)}
+                        className={`flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3 cursor-pointer transition-all duration-150 ${
+                          active
+                            ? "border-sky-400/50 bg-sky-500/8 ring-1 ring-sky-400/30"
+                            : "border-white/10 bg-white/3 hover:bg-white/6"
+                        }`}
+                      >
+                        <div className="min-w-[120px] font-semibold text-sm text-white">{r.company}</div>
+                        <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-slate-300">{r.month}</div>
+                        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                          churn > 0.15 ? "bg-rose-500/20 text-rose-300"
+                          : churn > 0.05 ? "bg-amber-500/20 text-amber-300"
+                          : "bg-emerald-500/15 text-emerald-300"
+                        }`}>
+                          Churn {fmtPct(churn)}
+                        </span>
+                        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                          growth > 0 ? "bg-emerald-500/15 text-emerald-300"
+                          : growth < 0 ? "bg-rose-500/15 text-rose-300"
+                          : "bg-white/5 text-slate-400"
+                        }`}>
+                          Growth {fmtPct(growth)}
+                        </span>
+                        <div className="ml-auto flex items-center gap-2 min-w-[140px]">
+                          <span className="text-[10px] text-rose-300">{fmtAxisShort(lost)}</span>
+                          <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                            <div className="bg-rose-400/70 h-full" style={{ width: `${lostPct}%` }} />
+                            <div className="bg-emerald-400/70 h-full" style={{ width: `${addedPct}%` }} />
+                          </div>
+                          <span className="text-[10px] text-emerald-300">{fmtAxisShort(added)}</span>
+                        </div>
+                        <div className={`text-xs font-bold ${classDelta(Number(r.netRevenueDelta ?? 0))}`}>
+                          Net {fmtMoney(Number(r.netRevenueDelta ?? 0), symbol)}
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <div className="py-4 text-sm text-slate-400">No churn data for selected filters.</div>
+                  )}
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-6">
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Net Change (Current - Prev)</div>
-                    <div className={`mt-1 text-base font-semibold ${classDelta(Number(churnSelected?.netRevenueDelta ?? 0))}`}>
-                      {churnSelected ? fmtMoney(Number(churnSelected.netRevenueDelta ?? 0), symbol) : "—"}
+                {/* Section 5A: Revenue Bridge */}
+                {churnSelected ? (
+                  <div className="mt-4 rounded-xl border border-white/10 bg-black/30 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-widest text-slate-400 mb-3">
+                      Revenue Bridge — {churnSelected.company} · {churnSelected.month}
+                    </div>
+                    <div className="flex flex-wrap items-stretch gap-2">
+                      <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 min-w-[110px]">
+                        <div className="text-[10px] text-slate-400 mb-1">Prev Total</div>
+                        <div className="text-sm font-bold text-slate-200">{fmtMoney(Number(churnSelected.prevTotal ?? 0), symbol)}</div>
+                      </div>
+                      <div className="flex items-center text-slate-500 text-lg">→</div>
+                      <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 min-w-[100px]">
+                        <div className="text-[10px] text-rose-400 mb-1">− Lost</div>
+                        <div className="text-sm font-bold text-rose-300">{fmtMoney(Number(churnSelected.lostRevenue ?? 0), symbol)}</div>
+                        <div className="mt-1 h-1 rounded-full bg-rose-500/30">
+                          <div className="h-1 rounded-full bg-rose-400" style={{ width: `${Math.min(100, Math.abs(Number(churnSelected.lostRevenue ?? 0)) / (Number(churnSelected.prevTotal || 1)) * 100)}%` }} />
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 min-w-[100px]">
+                        <div className="text-[10px] text-emerald-400 mb-1">+ New</div>
+                        <div className="text-sm font-bold text-emerald-300">{fmtMoney(Number(churnSelected.addedRevenue ?? 0), symbol)}</div>
+                        <div className="mt-1 h-1 rounded-full bg-emerald-500/30">
+                          <div className="h-1 rounded-full bg-emerald-400" style={{ width: `${Math.min(100, Number(churnSelected.addedRevenue ?? 0) / (Number(churnSelected.prevTotal || 1)) * 100)}%` }} />
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 min-w-[100px]">
+                        <div className="text-[10px] text-sky-400 mb-1">+ Expansion</div>
+                        <div className="text-sm font-bold text-sky-300">{fmtMoney(Number(churnSelected.expansionRevenue ?? 0), symbol)}</div>
+                      </div>
+                      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 min-w-[100px]">
+                        <div className="text-[10px] text-amber-400 mb-1">− Contraction</div>
+                        <div className="text-sm font-bold text-amber-300">{fmtMoney(Number(churnSelected.contractionRevenue ?? 0), symbol)}</div>
+                      </div>
+                      <div className="flex items-center text-slate-500 text-lg">=</div>
+                      <div className={`rounded-xl border px-4 py-3 min-w-[110px] ${
+                        Number(churnSelected.netRevenueDelta ?? 0) >= 0
+                          ? "border-emerald-500/30 bg-emerald-500/8"
+                          : "border-rose-500/30 bg-rose-500/8"
+                      }`}>
+                        <div className="text-[10px] text-slate-400 mb-1">Current Total</div>
+                        <div className="text-sm font-bold text-white">{fmtMoney(Number(churnSelected.currentTotal ?? 0), symbol)}</div>
+                        <div className={`text-[10px] font-semibold mt-0.5 ${classDelta(Number(churnSelected.netRevenueDelta ?? 0))}`}>
+                          Net {fmtMoney(Number(churnSelected.netRevenueDelta ?? 0), symbol)}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Lost (Churned Customers)</div>
-                    <div className="mt-1 text-base font-semibold text-rose-300">
-                      {churnSelected ? fmtMoney(Number(churnSelected.lostRevenue ?? 0), symbol) : "—"}
-                    </div>
+                ) : (
+                  <div className="mt-4 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-400">
+                    Select a company-month card above to see the Revenue Bridge breakdown.
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">New (Added Customers)</div>
-                    <div className="mt-1 text-base font-semibold text-emerald-300">
-                      {churnSelected ? fmtMoney(Number(churnSelected.addedRevenue ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Existing Customer Net</div>
-                    <div className={`mt-1 text-base font-semibold ${classDelta(Number(churnSelected?.existingCustomerDelta ?? 0))}`}>
-                      {churnSelected ? fmtMoney(Number(churnSelected.existingCustomerDelta ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Existing Expansion (↑)</div>
-                    <div className="mt-1 text-base font-semibold text-emerald-300">
-                      {churnSelected ? fmtMoney(Number(churnSelected.expansionRevenue ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                    <div className="text-[11px] text-slate-300">Existing Contraction (↓)</div>
-                    <div className="mt-1 text-base font-semibold text-rose-300">
-                      {churnSelected ? fmtMoney(Number(churnSelected.contractionRevenue ?? 0), symbol) : "—"}
-                    </div>
-                  </div>
-                </div>
+                )}
 
+                {/* Section 5B: Customer Drill-Down */}
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <Panel
-                    title="Lost Customers (Previous month only)"
-                    subtitle="Customers present in previous month but missing in current month (shows last month revenue)"
+                    title={`Lost Customers${churnSelected?.lostCustomers?.length ? ` (${churnSelected.lostCustomers.length})` : ""}`}
+                    subtitle="Present last month, missing this month"
+                    accent="rose"
                   >
                     {!churnSelected ? (
-                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
+                      <div className="text-sm text-slate-400">Select a card above to see details.</div>
                     ) : churnSelected.lostCustomers?.length ? (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
+                          <thead className="text-left text-xs text-slate-400">
                             <tr>
                               <th className="py-2 pr-3">Customer</th>
                               <th className="py-2 text-right">Last Month Revenue</th>
@@ -671,7 +882,12 @@ export default function RevenueAnalyticsPage() {
                           <tbody>
                             {churnSelected.lostCustomers.slice(0, 30).map((x: any, i: number) => (
                               <tr key={i} className="border-t border-white/10">
-                                <td className="py-2 pr-3">{x.customer}</td>
+                                <td className="py-2 pr-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-rose-400 flex-shrink-0" />
+                                    {x.customer}
+                                  </div>
+                                </td>
                                 <td className="py-2 text-right font-semibold text-rose-300">
                                   {fmtMoney(Number(x.lastMonthRevenue ?? 0), symbol)}
                                 </td>
@@ -681,20 +897,21 @@ export default function RevenueAnalyticsPage() {
                         </table>
                       </div>
                     ) : (
-                      <div className="text-sm text-slate-300">No lost customers for this selection.</div>
+                      <div className="text-sm text-slate-400">No lost customers for this selection.</div>
                     )}
                   </Panel>
 
                   <Panel
-                    title="New Customers (Current month only)"
-                    subtitle="Customers present in current month but missing in previous month (shows current month revenue)"
+                    title={`New Customers${churnSelected?.addedCustomers?.length ? ` (${churnSelected.addedCustomers.length})` : ""}`}
+                    subtitle="Present this month, missing last month"
+                    accent="emerald"
                   >
                     {!churnSelected ? (
-                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
+                      <div className="text-sm text-slate-400">Select a card above to see details.</div>
                     ) : churnSelected.addedCustomers?.length ? (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
+                          <thead className="text-left text-xs text-slate-400">
                             <tr>
                               <th className="py-2 pr-3">Customer</th>
                               <th className="py-2 text-right">Current Month Revenue</th>
@@ -703,7 +920,12 @@ export default function RevenueAnalyticsPage() {
                           <tbody>
                             {churnSelected.addedCustomers.slice(0, 30).map((x: any, i: number) => (
                               <tr key={i} className="border-t border-white/10">
-                                <td className="py-2 pr-3">{x.customer}</td>
+                                <td className="py-2 pr-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
+                                    {x.customer}
+                                  </div>
+                                </td>
                                 <td className="py-2 text-right font-semibold text-emerald-300">
                                   {fmtMoney(Number(x.currentMonthRevenue ?? 0), symbol)}
                                 </td>
@@ -713,22 +935,23 @@ export default function RevenueAnalyticsPage() {
                         </table>
                       </div>
                     ) : (
-                      <div className="text-sm text-slate-300">No new customers for this selection.</div>
+                      <div className="text-sm text-slate-400">No new customers for this selection.</div>
                     )}
                   </Panel>
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                   <Panel
-                    title="Existing Customers: Revenue Increased"
-                    subtitle="Customers present in both months with higher current revenue"
+                    title={`Existing — Revenue Increased${churnSelected?.expansionCustomers?.length ? ` (${churnSelected.expansionCustomers.length})` : ""}`}
+                    subtitle="Present both months with higher current revenue"
+                    accent="sky"
                   >
                     {!churnSelected ? (
-                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
+                      <div className="text-sm text-slate-400">Select a card above to see details.</div>
                     ) : churnSelected.expansionCustomers?.length ? (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
+                          <thead className="text-left text-xs text-slate-400">
                             <tr>
                               <th className="py-2 pr-3">Customer</th>
                               <th className="py-2 text-right">Prev</th>
@@ -739,8 +962,13 @@ export default function RevenueAnalyticsPage() {
                           <tbody>
                             {churnSelected.expansionCustomers.slice(0, 30).map((x: any, i: number) => (
                               <tr key={i} className="border-t border-white/10">
-                                <td className="py-2 pr-3">{x.customer}</td>
-                                <td className="py-2 text-right">{fmtMoney(Number(x.prevMonthRevenue ?? 0), symbol)}</td>
+                                <td className="py-2 pr-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-sky-400 flex-shrink-0" />
+                                    {x.customer}
+                                  </div>
+                                </td>
+                                <td className="py-2 text-right text-slate-300">{fmtMoney(Number(x.prevMonthRevenue ?? 0), symbol)}</td>
                                 <td className="py-2 text-right">{fmtMoney(Number(x.currentMonthRevenue ?? 0), symbol)}</td>
                                 <td className="py-2 text-right font-semibold text-emerald-300">
                                   {fmtMoney(Number(x.delta ?? 0), symbol)}
@@ -751,20 +979,21 @@ export default function RevenueAnalyticsPage() {
                         </table>
                       </div>
                     ) : (
-                      <div className="text-sm text-slate-300">No existing-customer revenue increases for this selection.</div>
+                      <div className="text-sm text-slate-400">No revenue increases for this selection.</div>
                     )}
                   </Panel>
 
                   <Panel
-                    title="Existing Customers: Revenue Decreased"
-                    subtitle="Customers present in both months with lower current revenue"
+                    title={`Existing — Revenue Decreased${churnSelected?.contractionCustomers?.length ? ` (${churnSelected.contractionCustomers.length})` : ""}`}
+                    subtitle="Present both months with lower current revenue"
+                    accent="amber"
                   >
                     {!churnSelected ? (
-                      <div className="text-sm text-slate-300">Click a churn row above to see details.</div>
+                      <div className="text-sm text-slate-400">Select a card above to see details.</div>
                     ) : churnSelected.contractionCustomers?.length ? (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
+                          <thead className="text-left text-xs text-slate-400">
                             <tr>
                               <th className="py-2 pr-3">Customer</th>
                               <th className="py-2 text-right">Prev</th>
@@ -775,8 +1004,13 @@ export default function RevenueAnalyticsPage() {
                           <tbody>
                             {churnSelected.contractionCustomers.slice(0, 30).map((x: any, i: number) => (
                               <tr key={i} className="border-t border-white/10">
-                                <td className="py-2 pr-3">{x.customer}</td>
-                                <td className="py-2 text-right">{fmtMoney(Number(x.prevMonthRevenue ?? 0), symbol)}</td>
+                                <td className="py-2 pr-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                                    {x.customer}
+                                  </div>
+                                </td>
+                                <td className="py-2 text-right text-slate-300">{fmtMoney(Number(x.prevMonthRevenue ?? 0), symbol)}</td>
                                 <td className="py-2 text-right">{fmtMoney(Number(x.currentMonthRevenue ?? 0), symbol)}</td>
                                 <td className="py-2 text-right font-semibold text-rose-300">
                                   {fmtMoney(Number(x.delta ?? 0), symbol)}
@@ -787,48 +1021,79 @@ export default function RevenueAnalyticsPage() {
                         </table>
                       </div>
                     ) : (
-                      <div className="text-sm text-slate-300">No existing-customer revenue decreases for this selection.</div>
+                      <div className="text-sm text-slate-400">No revenue decreases for this selection.</div>
                     )}
-                  </Panel>
-                </div>
-
-                {/* Team-wise revenue */}
-                <div className="mt-4">
-                  <Panel
-                    title="Team Wise Revenue Bar Chart"
-                    subtitle="Top 20 teams by revenue (strictly based on slicer-filtered data)."
-                  >
-                    <div className="h-[360px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={(data as any).teamRevenue ?? []} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
-                          <XAxis
-                            dataKey="team"
-                            tick={AXIS_TICK}
-                            axisLine={AXIS_LINE}
-                            tickLine={TICK_LINE}
-                            interval={0}
-                            angle={-15}
-                            height={70}
-                          />
-                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                          <Tooltip content={<MoneyTooltip symbol={symbol} />} />
-                          <Legend />
-                          <Bar dataKey="revenue" name="Revenue" fill="#22c55e" radius={[8, 8, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="mt-2 text-xs text-slate-400">
-                      Note: Your sheet has no “Customer” column — this uses <b>Team</b> as customer label.
-                    </div>
                   </Panel>
                 </div>
               </>
             ) : (
-              <div className="py-3 text-slate-300">Loading…</div>
+              <div className="py-3 text-slate-400">Loading…</div>
             )}
           </Panel>
         </div>
+
+        {/* Section 6: Team Revenue Distribution (standalone, horizontal bars) */}
+        {ok && (data as any).teamRevenue?.length ? (() => {
+          const teams: Array<{ team: string; revenue: number }> = (data as any).teamRevenue ?? [];
+          const sorted = [...teams].sort((a, b) => b.revenue - a.revenue);
+          const top5Revenue = sorted[4]?.revenue ?? sorted[sorted.length - 1]?.revenue ?? 0;
+          const chartHeight = Math.max(320, sorted.length * 38);
+          return (
+            <div className="mt-4">
+              <Panel
+                title={`Team Revenue Distribution · ${sorted.length} team${sorted.length !== 1 ? "s" : ""}`}
+                subtitle="Horizontal bars sorted by revenue. Emerald = top 5 teams, sky = others. Labels show exact value."
+              >
+                <div style={{ height: chartHeight }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={sorted}
+                      layout="vertical"
+                      margin={{ top: 6, right: 80, left: 8, bottom: 6 }}
+                    >
+                      <CartesianGrid {...GRID} horizontal={false} />
+                      <XAxis
+                        type="number" tick={AXIS_TICK}
+                        axisLine={AXIS_LINE} tickLine={TICK_LINE}
+                        tickFormatter={fmtAxisShort}
+                      />
+                      <YAxis
+                        type="category" dataKey="team"
+                        tick={{ ...AXIS_TICK, fontSize: 11 }}
+                        axisLine={AXIS_LINE} tickLine={TICK_LINE}
+                        width={110}
+                      />
+                      <Tooltip content={<MoneyTooltip symbol={symbol} />} />
+                      <Bar dataKey="revenue" name="Revenue" radius={[0, 6, 6, 0]} maxBarSize={22}>
+                        {sorted.map((entry, index) => (
+                          <Cell
+                            key={`team-${index}`}
+                            fill={entry.revenue >= top5Revenue ? "#34d399" : "#38bdf8"}
+                            fillOpacity={0.85}
+                          />
+                        ))}
+                        <LabelList
+                          dataKey="revenue"
+                          position="right"
+                          formatter={(v: any) => fmtAxisShort(v)}
+                          style={{ fill: "#cbd5e1", fontSize: 11, fontWeight: 600 }}
+                        />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-3 flex items-center gap-4 text-[11px] text-slate-500">
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400" /> Top 5 teams
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-sm bg-sky-400" /> Other teams
+                  </span>
+                </div>
+              </Panel>
+            </div>
+          );
+        })() : null}
       </div>
     </div>
   );
