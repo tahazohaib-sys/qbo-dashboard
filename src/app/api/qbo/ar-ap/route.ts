@@ -423,6 +423,102 @@ async function computeVendorBillsAsOf(asOf: string): Promise<number> {
   return v;
 }
 
+/** Fetch all Bills with their TxnDate up to a cutoff date (for batch monthly computation). */
+async function fetchBillsWithDates(upToDate: string): Promise<Array<{ date: string; amount: number }>> {
+  const cacheKey = `billDates:${upToDate}`;
+  const hit = cacheGet<Array<{ date: string; amount: number }>>(cacheKey);
+  if (hit) return hit;
+
+  const q = `SELECT TxnDate, TotalAmt FROM Bill WHERE TxnDate <= '${upToDate}'`;
+  let start = 1;
+  const size = 1000;
+  const out: Array<{ date: string; amount: number }> = [];
+
+  while (true) {
+    const path = `query?query=${encodeURIComponent(q)}&startposition=${start}&maxresults=${size}`;
+    const res: any = await qboFetch(path);
+    const rows: any[] = res?.QueryResponse?.Bill ?? [];
+    for (const r of rows) out.push({ date: String(r.TxnDate ?? ""), amount: moneyInt(r.TotalAmt) });
+    if (rows.length < size) break;
+    start += size;
+  }
+
+  cacheSet(cacheKey, out, 5 * 60 * 1000);
+  return out;
+}
+
+/** Fetch all BillPayments with their TxnDate up to a cutoff date (for batch monthly computation). */
+async function fetchBillPaymentsWithDates(upToDate: string): Promise<Array<{ date: string; amount: number }>> {
+  const cacheKey = `billPayDates:${upToDate}`;
+  const hit = cacheGet<Array<{ date: string; amount: number }>>(cacheKey);
+  if (hit) return hit;
+
+  const q = `SELECT TxnDate, TotalAmt FROM BillPayment WHERE TxnDate <= '${upToDate}'`;
+  let start = 1;
+  const size = 1000;
+  const out: Array<{ date: string; amount: number }> = [];
+
+  while (true) {
+    const path = `query?query=${encodeURIComponent(q)}&startposition=${start}&maxresults=${size}`;
+    const res: any = await qboFetch(path);
+    const rows: any[] = res?.QueryResponse?.BillPayment ?? [];
+    for (const r of rows) out.push({ date: String(r.TxnDate ?? ""), amount: moneyInt(r.TotalAmt) });
+    if (rows.length < size) break;
+    start += size;
+  }
+
+  cacheSet(cacheKey, out, 5 * 60 * 1000);
+  return out;
+}
+
+/**
+ * Batch monthly series computation.
+ * Pre-fetches all Bills/BillPayments once, then computes vendor bills per month-end in-memory.
+ * Balance Sheet accounts (Payroll Payable, WHT, Sir Aatif Loan, etc.) are read from BS per month.
+ */
+async function computeMonthlySeriesBatch(
+  monthEnds: Array<{ month: string; asOf: string }>,
+  accountingMethod: "Accrual" | "Cash",
+  companyId: string
+): Promise<Array<{ month: string; asOf: string; payables: number; receivables: number; error: boolean }>> {
+  if (monthEnds.length === 0) return [];
+
+  const sorted = [...monthEnds].sort((a, b) => a.asOf.localeCompare(b.asOf));
+  const latestDate = sorted[sorted.length - 1].asOf;
+
+  // Fetch all bills and payments once (up to the latest month-end)
+  const [allBills, allPayments] = await Promise.all([
+    fetchBillsWithDates(latestDate),
+    fetchBillPaymentsWithDates(latestDate),
+  ]);
+
+  return mapLimit(sorted, 3, async (d) => {
+    try {
+      const bs = await fetchBalanceSheet(d.asOf, accountingMethod, companyId);
+
+      const payrollPayable = pickAccount(bs, "Payroll Payable");
+      const whtVendors = pickAccount(bs, "With Holding Tax Payable Vendors");
+      const sirAatifLoan = pickAccount(bs, "Sir Aatif Loan to Company");
+      const payrollWHT = pickAccount(bs, "Payroll With Holding Tax Payable");
+
+      // Compute vendor bills for this month-end from pre-fetched transactions
+      const billsUpto = allBills.filter((b) => b.date <= d.asOf).reduce((s, b) => s + b.amount, 0);
+      const paymentsUpto = allPayments.filter((p) => p.date <= d.asOf).reduce((s, p) => s + p.amount, 0);
+      const vendorBills = Math.max(0, billsUpto - paymentsUpto);
+
+      const totalPayables = payrollPayable + whtVendors + vendorBills + sirAatifLoan + payrollWHT;
+
+      const loanAgainstSalary = pickAccount(bs, "Loan Against Salary");
+      const taxWithheld = pickAccount(bs, "Tax Withheld");
+      const totalReceivables = loanAgainstSalary + taxWithheld;
+
+      return { month: d.month, asOf: d.asOf, payables: totalPayables, receivables: totalReceivables, error: false };
+    } catch {
+      return { month: d.month, asOf: d.asOf, payables: 0, receivables: 0, error: true };
+    }
+  });
+}
+
 /**
  * ---------- CORE COMPUTATION ----------
  */
@@ -589,19 +685,8 @@ export async function GET(req: Request) {
 
       const dates = monthKeys.map((mk) => ({ month: mk, asOf: monthEndFromMonthKeyUTC(mk) }));
 
-      // Concurrency 3 to avoid QBO throttling
-      const series = await mapLimit(dates, 3, async (d) => {
-        const point = await computeMonthEndArApPoint(realmId, d.asOf, accountingMethod);
-        return {
-          month: d.month,
-          asOf: d.asOf,
-          payables: point.payables,
-          receivables: point.receivables,
-          error: point.error,
-        };
-      });
-
-      monthlySeries = series;
+      // Batch approach: pre-fetch all bills/payments once, compute vendor bills per month in-memory
+      monthlySeries = await computeMonthlySeriesBatch(dates, accountingMethod, realmId);
     }
 
     return NextResponse.json({
