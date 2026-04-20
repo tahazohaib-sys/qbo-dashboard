@@ -507,14 +507,25 @@ async function computeDetailedAsOf(
 
 /**
  * FAST monthly totals for chart:
- * Use BalanceSheet total "Accounts Receivable" / "Accounts Payable" at month-end
- * (avoids scanning all bills/payments for every month).
+ * Pick the same named accounts as computeDetailedAsOf but from the Balance Sheet only
+ * (no expensive bill reconstruction — uses QBO's "Accounts Payable" line as vendor bills proxy).
  */
 async function computeMonthEndArApPoint(companyId: string, asOf: string, accountingMethod: "Accrual" | "Cash") {
   try {
     const bs = await fetchBalanceSheet(asOf, accountingMethod, companyId);
-    const totals = extractArApFromBalanceSheet(bs);
-    return { asOf, payables: totals.payables, receivables: totals.receivables, error: false };
+
+    const payrollPayable = pickAccount(bs, "Payroll Payable");
+    const whtVendors = pickAccount(bs, "With Holding Tax Payable Vendors");
+    const accountsPayable = pickAccount(bs, "Accounts Payable"); // QBO AP account = vendor bills at month-end
+    const sirAatifLoan = pickAccount(bs, "Sir Aatif Loan to Company");
+    const payrollWHT = pickAccount(bs, "Payroll With Holding Tax Payable");
+    const totalPayables = payrollPayable + whtVendors + accountsPayable + sirAatifLoan + payrollWHT;
+
+    const loanAgainstSalary = pickAccount(bs, "Loan Against Salary");
+    const taxWithheld = pickAccount(bs, "Tax Withheld");
+    const totalReceivables = loanAgainstSalary + taxWithheld;
+
+    return { asOf, payables: totalPayables, receivables: totalReceivables, error: false };
   } catch {
     return { asOf, payables: 0, receivables: 0, error: true };
   }
