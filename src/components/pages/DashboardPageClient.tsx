@@ -1151,13 +1151,30 @@ export default function DashboardPage() {
   const fcMonthsToBreakeven = forecastData?.benchmarks?.monthsToBreakeven ?? null;
   const forecastRows = forecastData?.forecast ?? [];
 
-  // Apply what-if adjustment multipliers to base forecast rows (client-side, no API call)
+  // Apply what-if adjustments as additional monthly growth rate on top of the base trend.
+  // Uses the same exponential formula as the API so selecting "+5%" means each projected
+  // month compounds at (baseline MoM + 5%) from the last historical data point — NOT a
+  // flat rescale of the already-projected values, which would leave the trend unchanged.
   const adjustedForecastRows = useMemo(() => {
     if (revAdjPct === 0 && expAdjPct === 0) return forecastRows;
+
+    // Last historical data point — the same base the API forecast uses
+    const lastHist = data?.series?.[data.series.length - 1];
+    if (!lastHist || !forecastRows.length) return forecastRows;
+
+    const lastRevenue = lastHist.revenue;
+    const lastExpenses = lastHist.expenses;
+
+    // Effective monthly growth rates = base trend + user-selected adjustment
+    // Clamped to ±50% to match the API's clampGrowth guard
+    const clamp = (g: number) => Math.max(-0.5, Math.min(0.5, g));
+    const effRevGrowth = clamp(fcRevMoM + revAdjPct);
+    const effExpGrowth = clamp(fcExpMoM + expAdjPct);
+
     let cumProfit = 0;
-    return forecastRows.map((row) => {
-      const adjRevenue = row.revenue * (1 + revAdjPct);
-      const adjOpex = row.opex * (1 + expAdjPct);
+    return forecastRows.map((row, i) => {
+      const adjRevenue = lastRevenue * Math.pow(1 + effRevGrowth, i + 1);
+      const adjOpex = lastExpenses * Math.pow(1 + effExpGrowth, i + 1);
       const adjProfit = adjRevenue - adjOpex;
       cumProfit += adjProfit;
       return {
@@ -1169,7 +1186,7 @@ export default function DashboardPage() {
         cumulativeProfit: cumProfit,
       };
     });
-  }, [forecastRows, revAdjPct, expAdjPct]);
+  }, [forecastRows, revAdjPct, expAdjPct, fcRevMoM, fcExpMoM, data?.series]);
 
   const hasAdjustments = revAdjPct !== 0 || expAdjPct !== 0;
   // "Effective" scalars — reflect adjustments for KPI cards and table
