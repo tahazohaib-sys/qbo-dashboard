@@ -8,6 +8,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
+  AreaChart,
   Line,
   AreaChart,
   Area,
@@ -18,11 +19,13 @@ import {
   Tooltip,
   CartesianGrid,
   BarChart,
+  ComposedChart,
   Bar,
   PieChart,
   Pie,
   Cell,
   Legend,
+  ReferenceLine,
 } from "recharts";
 
 type DashboardResp = {
@@ -1050,6 +1053,27 @@ export default function DashboardPage() {
 
   const expenseTotal = useMemo(() => expenseComposition.reduce((sum, item) => sum + item.value, 0), [expenseComposition]);
 
+  const momRevenue: number | null = series.length >= 2 && series[series.length - 2].revenue !== 0
+    ? (series[series.length - 1].revenue - series[series.length - 2].revenue) / series[series.length - 2].revenue
+    : null;
+  const momExpenses: number | null = series.length >= 2 && series[series.length - 2].expenses !== 0
+    ? (series[series.length - 1].expenses - series[series.length - 2].expenses) / series[series.length - 2].expenses
+    : null;
+  const momProfit: number | null = series.length >= 2 && series[series.length - 2].profit !== 0
+    ? (series[series.length - 1].profit - series[series.length - 2].profit) / Math.abs(series[series.length - 2].profit)
+    : null;
+
+  const marginSeries = useMemo(
+    () => series.map(s => ({ month: s.month, margin: s.revenue ? +(s.profit / s.revenue * 100).toFixed(1) : 0 })),
+    [series]
+  );
+  const avgMargin = marginSeries.length > 0 ? marginSeries.reduce((sum, m) => sum + m.margin, 0) / marginSeries.length : 0;
+
+  const bestProfitMonth = series.length > 0
+    ? series.reduce((best, s) => s.profit > best.profit ? s : best, series[0])
+    : { month: "—", profit: 0 };
+  const expenseRatio: number | null = kpi.revenue > 0 ? kpi.expenses / kpi.revenue : null;
+
   const headerAsOf = useMemo(() => {
     if (!data?.asOf) return "";
     return new Date(data.asOf).toLocaleString();
@@ -1279,6 +1303,29 @@ export default function DashboardPage() {
   const payablesAdjTotal = (arAp?.payables?.totalPayables ?? 0) + customPayablesSum;
   const receivablesAdjTotal = (arAp?.receivables?.totalReceivables ?? 0) + customReceivablesSum;
 
+  // AR/AP insight metrics
+  const liquidityRatio = payablesAdjTotal > 0 ? receivablesAdjTotal / payablesAdjTotal : 0;
+  const overdueAP = arAp?.apAging?.vendors?.reduce((s, v) => s + (v["61_90"] ?? 0) + (v["91_plus"] ?? 0), 0) ?? 0;
+  const overdueAPPct = (arAp?.apAging?.totalAP ?? 0) > 0 ? (overdueAP / arAp!.apAging.totalAP) * 100 : 0;
+  const topVendorTotal = arAp?.apAging?.vendors?.length ? Math.max(...arAp.apAging.vendors.map((v) => v.total)) : 0;
+  const topVendorPct = (arAp?.apAging?.totalAP ?? 0) > 0 ? (topVendorTotal / arAp!.apAging.totalAP) * 100 : 0;
+  const topVendorName = arAp?.apAging?.vendors?.find((v) => v.total === topVendorTotal)?.vendor ?? "—";
+  const prevPayables = monthlyArAp.length >= 2 ? monthlyArAp[monthlyArAp.length - 2]?.payables : null;
+  const prevReceivables = monthlyArAp.length >= 2 ? monthlyArAp[monthlyArAp.length - 2]?.receivables : null;
+  const payablesMoMPct = prevPayables ? ((payablesAdjTotal - prevPayables) / Math.abs(prevPayables)) * 100 : null;
+  const receivablesMoMPct = prevReceivables ? ((receivablesAdjTotal - prevReceivables) / Math.abs(prevReceivables)) * 100 : null;
+  const arApHealthStatus: "healthy" | "caution" | "critical" =
+    overdueAPPct > 30 ? "critical" : overdueAPPct > 15 ? "caution" : "healthy";
+  const agingChartData =
+    arAp?.apAging?.vendors?.map((v) => ({
+      vendor: v.vendor.length > 18 ? v.vendor.slice(0, 16) + "…" : v.vendor,
+      current: v.current,
+      "1_30": v["1_30"],
+      "31_60": v["31_60"],
+      "61_90": v["61_90"],
+      "91_plus": v["91_plus"],
+    })) ?? [];
+
   // endYmd for current selected period (used by add/delete)
   const currentAsOfYmd = useMemo(() => {
     const fromKey = fromYear * 100 + fromMonth;
@@ -1493,93 +1540,225 @@ export default function DashboardPage() {
 
         {/* AR/AP TAB */}
         {tab === "arAp" ? (
-          <div className="mt-6">
-            <Panel title="AR/AP Overview">
-              {arApLoading ? (
-                <div className="py-3 text-slate-300">Loading…</div>
-              ) : !arAp?.ok ? (
-                <div className="py-3 text-slate-300">No AR/AP data.</div>
-              ) : (
-                <>
-                  {/* ✅ KPIs: show totals + include manual adjustments */}
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                    <KpiCard title="Total Payables" numericValue={payablesAdjTotal} formatValue={formatPKRCompact} highlight="bad" />
-                    <KpiCard title="Total Receivables" numericValue={receivablesAdjTotal} formatValue={formatPKRCompact} highlight="good" />
-                    <KpiCard
-                      title="Net (Receivables - Payables)"
-                      numericValue={receivablesAdjTotal - payablesAdjTotal}
-                      formatValue={formatPKRCompact}
-                      highlight={receivablesAdjTotal - payablesAdjTotal >= 0 ? "good" : "bad"}
-                    />
-                    <KpiCard
-                      title="AR/AP Gap"
-                      numericValue={Math.abs(payablesAdjTotal - receivablesAdjTotal)}
-                      formatValue={formatPKRCompact}
-                    />
+          <div className="mt-6 space-y-5">
+            {arApLoading ? (
+              <Panel title="AR/AP Overview">
+                <div className="py-6 text-slate-300">Loading…</div>
+              </Panel>
+            ) : !arAp?.ok ? (
+              <Panel title="AR/AP Overview">
+                <div className="py-6 text-slate-300">No AR/AP data.</div>
+              </Panel>
+            ) : (
+              <>
+                {/* HEALTH BANNER */}
+                <div
+                  className={`flex items-start gap-4 rounded-2xl border px-5 py-4 ${
+                    arApHealthStatus === "healthy"
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                      : arApHealthStatus === "caution"
+                      ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                      : "border-rose-500/30 bg-rose-500/10 text-rose-200"
+                  }`}
+                >
+                  <div className="mt-0.5 text-2xl leading-none">
+                    {arApHealthStatus === "healthy" ? "✓" : arApHealthStatus === "caution" ? "⚠" : "✕"}
                   </div>
+                  <div>
+                    <div className="font-semibold">
+                      {arApHealthStatus === "healthy"
+                        ? "AP Obligations Healthy"
+                        : arApHealthStatus === "caution"
+                        ? "AP Aging Caution"
+                        : "AP Aging Critical"}
+                    </div>
+                    <div className="mt-0.5 text-sm opacity-80">
+                      {overdueAP > 0
+                        ? `${overdueAPPct.toFixed(1)}% of AP (${formatPKRCompact(overdueAP)}) is overdue 61+ days · As of ${arAp.asOf}`
+                        : `No overdue payables beyond 60 days · As of ${arAp.asOf}`}
+                    </div>
+                  </div>
+                </div>
 
-                  <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    <Panel title={`Payables vs Receivables (As of ${arAp.asOf})`}>
-                      <div className="h-[320px]">
+                {/* KPI GRID — 6 cards */}
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+                  <KpiCard
+                    title="Total Payables"
+                    numericValue={payablesAdjTotal}
+                    formatValue={formatPKRCompact}
+                    highlight="bad"
+                    subtext={
+                      payablesMoMPct !== null
+                        ? `${payablesMoMPct >= 0 ? "▲" : "▼"} ${Math.abs(payablesMoMPct).toFixed(1)}% vs prev month`
+                        : "Month-end snapshot"
+                    }
+                  />
+                  <KpiCard
+                    title="Total Receivables"
+                    numericValue={receivablesAdjTotal}
+                    formatValue={formatPKRCompact}
+                    highlight="good"
+                    subtext={
+                      receivablesMoMPct !== null
+                        ? `${receivablesMoMPct >= 0 ? "▲" : "▼"} ${Math.abs(receivablesMoMPct).toFixed(1)}% vs prev month`
+                        : "Month-end snapshot"
+                    }
+                  />
+                  <KpiCard
+                    title="Net Position"
+                    numericValue={receivablesAdjTotal - payablesAdjTotal}
+                    formatValue={formatPKRCompact}
+                    highlight={receivablesAdjTotal - payablesAdjTotal >= 0 ? "good" : "bad"}
+                    subtext={
+                      receivablesAdjTotal - payablesAdjTotal >= 0
+                        ? "Receivables exceed payables"
+                        : "Payables exceed receivables"
+                    }
+                  />
+                  <KpiCard
+                    title="Liquidity Ratio"
+                    value={payablesAdjTotal > 0 ? liquidityRatio.toFixed(2) + "×" : "—"}
+                    highlight={liquidityRatio >= 1 ? "good" : "bad"}
+                    subtext={liquidityRatio >= 1 ? "AR covers AP obligations" : "AP exceeds AR coverage"}
+                  />
+                  <KpiCard
+                    title="Overdue AP (61+ d)"
+                    numericValue={overdueAP}
+                    formatValue={formatPKRCompact}
+                    highlight={overdueAP > 0 ? "bad" : undefined}
+                    subtext={overdueAP > 0 ? `${overdueAPPct.toFixed(1)}% of total AP` : "No overdue AP"}
+                  />
+                  <KpiCard
+                    title="Top Vendor Exposure"
+                    value={topVendorPct > 0 ? `${topVendorPct.toFixed(0)}%` : "—"}
+                    highlight={topVendorPct > 50 ? "bad" : undefined}
+                    subtext={topVendorName !== "—" ? topVendorName : "No vendor data"}
+                  />
+                </div>
+
+                {/* CHARTS GRID */}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                  {/* Donut with center label */}
+                  <Panel title={`Payables vs Receivables (${arAp.asOf})`}>
+                    <div className="relative h-[280px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Tooltip content={<MoneyTooltip pie />} />
+                          <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                          <Pie
+                            data={[
+                              { name: "Payables", value: payablesAdjTotal },
+                              { name: "Receivables", value: receivablesAdjTotal },
+                            ]}
+                            dataKey="value"
+                            nameKey="name"
+                            innerRadius={72}
+                            outerRadius={108}
+                            paddingAngle={3}
+                          >
+                            <Cell fill="#f87171" />
+                            <Cell fill="#34d399" />
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center pb-5">
+                        <div className="text-[11px] uppercase tracking-widest text-slate-400">Net Position</div>
+                        <div
+                          className={`mt-0.5 text-base font-bold ${
+                            receivablesAdjTotal - payablesAdjTotal >= 0 ? "text-emerald-300" : "text-rose-300"
+                          }`}
+                        >
+                          {formatPKRCompact(Math.abs(receivablesAdjTotal - payablesAdjTotal))}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {receivablesAdjTotal - payablesAdjTotal >= 0 ? "surplus" : "deficit"}
+                        </div>
+                      </div>
+                    </div>
+                  </Panel>
+
+                  {/* AP Aging Stacked Horizontal Bar */}
+                  <Panel title="AP Aging by Vendor">
+                    {agingChartData.length > 0 ? (
+                      <div style={{ height: Math.max(260, agingChartData.length * 52) }}>
                         <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Tooltip content={<MoneyTooltip pie />} />
-                            <Legend />
-                            <Pie
-                              data={[
-                                { name: "Payables", value: payablesAdjTotal },
-                                { name: "Receivables", value: receivablesAdjTotal },
-                              ]}
-                              dataKey="value"
-                              nameKey="name"
-                              innerRadius={75}
-                              outerRadius={115}
-                              paddingAngle={2}
-                            >
-                              <Cell fill="#ef4444" />
-                              <Cell fill="#22c55e" />
-                            </Pie>
-                          </PieChart>
+                          <BarChart
+                            data={agingChartData}
+                            layout="vertical"
+                            margin={{ top: 4, right: 16, left: 4, bottom: 4 }}
+                          >
+                            <CartesianGrid {...GRID} horizontal={false} />
+                            <XAxis
+                              type="number"
+                              tick={AXIS_TICK}
+                              tickFormatter={fmtAxisPKR}
+                              axisLine={AXIS_LINE}
+                              tickLine={TICK_LINE}
+                            />
+                            <YAxis
+                              type="category"
+                              dataKey="vendor"
+                              tick={{ ...AXIS_TICK, fontSize: 11 }}
+                              axisLine={AXIS_LINE}
+                              tickLine={TICK_LINE}
+                              width={90}
+                            />
+                            <Tooltip content={<MoneyTooltip apAgingBar />} />
+                            <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                            <Bar dataKey="current" name="Current" stackId="a" fill="#22c55e" />
+                            <Bar dataKey="1_30" name="1–30 d" stackId="a" fill="#22d3ee" />
+                            <Bar dataKey="31_60" name="31–60 d" stackId="a" fill="#f59e0b" />
+                            <Bar dataKey="61_90" name="61–90 d" stackId="a" fill="#f97316" />
+                            <Bar dataKey="91_plus" name="91+ d" stackId="a" fill="#ef4444" radius={[0, 3, 3, 0]} />
+                          </BarChart>
                         </ResponsiveContainer>
                       </div>
-                    </Panel>
-
-                    <Panel title="Monthly Payables & Receivables Growth (Month-end)">
-                      <div className="h-[320px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={monthlyArAp} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                            <CartesianGrid {...GRID} />
-                            <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                            <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                            <Tooltip content={<MoneyTooltip arApMonthEnd />} />
-                            <Legend />
-                            <Line
-                              type="monotone"
-                              dataKey="payables"
-                              name="Total Payables"
-                              stroke={CHART_COLORS.negative}
-                              strokeWidth={3}
-                              dot={(props) => <LastPointPulseDot {...props} dataLength={monthlyArAp.length} color={CHART_COLORS.negative} />}
-                              activeDot={{ r: 5 }}
-                              style={{ filter: "drop-shadow(0 0 8px rgba(248,113,113,0.2))" }}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="receivables"
-                              name="Total Receivables"
-                              stroke={CHART_COLORS.profit}
-                              strokeWidth={3}
-                              dot={(props) => <LastPointPulseDot {...props} dataLength={monthlyArAp.length} color={CHART_COLORS.profit} />}
-                              activeDot={{ r: 5 }}
-                              style={{ filter: "drop-shadow(0 0 8px rgba(52,211,153,0.2))" }}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
+                    ) : (
+                      <div className="flex h-[260px] items-center justify-center text-slate-400">
+                        No aging data available
                       </div>
-                    </Panel>
-                  </div>
+                    )}
+                  </Panel>
 
-                  <div className="flex justify-end mb-3">
+                  {/* Monthly Trend */}
+                  <Panel title="Monthly Payables Trend">
+                    <div className="h-[280px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={monthlyArAp} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                          <CartesianGrid {...GRID} />
+                          <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                          <YAxis
+                            tick={AXIS_TICK}
+                            axisLine={AXIS_LINE}
+                            tickLine={TICK_LINE}
+                            tickFormatter={fmtAxisPKR}
+                          />
+                          <Tooltip content={<MoneyTooltip single />} />
+                          <Line
+                            type="monotone"
+                            dataKey="payables"
+                            name="Payables"
+                            stroke={CHART_COLORS.negative}
+                            strokeWidth={2.5}
+                            dot={(props: any) => (
+                              <LastPointPulseDot
+                                {...props}
+                                dataLength={monthlyArAp.length}
+                                color={CHART_COLORS.negative}
+                              />
+                            )}
+                            activeDot={{ r: 5 }}
+                            style={{ filter: "drop-shadow(0 0 8px rgba(248,113,113,0.25))" }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </Panel>
+                </div>
+
+                {/* MANUAL ADJUSTMENTS */}
+                <div>
+                  <div className="flex justify-end">
                     <button
                       onClick={() => setShowManualAdjustments((p) => !p)}
                       className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
@@ -1587,381 +1766,678 @@ export default function DashboardPage() {
                       {showManualAdjustments ? "Hide Manual Adjustments" : "Show Manual Adjustments"}
                     </button>
                   </div>
-
-                  {/* ✅ Manual Adjustments panel */}
-                  <div className="mt-4">
-                    <div className="mt-2">
-                      <Collapse show={showManualAdjustments}>
-                        <Panel title={`Manual Adjustments (As of ${arAp.asOf})`}>
-                          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                              <div className="text-sm font-semibold">Add Adjustment</div>
-
-                              <div className="mt-3 grid grid-cols-1 gap-3">
-                                <div>
-                                  <label className="text-xs text-slate-300">Section</label>
-                                  <select
-                                    value={customSection}
-                                    onChange={(e) => setCustomSection(e.target.value as any)}
-                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
-                                  >
-                                    <option value="receivables">Receivables</option>
-                                    <option value="payables">Payables</option>
-                                  </select>
-                                </div>
-
-                                <div>
-                                  <label className="text-xs text-slate-300">Label</label>
-                                  <input
-                                    value={customLabel}
-                                    onChange={(e) => setCustomLabel(e.target.value)}
-                                    placeholder="e.g. Customer Deposit (Manual)"
-                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
-                                  />
-                                </div>
-
-                                <div>
-                                  <label className="text-xs text-slate-300">Amount (PKR)</label>
-                                  <input
-                                    value={customAmount}
-                                    onChange={(e) => setCustomAmount(e.target.value)}
-                                    placeholder="e.g. 150000"
-                                    className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
-                                  />
-                                  <div className="mt-1 text-[11px] text-slate-400">Tip: you can enter negative value if you want to reduce totals.</div>
-                                </div>
-
-                                <button
-                                  onClick={() => addArApCustom(currentAsOfYmd)}
-                                  className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20"
+                  <div className="mt-2">
+                    <Collapse show={showManualAdjustments}>
+                      <Panel title={`Manual Adjustments (As of ${arAp.asOf})`}>
+                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                            <div className="text-sm font-semibold">Add Adjustment</div>
+                            <div className="mt-3 grid grid-cols-1 gap-3">
+                              <div>
+                                <label className="text-xs text-slate-300">Section</label>
+                                <select
+                                  value={customSection}
+                                  onChange={(e) => setCustomSection(e.target.value as any)}
+                                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
                                 >
-                                  Add
-                                </button>
-
-                                {arApCustomErr ? (
-                                  <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
-                                    {arApCustomErr}
-                                  </div>
-                                ) : null}
+                                  <option value="receivables">Receivables</option>
+                                  <option value="payables">Payables</option>
+                                </select>
                               </div>
+                              <div>
+                                <label className="text-xs text-slate-300">Label</label>
+                                <input
+                                  value={customLabel}
+                                  onChange={(e) => setCustomLabel(e.target.value)}
+                                  placeholder="e.g. Customer Deposit (Manual)"
+                                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-slate-300">Amount (PKR)</label>
+                                <input
+                                  value={customAmount}
+                                  onChange={(e) => setCustomAmount(e.target.value)}
+                                  placeholder="e.g. 150000"
+                                  className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
+                                />
+                                <div className="mt-1 text-[11px] text-slate-400">
+                                  Tip: enter a negative value to reduce totals.
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => addArApCustom(currentAsOfYmd)}
+                                className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20"
+                              >
+                                Add
+                              </button>
+                              {arApCustomErr ? (
+                                <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+                                  {arApCustomErr}
+                                </div>
+                              ) : null}
                             </div>
+                          </div>
 
-                            <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-black/20 p-4">
-                              <div className="flex items-center justify-between">
-                                <div className="text-sm font-semibold">Saved Adjustments</div>
-                                <button
-                                  onClick={() => reloadArApCustom(currentAsOfYmd)}
-                                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
-                                  disabled={arApCustomLoading}
-                                >
-                                  {arApCustomLoading ? "Refreshing…" : "Refresh"}
-                                </button>
-                              </div>
-
-                              <div className="mt-3 overflow-x-auto">
-                                <table className="w-full text-sm">
-                                  <thead className="text-left text-xs text-slate-300">
+                          <div className="lg:col-span-2 rounded-2xl border border-white/10 bg-black/20 p-4">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-semibold">Saved Adjustments</div>
+                              <button
+                                onClick={() => reloadArApCustom(currentAsOfYmd)}
+                                className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs hover:bg-white/10"
+                                disabled={arApCustomLoading}
+                              >
+                                {arApCustomLoading ? "Refreshing…" : "Refresh"}
+                              </button>
+                            </div>
+                            <div className="mt-3 overflow-x-auto">
+                              <table className="w-full text-sm">
+                                <thead className="text-left text-xs text-slate-300">
+                                  <tr>
+                                    <th className="py-2 pr-3">Section</th>
+                                    <th className="py-2 pr-3">Label</th>
+                                    <th className="py-2 text-right">Amount</th>
+                                    <th className="py-2 text-right">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {arApCustomLoading ? (
                                     <tr>
-                                      <th className="py-2 pr-3">Section</th>
-                                      <th className="py-2 pr-3">Label</th>
-                                      <th className="py-2 text-right">Amount</th>
-                                      <th className="py-2 text-right">Action</th>
+                                      <td colSpan={4} className="py-3 text-slate-300">
+                                        Loading…
+                                      </td>
                                     </tr>
-                                  </thead>
-                                  <tbody>
-                                    {arApCustomLoading ? (
-                                      <tr>
-                                        <td colSpan={4} className="py-3 text-slate-300">
-                                          Loading…
+                                  ) : arApCustomRows.length ? (
+                                    arApCustomRows.map((r) => (
+                                      <tr key={r.id} className="border-t border-white/10">
+                                        <td className="py-2 pr-3 capitalize text-slate-200">{r.section}</td>
+                                        <td className="py-2 pr-3">{r.label}</td>
+                                        <td className="py-2 text-right font-semibold">
+                                          {formatPKRCompact(Number(r.amount ?? 0))}
+                                        </td>
+                                        <td className="py-2 text-right">
+                                          <button
+                                            onClick={() => deleteArApCustom(r.id, currentAsOfYmd)}
+                                            className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-200 hover:bg-rose-500/15"
+                                          >
+                                            Delete
+                                          </button>
                                         </td>
                                       </tr>
-                                    ) : arApCustomRows.length ? (
-                                      arApCustomRows.map((r) => (
-                                        <tr key={r.id} className="border-t border-white/10">
-                                          <td className="py-2 pr-3 capitalize text-slate-200">{r.section}</td>
-                                          <td className="py-2 pr-3">{r.label}</td>
-                                          <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
-                                          <td className="py-2 text-right">
-                                            <button
-                                              onClick={() => deleteArApCustom(r.id, currentAsOfYmd)}
-                                              className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-200 hover:bg-rose-500/15"
-                                            >
-                                              Delete
-                                            </button>
-                                          </td>
-                                        </tr>
-                                      ))
-                                    ) : (
-                                      <tr>
-                                        <td colSpan={4} className="py-3 text-slate-300">
-                                          No manual adjustments for this As-Of date.
-                                        </td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
+                                    ))
+                                  ) : (
+                                    <tr>
+                                      <td colSpan={4} className="py-3 text-slate-300">
+                                        No manual adjustments for this As-Of date.
+                                      </td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                                <div className="text-xs text-slate-300">Payables Adjustments</div>
+                                <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customPayablesSum)}</div>
                               </div>
-
-                              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                  <div className="text-xs text-slate-300">Payables Adjustments</div>
-                                  <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customPayablesSum)}</div>
-                                </div>
-                                <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                  <div className="text-xs text-slate-300">Receivables Adjustments</div>
-                                  <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customReceivablesSum)}</div>
-                                </div>
+                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                                <div className="text-xs text-slate-300">Receivables Adjustments</div>
+                                <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customReceivablesSum)}</div>
                               </div>
                             </div>
                           </div>
-                        </Panel>
-                      </Collapse>
-                    </div>
+                        </div>
+                      </Panel>
+                    </Collapse>
                   </div>
+                </div>
 
-                  <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    {/* ✅ Payables Detail without Current/Long-term sections */}
-                    <Panel title="Payables Detail">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
-                            <tr>
-                              <th className="py-2 pr-3">Category</th>
-                              <th className="py-2 text-right">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr className="border-t border-white/10">
-                              <td className="py-2 pr-3 text-slate-200 font-medium">Payroll Payable</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.current.payrollPayable)}</td>
-                            </tr>
-
-                            <tr className="border-t border-white/10">
-                              <td className="py-2 pr-3 text-slate-200 font-medium">With Holding Tax Payable Vendors</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.current.withHoldingTaxPayableVendors)}</td>
-                            </tr>
-
-                            <tr className="border-t border-white/10">
-                              <td className="py-2 pr-3 text-slate-200 font-medium">Vendor Bills</td>
-                              <td className="py-2 text-right font-semibold">
-                                {formatPKRCompact(Number((arAp.payables.current as any).vendorBills ?? arAp.payables.current.accountsPayable ?? 0))}
+                {/* DETAIL TABLES */}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  {/* Payables Detail — grouped into Current / Long-term */}
+                  <Panel title="Payables Detail">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-left text-xs text-slate-300">
+                          <tr>
+                            <th className="py-2 pr-3">Category</th>
+                            <th className="py-2 text-right">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* Current group header */}
+                          <tr className="bg-rose-500/8">
+                            <td
+                              colSpan={2}
+                              className="py-1.5 pr-3 text-[11px] font-bold uppercase tracking-wider text-rose-300"
+                            >
+                              Current Payables
+                            </td>
+                          </tr>
+                          {[
+                            {
+                              label: "Payroll Payable",
+                              value: arAp.payables.current.payrollPayable,
+                            },
+                            {
+                              label: "WHT Payable – Vendors",
+                              value: arAp.payables.current.withHoldingTaxPayableVendors,
+                            },
+                            {
+                              label: "Vendor Bills",
+                              value: Number(
+                                (arAp.payables.current as any).vendorBills ??
+                                  arAp.payables.current.accountsPayable ??
+                                  0
+                              ),
+                            },
+                          ].map(({ label, value }) => (
+                            <tr key={label} className="border-t border-white/10">
+                              <td className="py-2 pr-3">
+                                <div className="font-medium text-slate-200">{label}</div>
+                                <div className="mt-1 h-1 w-full rounded-full bg-white/5">
+                                  <div
+                                    className="h-1 rounded-full bg-rose-400/50"
+                                    style={{
+                                      width: `${
+                                        payablesAdjTotal > 0
+                                          ? Math.min(100, (value / payablesAdjTotal) * 100)
+                                          : 0
+                                      }%`,
+                                    }}
+                                  />
+                                </div>
+                              </td>
+                              <td className="py-2 text-right">
+                                <div className="font-semibold">{formatPKRCompact(value)}</div>
+                                <div className="text-[11px] text-slate-400">
+                                  {payablesAdjTotal > 0
+                                    ? ((value / payablesAdjTotal) * 100).toFixed(1)
+                                    : "0.0"}
+                                  %
+                                </div>
                               </td>
                             </tr>
+                          ))}
 
-                            <tr className="border-t border-white/10">
-                              <td className="py-2 pr-3 text-slate-200 font-medium">Sir Aatif Loan to Company</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.longTerm.sirAatifLoanToCompany)}</td>
+                          {/* Long-term group header */}
+                          <tr className="bg-amber-500/8">
+                            <td
+                              colSpan={2}
+                              className="py-1.5 pr-3 text-[11px] font-bold uppercase tracking-wider text-amber-300"
+                            >
+                              Long-term Payables
+                            </td>
+                          </tr>
+                          {[
+                            {
+                              label: "Sir Aatif Loan to Company",
+                              value: arAp.payables.longTerm.sirAatifLoanToCompany,
+                            },
+                            {
+                              label: "Payroll WHT Payable",
+                              value: arAp.payables.longTerm.payrollWithHoldingTaxPayable,
+                            },
+                          ].map(({ label, value }) => (
+                            <tr key={label} className="border-t border-white/10">
+                              <td className="py-2 pr-3">
+                                <div className="font-medium text-slate-200">{label}</div>
+                                <div className="mt-1 h-1 w-full rounded-full bg-white/5">
+                                  <div
+                                    className="h-1 rounded-full bg-amber-400/50"
+                                    style={{
+                                      width: `${
+                                        payablesAdjTotal > 0
+                                          ? Math.min(100, (value / payablesAdjTotal) * 100)
+                                          : 0
+                                      }%`,
+                                    }}
+                                  />
+                                </div>
+                              </td>
+                              <td className="py-2 text-right">
+                                <div className="font-semibold">{formatPKRCompact(value)}</div>
+                                <div className="text-[11px] text-slate-400">
+                                  {payablesAdjTotal > 0
+                                    ? ((value / payablesAdjTotal) * 100).toFixed(1)
+                                    : "0.0"}
+                                  %
+                                </div>
+                              </td>
                             </tr>
+                          ))}
 
-                            <tr className="border-t border-white/10">
-                              <td className="py-2 pr-3 text-slate-200 font-medium">Payroll With Holding Tax Payable</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.payables.longTerm.payrollWithHoldingTaxPayable)}</td>
-                            </tr>
-
-                            {/* manual payables rows */}
-                            {arApCustomPayables.length
-                              ? arApCustomPayables.map((r) => (
-                                  <tr key={r.id} className="border-t border-white/10">
-                                    <td className="py-2 pr-3 text-slate-200">{r.label}</td>
-                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
-                                  </tr>
-                                ))
-                              : null}
-
-                            <tr className="border-t-2 border-white/15 bg-rose-500/10">
-                              <td className="py-2 pr-3 font-semibold text-slate-100">Total Payables</td>
-                              <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(payablesAdjTotal)}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </Panel>
-
-                    <Panel title="Receivables Detail">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
-                            <tr>
-                              <th className="py-2 pr-3">Category</th>
-                              <th className="py-2 text-right">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr className="border-t border-white/10">
-                              <td className="py-2 pr-3 text-slate-200 font-medium">Loan Against Salary</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.receivables.loanAgainstSalary)}</td>
-                            </tr>
-
-                            <tr className="border-t border-white/10">
-                              <td className="py-2 pr-3 text-slate-200 font-medium">Tax Withheld</td>
-                              <td className="py-2 text-right font-semibold">{formatPKRCompact(arAp.receivables.taxWithheld)}</td>
-                            </tr>
-
-                            {/* manual receivables rows */}
-                            {arApCustomReceivables.length
-                              ? arApCustomReceivables.map((r) => (
-                                  <tr key={r.id} className="border-t border-white/10">
-                                    <td className="py-2 pr-3 text-slate-200">{r.label}</td>
-                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(r.amount ?? 0))}</td>
-                                  </tr>
-                                ))
-                              : null}
-
-                            <tr className="border-t-2 border-white/15 bg-emerald-500/10">
-                              <td className="py-2 pr-3 font-semibold text-slate-100">Total Receivables</td>
-                              <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(receivablesAdjTotal)}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </Panel>
-                  </div>
-
-                  <div className="mt-4">
-                    <Panel title="Vendor Payables Breakdown">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="text-left text-xs text-slate-300">
-                            <tr>
-                              <th className="py-2 pr-3">Vendor</th>
-                              <th className="py-2 text-right">Current</th>
-                              <th className="py-2 text-right">1–30</th>
-                              <th className="py-2 text-right">31–60</th>
-                              <th className="py-2 text-right">61–90</th>
-                              <th className="py-2 text-right">91+</th>
-                              <th className="py-2 text-right">Total</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {arAp.apAging.vendors?.length ? (
-                              <>
-                                {arAp.apAging.vendors.map((v, i) => (
-                                  <tr key={i} className="border-t border-white/10">
-                                    <td className="py-2 pr-3 font-medium text-slate-200">{v.vendor}</td>
-                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v.current)}</td>
-                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v["1_30"])}</td>
-                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v["31_60"])}</td>
-                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v["61_90"])}</td>
-                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v["91_plus"])}</td>
-                                    <td className="py-2 text-right font-semibold">{formatPKRCompact(v.total)}</td>
-                                  </tr>
-                                ))}
-                                <tr className="border-t-2 border-white/15 bg-white/5">
-                                  <td className="py-2 pr-3 font-semibold text-slate-100">Total AP</td>
-                                  <td colSpan={5}></td>
-                                  <td className="py-2 text-right font-semibold text-slate-100">{formatPKRCompact(arAp.apAging.totalAP)}</td>
+                          {/* Manual payables */}
+                          {arApCustomPayables.length > 0 && (
+                            <>
+                              <tr className="bg-white/3">
+                                <td
+                                  colSpan={2}
+                                  className="py-1.5 pr-3 text-[11px] font-bold uppercase tracking-wider text-slate-400"
+                                >
+                                  Manual Adjustments
+                                </td>
+                              </tr>
+                              {arApCustomPayables.map((r) => (
+                                <tr key={r.id} className="border-t border-white/10">
+                                  <td className="py-2 pr-3 text-slate-200">{r.label}</td>
+                                  <td className="py-2 text-right font-semibold">
+                                    {formatPKRCompact(Number(r.amount ?? 0))}
+                                  </td>
                                 </tr>
-                              </>
-                            ) : (
-                              <tr className="border-t border-white/10">
-                                <td colSpan={7} className="py-3 text-slate-300">
-                                  No vendor aging data found.
+                              ))}
+                            </>
+                          )}
+
+                          <tr className="border-t-2 border-white/15 bg-rose-500/10">
+                            <td className="py-2.5 pr-3 font-bold text-slate-100">Total Payables</td>
+                            <td className="py-2.5 text-right font-bold text-slate-100">
+                              {formatPKRCompact(payablesAdjTotal)}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </Panel>
+
+                  {/* Receivables Detail */}
+                  <Panel title="Receivables Detail">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-left text-xs text-slate-300">
+                          <tr>
+                            <th className="py-2 pr-3">Category</th>
+                            <th className="py-2 text-right">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="bg-emerald-500/8">
+                            <td
+                              colSpan={2}
+                              className="py-1.5 pr-3 text-[11px] font-bold uppercase tracking-wider text-emerald-300"
+                            >
+                              Receivables
+                            </td>
+                          </tr>
+                          {[
+                            {
+                              label: "Loan Against Salary",
+                              value: arAp.receivables.loanAgainstSalary,
+                            },
+                            {
+                              label: "Tax Withheld",
+                              value: arAp.receivables.taxWithheld,
+                            },
+                          ].map(({ label, value }) => (
+                            <tr key={label} className="border-t border-white/10">
+                              <td className="py-2 pr-3">
+                                <div className="font-medium text-slate-200">{label}</div>
+                                <div className="mt-1 h-1 w-full rounded-full bg-white/5">
+                                  <div
+                                    className="h-1 rounded-full bg-emerald-400/50"
+                                    style={{
+                                      width: `${
+                                        receivablesAdjTotal > 0
+                                          ? Math.min(100, (value / receivablesAdjTotal) * 100)
+                                          : 0
+                                      }%`,
+                                    }}
+                                  />
+                                </div>
+                              </td>
+                              <td className="py-2 text-right">
+                                <div className="font-semibold">{formatPKRCompact(value)}</div>
+                                <div className="text-[11px] text-slate-400">
+                                  {receivablesAdjTotal > 0
+                                    ? ((value / receivablesAdjTotal) * 100).toFixed(1)
+                                    : "0.0"}
+                                  %
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+
+                          {arApCustomReceivables.length > 0 && (
+                            <>
+                              <tr className="bg-white/3">
+                                <td
+                                  colSpan={2}
+                                  className="py-1.5 pr-3 text-[11px] font-bold uppercase tracking-wider text-slate-400"
+                                >
+                                  Manual Adjustments
+                                </td>
+                              </tr>
+                              {arApCustomReceivables.map((r) => (
+                                <tr key={r.id} className="border-t border-white/10">
+                                  <td className="py-2 pr-3 text-slate-200">{r.label}</td>
+                                  <td className="py-2 text-right font-semibold">
+                                    {formatPKRCompact(Number(r.amount ?? 0))}
+                                  </td>
+                                </tr>
+                              ))}
+                            </>
+                          )}
+
+                          <tr className="border-t-2 border-white/15 bg-emerald-500/10">
+                            <td className="py-2.5 pr-3 font-bold text-slate-100">Total Receivables</td>
+                            <td className="py-2.5 text-right font-bold text-slate-100">
+                              {formatPKRCompact(receivablesAdjTotal)}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </Panel>
+                </div>
+
+                {/* VENDOR AGING TABLE — color-coded, sorted by total */}
+                <Panel title="Vendor AP Aging Breakdown">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="text-left text-xs text-slate-300">
+                        <tr>
+                          <th className="py-2 pr-3">Vendor</th>
+                          <th className="py-2 text-right">Current</th>
+                          <th className="py-2 text-right">1–30 d</th>
+                          <th className="py-2 text-right">31–60 d</th>
+                          <th className="py-2 text-right">61–90 d</th>
+                          <th className="py-2 text-right">91+ d</th>
+                          <th className="py-2 text-right">% of AP</th>
+                          <th className="py-2 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {arAp.apAging.vendors?.length ? (
+                          <>
+                            {[...(arAp.apAging.vendors ?? [])]
+                              .sort((a, b) => b.total - a.total)
+                              .map((v, i) => (
+                                <tr key={i} className="border-t border-white/10">
+                                  <td className="py-2 pr-3 font-medium text-slate-200">{v.vendor}</td>
+                                  <td className="py-2 text-right font-semibold text-slate-200">
+                                    {formatPKRCompact(v.current)}
+                                  </td>
+                                  <td className="py-2 text-right font-semibold">
+                                    <span
+                                      className={
+                                        v["1_30"] > 0
+                                          ? "rounded-md bg-sky-400/10 px-1.5 py-0.5 text-sky-300"
+                                          : "text-slate-500"
+                                      }
+                                    >
+                                      {formatPKRCompact(v["1_30"])}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 text-right font-semibold">
+                                    <span
+                                      className={
+                                        v["31_60"] > 0
+                                          ? "rounded-md bg-amber-400/15 px-1.5 py-0.5 text-amber-300"
+                                          : "text-slate-500"
+                                      }
+                                    >
+                                      {formatPKRCompact(v["31_60"])}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 text-right font-semibold">
+                                    <span
+                                      className={
+                                        v["61_90"] > 0
+                                          ? "rounded-md bg-orange-400/20 px-1.5 py-0.5 text-orange-300"
+                                          : "text-slate-500"
+                                      }
+                                    >
+                                      {formatPKRCompact(v["61_90"])}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 text-right font-semibold">
+                                    <span
+                                      className={
+                                        v["91_plus"] > 0
+                                          ? "rounded-md bg-rose-500/25 px-1.5 py-0.5 text-rose-300"
+                                          : "text-slate-500"
+                                      }
+                                    >
+                                      {formatPKRCompact(v["91_plus"])}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 text-right text-slate-400">
+                                    {arAp.apAging.totalAP > 0
+                                      ? ((v.total / arAp.apAging.totalAP) * 100).toFixed(1) + "%"
+                                      : "—"}
+                                  </td>
+                                  <td className="py-2 text-right font-semibold text-slate-100">
+                                    {formatPKRCompact(v.total)}
+                                  </td>
+                                </tr>
+                              ))}
+                            {overdueAP > 0 && (
+                              <tr className="border-t border-rose-500/20 bg-rose-500/8">
+                                <td className="py-2 pr-3 text-xs font-bold uppercase tracking-wider text-rose-300">
+                                  Overdue Subtotal (61+ d)
+                                </td>
+                                <td colSpan={5}></td>
+                                <td className="py-2 text-right text-xs text-rose-400">
+                                  {overdueAPPct.toFixed(1)}%
+                                </td>
+                                <td className="py-2 text-right font-bold text-rose-300">
+                                  {formatPKRCompact(overdueAP)}
                                 </td>
                               </tr>
                             )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </Panel>
+                            <tr className="border-t-2 border-white/15 bg-white/5">
+                              <td className="py-2.5 pr-3 font-bold text-slate-100">Total AP</td>
+                              <td colSpan={6}></td>
+                              <td className="py-2.5 text-right font-bold text-slate-100">
+                                {formatPKRCompact(arAp.apAging.totalAP)}
+                              </td>
+                            </tr>
+                          </>
+                        ) : (
+                          <tr className="border-t border-white/10">
+                            <td colSpan={8} className="py-4 text-slate-300">
+                              No vendor aging data found.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
-                </>
-              )}
-            </Panel>
+                </Panel>
+              </>
+            )}
           </div>
         ) : null}
 
         {/* PNL TAB */}
         {tab === "pnl" ? (
           <>
+            {/* KPI CARDS */}
             <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <KpiCard
-                title="Total Income"
-                numericValue={kpi.revenue}
-                formatValue={formatPKRCompact}
-                subtext="Year-to-date inflows"
-                highlight="good"
-              />
-              <KpiCard
-                title="Total Expenses"
-                numericValue={kpi.expenses}
-                formatValue={formatPKRCompact}
-                subtext="Year-to-date outflows"
-                highlight="bad"
-              />
-              <KpiCard
-                title="Net Profit (Loss)"
-                numericValue={kpi.profit}
-                formatValue={formatPKRCompact}
-                highlight={kpi.profit < 0 ? "bad" : "good"}
-              />
-              <KpiCard title="Months" numericValue={series.length} formatValue={(n) => `${Math.round(n)}`} subtext="Period coverage" />
+              {/* Total Income */}
+              <div className="glass-breathe group rounded-2xl border border-emerald-300/20 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_16px_45px_rgba(6,182,212,0.12)] backdrop-blur-xl transition hover:border-emerald-300/35">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Income</span>
+                </div>
+                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.revenue)}</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  {momRevenue === null
+                    ? <span className="text-[11px] text-slate-500">No prior data</span>
+                    : momRevenue >= 0
+                      ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↑ {(momRevenue * 100).toFixed(1)}% MoM</span>
+                      : <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↓ {(Math.abs(momRevenue) * 100).toFixed(1)}% MoM</span>
+                  }
+                  {momRevenue !== null && <span className="text-[11px] text-slate-500">vs prev month</span>}
+                </div>
+              </div>
+
+              {/* Total Expenses */}
+              <div className="glass-breathe group rounded-2xl border border-rose-300/20 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_16px_45px_rgba(244,63,94,0.10)] backdrop-blur-xl transition hover:border-rose-300/35">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M20 12H4" />
+                  </svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Expenses</span>
+                </div>
+                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.expenses)}</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  {momExpenses === null
+                    ? <span className="text-[11px] text-slate-500">No prior data</span>
+                    : momExpenses <= 0
+                      ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↓ {(Math.abs(momExpenses) * 100).toFixed(1)}% MoM</span>
+                      : <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↑ {(momExpenses * 100).toFixed(1)}% MoM</span>
+                  }
+                  {momExpenses !== null && <span className="text-[11px] text-slate-500">vs prev month</span>}
+                </div>
+              </div>
+
+              {/* Net Profit */}
+              <div className={`glass-breathe group rounded-2xl border bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl transition ${kpi.profit >= 0 ? "border-cyan-300/20 shadow-[0_16px_45px_rgba(6,182,212,0.12)] hover:border-cyan-300/35" : "border-rose-300/20 shadow-[0_16px_45px_rgba(244,63,94,0.10)] hover:border-rose-300/35"}`}>
+                <div className="flex items-center gap-2">
+                  <svg className={`h-4 w-4 ${kpi.profit >= 0 ? "text-cyan-400" : "text-rose-400"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                  </svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Net Profit</span>
+                </div>
+                <div className={`mt-3 text-[26px] font-semibold tracking-tight ${kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatPKRCompact(kpi.profit)}</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  {momProfit === null
+                    ? <span className="text-[11px] text-slate-500">No prior data</span>
+                    : momProfit >= 0
+                      ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">↑ {(momProfit * 100).toFixed(1)}% MoM</span>
+                      : <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">↓ {(Math.abs(momProfit) * 100).toFixed(1)}% MoM</span>
+                  }
+                  {momProfit !== null && <span className="text-[11px] text-slate-500">vs prev month</span>}
+                </div>
+              </div>
+
+              {/* Expense Ratio */}
+              <div className="glass-breathe group rounded-2xl border border-amber-300/20 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_16px_45px_rgba(245,158,11,0.08)] backdrop-blur-xl transition hover:border-amber-300/35">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Expense Ratio</span>
+                </div>
+                <div className={`mt-3 text-[26px] font-semibold tracking-tight ${expenseRatio === null ? "text-slate-400" : expenseRatio > 0.9 ? "text-rose-300" : expenseRatio > 0.7 ? "text-amber-300" : "text-emerald-300"}`}>
+                  {expenseRatio === null ? "N/A" : `${(expenseRatio * 100).toFixed(1)}%`}
+                </div>
+                <div className="mt-2">
+                  <div className="h-1.5 w-full rounded-full bg-white/10">
+                    {expenseRatio !== null && (
+                      <div className={`h-full rounded-full transition-all duration-700 ${expenseRatio > 0.9 ? "bg-rose-400" : expenseRatio > 0.7 ? "bg-amber-400" : "bg-emerald-400"}`} style={{ width: `${Math.min(expenseRatio * 100, 100)}%` }} />
+                    )}
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500">{expenseRatio === null ? "no revenue in period" : "of revenue spent"}</div>
+                </div>
+              </div>
             </div>
 
-            <div className="mt-8">
-              <Panel title="Financial Insight">
-                <div className="relative rounded-2xl border border-white/15 bg-gradient-to-br from-slate-900/85 via-[#10243f]/70 to-[#130f2f]/80 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_24px_64px_rgba(2,6,23,0.5)] backdrop-blur-xl before:absolute before:inset-0 before:rounded-2xl before:p-px before:[background:linear-gradient(120deg,rgba(34,211,238,0.5),rgba(99,102,241,0.15),rgba(244,63,94,0.35))] before:[mask:linear-gradient(#fff_0_0)_content-box,linear-gradient(#fff_0_0)] before:[mask-composite:xor] md:p-10">
-                  <div className="mx-auto max-w-4xl text-center">
-                    <div className={`mx-auto mb-2 inline-block rounded-3xl px-6 py-2 text-6xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}>
+            {/* HERO FINANCIAL SUMMARY */}
+            <div className="mt-6">
+              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900/90 via-[#0d1f3a]/80 to-[#130f2f]/85 p-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_24px_64px_rgba(2,6,23,0.55)] backdrop-blur-xl before:absolute before:inset-0 before:rounded-2xl before:p-px before:[background:linear-gradient(120deg,rgba(34,211,238,0.4),rgba(99,102,241,0.1),rgba(244,63,94,0.3))] before:[mask:linear-gradient(#fff_0_0)_content-box,linear-gradient(#fff_0_0)] before:[mask-composite:xor] md:p-10">
+                {/* ambient glow orbs */}
+                <div className={`pointer-events-none absolute -left-20 -top-20 h-60 w-60 rounded-full blur-[80px] ${isProfit ? "bg-emerald-500/10" : "bg-rose-500/10"}`} />
+                <div className="pointer-events-none absolute -bottom-10 -right-10 h-48 w-48 rounded-full bg-indigo-500/8 blur-[60px]" />
+
+                <div className="relative grid grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-12">
+                  {/* Left: big margin display */}
+                  <div className="flex flex-col items-center justify-center text-center lg:items-start lg:text-left">
+                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">{financialLabel}</div>
+                    <div className={`text-7xl font-extrabold tracking-tight md:text-8xl ${marginTone} ${marginGlow}`}>
                       {formatPct(netMargin)}
                     </div>
-                    <div className="text-[12px] font-semibold uppercase tracking-[0.24em] text-slate-300 md:text-[13px]">{financialLabel.toUpperCase()}</div>
+                    <div className="mt-3 flex items-center gap-2">
+                      {netMargin >= 0
+                        ? <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300">Profitable Period</span>
+                        : <span className="rounded-full bg-rose-500/15 px-3 py-1 text-xs font-semibold text-rose-300">Loss Period</span>
+                      }
+                      <span className="text-xs text-slate-500">{series.length} month{series.length !== 1 ? "s" : ""} tracked</span>
+                    </div>
+                    <p className="mt-5 max-w-sm text-sm leading-relaxed text-slate-300/90">{financialSummary}</p>
+                  </div>
 
-                    <p className="mx-auto mt-5 max-w-3xl text-sm leading-relaxed text-slate-200/95 md:text-base">{financialSummary}</p>
+                  {/* Right: metric rows with progress bars */}
+                  <div className="flex flex-col justify-center gap-5">
+                    {/* Revenue row */}
+                    <div>
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                          <span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />
+                          Revenue
+                        </span>
+                        <span className="text-sm font-semibold text-white">{formatPKRMillions(kpi.revenue)}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-white/8">
+                        <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-cyan-300" style={{ width: "100%" }} />
+                      </div>
+                    </div>
 
-                    <div className="mt-8 grid grid-cols-1 gap-2 border-t border-white/10 pt-4 text-xs text-slate-400 sm:grid-cols-3 md:text-sm">
-                      <div className="sm:border-r sm:border-white/10">Revenue: {formatPKRMillions(kpi.revenue)}</div>
-                      <div className="sm:border-r sm:border-white/10">Expenses: {formatPKRMillions(kpi.expenses)}</div>
-                      <div>Net: {formatPKRMillions(kpi.profit, true)}</div>
+                    {/* Expenses row */}
+                    <div>
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                          <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
+                          Expenses
+                        </span>
+                        <span className="text-sm font-semibold text-white">{formatPKRMillions(kpi.expenses)}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-white/8">
+                        <div className="h-full rounded-full bg-gradient-to-r from-rose-600 to-rose-400 transition-all duration-700" style={{ width: `${kpi.revenue > 0 ? Math.min((kpi.expenses / kpi.revenue) * 100, 100) : 0}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Net Profit row */}
+                    <div>
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                          <span className={`h-2.5 w-2.5 rounded-full ${kpi.profit >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} />
+                          Net Profit
+                        </span>
+                        <span className={`text-sm font-semibold ${kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatPKRMillions(kpi.profit, true)}</span>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-white/8">
+                        <div className={`h-full rounded-full transition-all duration-700 ${kpi.profit >= 0 ? "bg-gradient-to-r from-emerald-600 to-emerald-400" : "bg-gradient-to-r from-rose-600 to-rose-400"}`} style={{ width: `${Math.min(kpi.revenue > 0 ? (Math.abs(kpi.profit) / kpi.revenue) * 100 : 0, 100)}%` }} />
+                      </div>
+                    </div>
+
+                    {/* Margin gauge */}
+                    <div className="mt-1 rounded-xl border border-white/8 bg-white/5 px-4 py-3">
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span>Margin Health</span>
+                        <span className={`font-semibold ${netMargin >= 0.15 ? "text-emerald-300" : netMargin >= 0 ? "text-amber-300" : "text-rose-300"}`}>
+                          {netMargin >= 0.15 ? "Strong" : netMargin >= 0 ? "Moderate" : "Negative"}
+                        </span>
+                      </div>
+                      <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
+                        <div className={`h-full rounded-full transition-all duration-700 ${netMargin >= 0.15 ? "bg-emerald-400" : netMargin >= 0 ? "bg-amber-400" : "bg-rose-400"}`} style={{ width: `${Math.min(Math.abs(netMargin) * 200, 100)}%` }} />
+                      </div>
                     </div>
                   </div>
                 </div>
-              </Panel>
+              </div>
             </div>
 
+            {/* CHARTS ROW 1 */}
             <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-2">
-              <ChartCard title="Income vs Expenses" legend={[{ label: "Income", color: "bg-cyan-300" }, { label: "Expenses", color: "bg-rose-300" }]}>
+              {/* Composed Chart: Revenue + Expenses bars + Net Profit line */}
+              <ChartCard title="Revenue, Expenses & Net Profit" legend={[{ label: "Revenue", color: "bg-cyan-300" }, { label: "Expenses", color: "bg-rose-300" }, { label: "Net Profit", color: "bg-emerald-300" }]}>
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                    <ComposedChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                       <defs>
-                        <linearGradient id="incomeBars" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#67e8f9" stopOpacity={0.95} />
-                          <stop offset="100%" stopColor="#0891b2" stopOpacity={0.65} />
+                        <linearGradient id="incomeBars2" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#67e8f9" stopOpacity={0.9} />
+                          <stop offset="100%" stopColor="#0891b2" stopOpacity={0.55} />
                         </linearGradient>
-                        <linearGradient id="expenseBars" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#fda4af" stopOpacity={0.92} />
-                          <stop offset="100%" stopColor="#be123c" stopOpacity={0.58} />
+                        <linearGradient id="expenseBars2" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#fda4af" stopOpacity={0.88} />
+                          <stop offset="100%" stopColor="#be123c" stopOpacity={0.52} />
                         </linearGradient>
-                      </defs>
-                      <CartesianGrid {...GRID} />
-                      <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                      <Tooltip content={<MoneyTooltip />} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
-                      <Bar
-                        dataKey="revenue"
-                        name="Income"
-                        fill="url(#incomeBars)"
-                        radius={[10, 10, 0, 0]}
-                        style={{ filter: "drop-shadow(0 0 8px rgba(103,232,249,0.2))" }}
-                      />
-                      <Bar
-                        dataKey="expenses"
-                        name="Expenses"
-                        fill="url(#expenseBars)"
-                        radius={[10, 10, 0, 0]}
-                        style={{ filter: "drop-shadow(0 0 8px rgba(251,113,133,0.18))" }}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </ChartCard>
-
-              <ChartCard title="Net Profit Trend" legend={[{ label: "Net Profit", color: "bg-emerald-300" }]}>
-                <div className="h-[320px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={series} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                      <defs>
-                        <linearGradient id="netProfitLine" x1="0" y1="0" x2="1" y2="0">
+                        <linearGradient id="profitLineGrad" x1="0" y1="0" x2="1" y2="0">
                           <stop offset="0%" stopColor="#5eead4" />
                           <stop offset="100%" stopColor="#34d399" />
                         </linearGradient>
@@ -1969,58 +2445,167 @@ export default function DashboardPage() {
                       <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                      <Tooltip content={<MoneyTooltip />} cursor={{ stroke: "rgba(255,255,255,0.22)", strokeDasharray: "4 4" }} />
+                      <Tooltip content={<MoneyTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                      <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" strokeDasharray="4 4" />
+                      <Bar dataKey="revenue" name="Revenue" fill="url(#incomeBars2)" radius={[6, 6, 0, 0]} style={{ filter: "drop-shadow(0 0 6px rgba(103,232,249,0.18))" }} />
+                      <Bar dataKey="expenses" name="Expenses" fill="url(#expenseBars2)" radius={[6, 6, 0, 0]} style={{ filter: "drop-shadow(0 0 6px rgba(251,113,133,0.16))" }} />
                       <Line
                         type="monotone"
                         dataKey="profit"
                         name="Net Profit"
-                        stroke="url(#netProfitLine)"
+                        stroke="url(#profitLineGrad)"
                         strokeWidth={3}
-                        dot={(props) => <LastPointPulseDot {...props} dataLength={series.length} color="#5eead4" />}
+                        dot={(props: any) => <LastPointPulseDot {...props} dataLength={series.length} color="#5eead4" />}
                         activeDot={{ r: 5.5, fill: "#5eead4", stroke: "#ccfbf1", strokeWidth: 2 }}
-                        style={{ filter: "drop-shadow(0 0 10px rgba(52,211,153,0.28))" }}
+                        style={{ filter: "drop-shadow(0 0 8px rgba(52,211,153,0.3))" }}
                       />
-                    </LineChart>
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </ChartCard>
+
+              {/* Profit Margin Trend (AreaChart) */}
+              <ChartCard title="Profit Margin Trend %" legend={[{ label: "Margin %", color: "bg-teal-300" }, { label: "Average", color: "bg-amber-300" }]}>
+                <div className="h-[320px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={marginSeries} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
+                      <defs>
+                        <linearGradient id="marginAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#2dd4bf" stopOpacity={0.45} />
+                          <stop offset="100%" stopColor="#2dd4bf" stopOpacity={0.03} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid {...GRID} />
+                      <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={(v) => `${v}%`} />
+                      <Tooltip
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          return (
+                            <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
+                              <div className="font-semibold">{label}</div>
+                              <div className="text-teal-300">{Number(payload[0]?.value ?? 0).toFixed(1)}% margin</div>
+                            </div>
+                          );
+                        }}
+                        cursor={{ stroke: "rgba(255,255,255,0.18)", strokeDasharray: "4 4" }}
+                      />
+                      <ReferenceLine y={0} stroke="rgba(255,255,255,0.22)" strokeDasharray="4 4" />
+                      <ReferenceLine y={avgMargin} stroke="#f59e0b" strokeDasharray="6 3" strokeOpacity={0.6} label={{ value: `avg ${avgMargin.toFixed(1)}%`, fill: "#f59e0b", fontSize: 10, position: "insideTopRight" }} />
+                      <Area
+                        type="monotone"
+                        dataKey="margin"
+                        name="Margin %"
+                        stroke="#2dd4bf"
+                        strokeWidth={2.5}
+                        fill="url(#marginAreaGrad)"
+                        dot={(props: any) => <LastPointPulseDot {...props} dataLength={marginSeries.length} color="#2dd4bf" />}
+                        activeDot={{ r: 5, fill: "#2dd4bf", stroke: "#99f6e4", strokeWidth: 2 }}
+                        style={{ filter: "drop-shadow(0 0 8px rgba(45,212,191,0.25))" }}
+                      />
+                    </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </ChartCard>
             </div>
 
+            {/* EXPENSE BREAKDOWN: Donut + Ranked List */}
             <div className="mt-6">
-              <ChartCard
-                title="Expense Composition"
-                legend={expenseComposition.map((entry, idx) => ({
-                  label: entry.name,
-                  color: DONUT_COLOR_CLASSES[idx % DONUT_COLOR_CLASSES.length],
-                }))}
-              >
-                <div className="h-[340px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Tooltip content={<MoneyTooltip pie />} />
-                      <Pie
-                        data={expenseComposition}
-                        dataKey="value"
-                        nameKey="name"
-                        innerRadius={78}
-                        outerRadius={116}
-                        paddingAngle={2}
-                        cornerRadius={6}
-                      >
-                        {expenseComposition.map((_, i) => (
-                          <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <text x="50%" y="46%" textAnchor="middle" className="fill-slate-300 text-[11px] uppercase tracking-[0.18em]">
-                        Total
-                      </text>
-                      <text x="50%" y="54%" textAnchor="middle" className="fill-white text-sm font-semibold md:text-base">
-                        {formatPKRCompact(expenseTotal)}
-                      </text>
-                    </PieChart>
-                  </ResponsiveContainer>
+              <ChartCard title="Expense Composition" legend={expenseComposition.map((entry, idx) => ({ label: entry.name, color: DONUT_COLOR_CLASSES[idx % DONUT_COLOR_CLASSES.length] }))}>
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  {/* Donut chart */}
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Tooltip content={<MoneyTooltip pie />} />
+                        <Pie data={expenseComposition} dataKey="value" nameKey="name" innerRadius={72} outerRadius={108} paddingAngle={2} cornerRadius={6}>
+                          {expenseComposition.map((_, i) => (
+                            <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <text x="50%" y="46%" textAnchor="middle" fill="rgba(148,163,184,0.8)" fontSize={10} letterSpacing="0.18em">TOTAL</text>
+                        <text x="50%" y="56%" textAnchor="middle" fill="#f1f5f9" fontSize={13} fontWeight={600}>{formatPKRCompact(expenseTotal)}</text>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Ranked horizontal bars */}
+                  <div className="flex flex-col justify-center gap-3 py-2">
+                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</div>
+                    {expenseComposition.map((item, idx) => {
+                      const pct = expenseTotal > 0 ? (item.value / expenseTotal) * 100 : 0;
+                      return (
+                        <div key={item.name}>
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5 text-xs text-slate-300">
+                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
+                              {item.name}
+                            </span>
+                            <span className="text-xs font-semibold text-slate-200">{pct.toFixed(1)}% &middot; {formatPKRCompact(item.value)}</span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-white/8">
+                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </ChartCard>
+            </div>
+
+            {/* KEY INSIGHTS STRIP */}
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {/* Best Month */}
+              <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/8 to-white/4 p-5 backdrop-blur-xl">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  <svg className="h-3.5 w-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 3l14 9-14 9V3z" />
+                  </svg>
+                  Best Month
+                </div>
+                <div className="mt-3 text-xl font-bold text-white">{bestProfitMonth.month || "—"}</div>
+                <div className={`mt-1 text-sm font-semibold ${bestProfitMonth.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                  {formatPKRCompact(bestProfitMonth.profit)}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">highest net profit in period</div>
+              </div>
+
+              {/* Avg Monthly Margin */}
+              <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/8 to-white/4 p-5 backdrop-blur-xl">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  <svg className="h-3.5 w-3.5 text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  Avg Monthly Margin
+                </div>
+                <div className={`mt-3 text-xl font-bold ${avgMargin >= 0 ? "text-teal-300" : "text-rose-300"}`}>
+                  {avgMargin.toFixed(1)}%
+                </div>
+                <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
+                  <div className={`h-full rounded-full transition-all duration-700 ${avgMargin >= 10 ? "bg-teal-400" : avgMargin >= 0 ? "bg-amber-400" : "bg-rose-400"}`} style={{ width: `${Math.min(Math.abs(avgMargin) * 2, 100)}%` }} />
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">average across {marginSeries.length} months</div>
+              </div>
+
+              {/* Cost Efficiency */}
+              <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/8 to-white/4 p-5 backdrop-blur-xl">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  <svg className="h-3.5 w-3.5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Cost Efficiency
+                </div>
+                <div className={`mt-3 text-xl font-bold ${expenseRatio === null ? "text-slate-400" : expenseRatio <= 0.7 ? "text-emerald-300" : expenseRatio <= 0.9 ? "text-amber-300" : "text-rose-300"}`}>
+                  {expenseRatio === null ? "N/A" : `${((1 - expenseRatio) * 100).toFixed(1)}%`}
+                </div>
+                <div className="mt-1 text-sm text-slate-400">
+                  {expenseRatio === null ? "No revenue to compare" : expenseRatio <= 0.7 ? "Lean & efficient" : expenseRatio <= 0.9 ? "Room to optimize" : "High cost pressure"}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-500">
+                  {expenseRatio === null ? "expense ratio unavailable without revenue" : `${(expenseRatio * 100).toFixed(1)}% of revenue goes to expenses`}
+                </div>
+              </div>
             </div>
           </>
         ) : null}
@@ -3048,7 +3633,7 @@ function LastPointPulseDot({ cx, cy, index, dataLength, color }: any) {
   );
 }
 
-function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any) {
+function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd, apAgingBar }: any) {
   if (!active || !payload || payload.length === 0) return null;
 
   if (pie) {
@@ -3057,6 +3642,20 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd }: any
       <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">{p?.name ?? ""}</div>
         <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
+      </div>
+    );
+  }
+
+  if (apAgingBar) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
+        <div className="mb-1 font-semibold">{label}</div>
+        {payload.map((p: any) => (
+          <div key={p.dataKey} className="flex items-center justify-between gap-4">
+            <span className="text-slate-300">{p.name}</span>
+            <span className="font-semibold">{formatPKRCompact(Number(p.value ?? 0))}</span>
+          </div>
+        ))}
       </div>
     );
   }
