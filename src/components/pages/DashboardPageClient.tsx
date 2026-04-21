@@ -147,7 +147,7 @@ type RetainedResp = {
   error?: string;
 };
 
-/** ✅ CFO Forecast API response */
+/** ✅ Financial Forecast API response */
 type ForecastApiResp = {
   ok: boolean;
   horizon: number;
@@ -550,7 +550,7 @@ export default function DashboardPage() {
   const [retained, setRetained] = useState<RetainedResp | null>(null);
   const [retainedLoading, setRetainedLoading] = useState(false);
 
-  // ✅ CFO Forecasting
+  // ✅ Financial Forecasting
   const [forecastHorizon, setForecastHorizon] = useState<6 | 12>(6);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastData, setForecastData] = useState<ForecastApiResp | null>(null);
@@ -1433,7 +1433,7 @@ export default function DashboardPage() {
             Retained Earning
           </TabButton>
           <TabButton active={tab === "forecast"} onClick={() => setTab("forecast")}>
-            CFO Forecast
+            Financial Forecast
           </TabButton>
 
           <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" prefetch={false} onActivate={() => setTab("revenue")}>
@@ -2871,7 +2871,7 @@ export default function DashboardPage() {
             <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <div className="text-sm font-semibold text-white">CFO Operating Forecast</div>
+                  <div className="text-sm font-semibold text-white">Financial Forecast</div>
                   {fcOk && (
                     <div className="mt-0.5 text-xs text-slate-400">
                       Based on {forecastData?.meta?.monthsUsed ?? 0} months of historical data
