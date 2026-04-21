@@ -1544,7 +1544,7 @@ export default function DashboardPage() {
                   </Panel>
 
                   {/* Monthly Trend */}
-                  <Panel title="Monthly Payables & Receivables Trend">
+                  <Panel title="Monthly Payables Trend">
                     <div className="h-[280px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={monthlyArAp} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
@@ -1556,8 +1556,7 @@ export default function DashboardPage() {
                             tickLine={TICK_LINE}
                             tickFormatter={fmtAxisPKR}
                           />
-                          <Tooltip content={<MoneyTooltip arApMonthEnd />} />
-                          <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                          <Tooltip content={<MoneyTooltip single />} />
                           <Line
                             type="monotone"
                             dataKey="payables"
@@ -1573,22 +1572,6 @@ export default function DashboardPage() {
                             )}
                             activeDot={{ r: 5 }}
                             style={{ filter: "drop-shadow(0 0 8px rgba(248,113,113,0.25))" }}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="receivables"
-                            name="Receivables"
-                            stroke={CHART_COLORS.profit}
-                            strokeWidth={2.5}
-                            dot={(props: any) => (
-                              <LastPointPulseDot
-                                {...props}
-                                dataLength={monthlyArAp.length}
-                                color={CHART_COLORS.profit}
-                              />
-                            )}
-                            activeDot={{ r: 5 }}
-                            style={{ filter: "drop-shadow(0 0 8px rgba(52,211,153,0.25))" }}
                           />
                         </LineChart>
                       </ResponsiveContainer>
