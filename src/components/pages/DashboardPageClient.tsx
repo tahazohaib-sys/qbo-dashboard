@@ -555,6 +555,9 @@ export default function DashboardPage() {
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastData, setForecastData] = useState<ForecastApiResp | null>(null);
   const [forecastCashPKR, setForecastCashPKR] = useState<number | null>(null);
+  // What-if adjustment multipliers (0 = base, 0.05 = +5%, -0.1 = -10%, etc.)
+  const [revAdjPct, setRevAdjPct] = useState<number>(0);
+  const [expAdjPct, setExpAdjPct] = useState<number>(0);
 
   // ✅ AR/AP
   const [arApLoading, setArApLoading] = useState(false);
@@ -1148,6 +1151,33 @@ export default function DashboardPage() {
   const fcMonthsToBreakeven = forecastData?.benchmarks?.monthsToBreakeven ?? null;
   const forecastRows = forecastData?.forecast ?? [];
 
+  // Apply what-if adjustment multipliers to base forecast rows (client-side, no API call)
+  const adjustedForecastRows = useMemo(() => {
+    if (revAdjPct === 0 && expAdjPct === 0) return forecastRows;
+    let cumProfit = 0;
+    return forecastRows.map((row) => {
+      const adjRevenue = row.revenue * (1 + revAdjPct);
+      const adjOpex = row.opex * (1 + expAdjPct);
+      const adjProfit = adjRevenue - adjOpex;
+      cumProfit += adjProfit;
+      return {
+        ...row,
+        revenue: adjRevenue,
+        opex: adjOpex,
+        profit: adjProfit,
+        profitMarginPct: adjRevenue > 0 ? adjProfit / adjRevenue : 0,
+        cumulativeProfit: cumProfit,
+      };
+    });
+  }, [forecastRows, revAdjPct, expAdjPct]);
+
+  const hasAdjustments = revAdjPct !== 0 || expAdjPct !== 0;
+  // "Effective" scalars — reflect adjustments for KPI cards and table
+  const fcEffCumulativeProfit =
+    adjustedForecastRows[adjustedForecastRows.length - 1]?.cumulativeProfit ?? fcCumulativeProfit;
+  const fcEffNextRevenue = adjustedForecastRows[0]?.revenue ?? fcNextMonthRevenue;
+  const fcEffNextProfit = adjustedForecastRows[0]?.profit ?? fcNextMonthProfit;
+
   // Benchmark bar chart data with per-bar fill colors
   const benchmarkBars = useMemo(() => {
     if (!fcOk) return [];
@@ -1172,10 +1202,10 @@ export default function DashboardPage() {
     [data?.series]
   );
 
-  // Combined historical + forecast chart data
+  // Combined historical + forecast chart data (uses adjusted rows)
   const combinedChartData = useMemo(() => {
     const histPoints = historicalFcSeries.map((p) => ({ ...p, isForecast: false }));
-    const fcPoints = forecastRows.map((p) => ({
+    const fcPoints = adjustedForecastRows.map((p) => ({
       month: p.month,
       revenue: p.revenue,
       opex: p.opex,
@@ -1184,35 +1214,37 @@ export default function DashboardPage() {
       isForecast: true,
     }));
     return [...histPoints, ...fcPoints];
-  }, [historicalFcSeries, forecastRows]);
+  }, [historicalFcSeries, adjustedForecastRows]);
 
   // Last historical month — used as ReferenceLine x value
   const fcDividerMonth = historicalFcSeries[historicalFcSeries.length - 1]?.month ?? null;
 
-  // Margin trajectory: historical margins + forecast margins merged
+  // Margin trajectory: historical margins + adjusted forecast margins merged
   const marginTrajectoryData = useMemo(() => {
     const hist = (data?.series ?? []).map((s) => ({
       month: s.month,
       histMargin: s.revenue > 0 ? (s.profit / s.revenue) * 100 : 0,
       forecastMargin: undefined as number | undefined,
     }));
-    const fc = forecastRows.map((p) => ({
+    const fc = adjustedForecastRows.map((p) => ({
       month: p.month,
       histMargin: undefined as number | undefined,
-      forecastMargin: ((p.profitMarginPct ?? 0) * 100),
+      forecastMargin: (p.profitMarginPct ?? 0) * 100,
     }));
     return [...hist, ...fc];
-  }, [data?.series, forecastRows]);
+  }, [data?.series, adjustedForecastRows]);
 
-  // Cash runway chart data: current cash declining by avg opex each month
+  // Cash runway: project cash using adjusted monthly profits (more accurate than avg-opex approach)
   const runwayChartData = useMemo(() => {
-    if (fcRunwayMonths === null || !forecastCashPKR || fcAvgOpex <= 0) return [];
-    const totalMonths = Math.min(Math.ceil(fcRunwayMonths) + 2, 24);
-    return Array.from({ length: totalMonths + 1 }, (_, i) => ({
-      month: i === 0 ? "Now" : addMonthsLabel(forecastRows[0]?.month ?? "", i - 1),
-      cash: Math.max(0, forecastCashPKR - fcAvgOpex * i),
-    }));
-  }, [fcRunwayMonths, forecastCashPKR, fcAvgOpex, forecastRows]);
+    if (!forecastCashPKR || adjustedForecastRows.length === 0) return [];
+    const result: Array<{ month: string; cash: number }> = [{ month: "Now", cash: forecastCashPKR }];
+    let cash = forecastCashPKR;
+    for (const row of adjustedForecastRows) {
+      cash += row.profit;
+      result.push({ month: row.month, cash: Math.max(0, cash) });
+    }
+    return result;
+  }, [forecastCashPKR, adjustedForecastRows]);
 
   // ✅ compute custom sums for CURRENT asOf (used in AR/AP UI totals)
   const arApCustomPayables = useMemo(() => arApCustomRows.filter((r) => r.section === "payables"), [arApCustomRows]);
@@ -2251,8 +2283,106 @@ export default function DashboardPage() {
               </div>
             ) : fcOk ? (
               <>
+                {/* ── What-If Analysis Filters ── */}
+                <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
+                      What-If Analysis
+                    </span>
+                    {hasAdjustments && (
+                      <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold text-amber-300 border border-amber-400/30">
+                        Active — projections adjusted
+                      </span>
+                    )}
+                    {hasAdjustments && (
+                      <button
+                        onClick={() => { setRevAdjPct(0); setExpAdjPct(0); }}
+                        className="ml-auto text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2"
+                      >
+                        Reset to base
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-3">
+                    {/* Revenue adjustment */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="w-24 shrink-0 text-xs text-slate-400">Revenue adj.</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {([-0.20, -0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15, 0.20] as const).map((pct) => {
+                          const isActive = revAdjPct === pct;
+                          const label =
+                            pct === 0 ? "Base" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
+                          const activeClass = isActive
+                            ? pct < 0
+                              ? "border-rose-400/60 bg-rose-500/20 text-rose-200"
+                              : pct > 0
+                              ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200"
+                              : "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
+                            : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200";
+                          return (
+                            <button
+                              key={pct}
+                              onClick={() => setRevAdjPct(pct)}
+                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${activeClass}`}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {/* Expense adjustment */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="w-24 shrink-0 text-xs text-slate-400">Expense adj.</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {([-0.20, -0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15, 0.20] as const).map((pct) => {
+                          const isActive = expAdjPct === pct;
+                          const label =
+                            pct === 0 ? "Base" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
+                          // For expenses: decrease is good (emerald), increase is bad (rose)
+                          const activeClass = isActive
+                            ? pct < 0
+                              ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200"
+                              : pct > 0
+                              ? "border-rose-400/60 bg-rose-500/20 text-rose-200"
+                              : "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
+                            : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200";
+                          return (
+                            <button
+                              key={pct}
+                              onClick={() => setExpAdjPct(pct)}
+                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${activeClass}`}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                  {hasAdjustments && (
+                    <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                      Showing{" "}
+                      {revAdjPct !== 0 && (
+                        <span>
+                          revenue{" "}
+                          <strong>{revAdjPct > 0 ? `+${(revAdjPct * 100).toFixed(0)}%` : `${(revAdjPct * 100).toFixed(0)}%`}</strong>
+                        </span>
+                      )}
+                      {revAdjPct !== 0 && expAdjPct !== 0 && " · "}
+                      {expAdjPct !== 0 && (
+                        <span>
+                          expenses{" "}
+                          <strong>{expAdjPct > 0 ? `+${(expAdjPct * 100).toFixed(0)}%` : `${(expAdjPct * 100).toFixed(0)}%`}</strong>
+                        </span>
+                      )}{" "}
+                      vs base trend. Charts, table and KPIs reflect adjusted projections. Scenario cards remain on base trend.
+                    </div>
+                  )}
+                </div>
+
                 {/* ── Section 2: Executive Summary Strip (6 KPI cards) ── */}
-                <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+                <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
                   <KpiCard
                     title="Revenue Trend (MoM)"
                     numericValue={fcRevMoM}
@@ -2276,39 +2406,62 @@ export default function DashboardPage() {
                   />
                   <KpiCard
                     title={`${forecastHorizon}M Cumulative Profit`}
-                    numericValue={fcCumulativeProfit}
+                    numericValue={fcEffCumulativeProfit}
                     formatValue={formatPKRCompact}
-                    highlight={fcCumulativeProfit >= 0 ? "good" : "bad"}
-                    subtext="Base scenario"
+                    highlight={fcEffCumulativeProfit >= 0 ? "good" : "bad"}
+                    subtext={hasAdjustments ? "Adjusted" : "Base scenario"}
                   />
                   <KpiCard
                     title="Next Month Revenue"
-                    numericValue={fcNextMonthRevenue}
+                    numericValue={fcEffNextRevenue}
                     formatValue={formatPKRCompact}
-                    highlight={fcNextMonthRevenue >= fcBreakeven ? "good" : "bad"}
-                    subtext="Base projection"
+                    highlight={fcEffNextRevenue >= fcBreakeven ? "good" : "bad"}
+                    subtext={hasAdjustments ? "Adjusted" : "Base projection"}
                   />
                   <KpiCard
-                    title={fcRunwayMonths !== null ? "Cash Runway" : "Break-even Revenue"}
-                    numericValue={fcRunwayMonths !== null ? fcRunwayMonths : fcBreakeven}
+                    title={forecastCashPKR !== null ? "Cash Runway" : "Break-even Revenue"}
+                    numericValue={
+                      forecastCashPKR !== null
+                        ? (() => {
+                            // Runway = months until cash goes negative on adjusted projections
+                            let cash = forecastCashPKR;
+                            for (let i = 0; i < adjustedForecastRows.length; i++) {
+                              cash += adjustedForecastRows[i].profit;
+                              if (cash <= 0) return i + 1;
+                            }
+                            return adjustedForecastRows.length + 1; // beyond horizon = safe
+                          })()
+                        : fcBreakeven
+                    }
                     formatValue={
-                      fcRunwayMonths !== null
-                        ? (n) => `${n.toFixed(1)} mo`
+                      forecastCashPKR !== null
+                        ? (n) => (n > adjustedForecastRows.length ? `>${adjustedForecastRows.length} mo` : `${n.toFixed(0)} mo`)
                         : formatPKRCompact
                     }
                     highlight={
-                      fcRunwayMonths !== null
-                        ? fcRunwayMonths > 6 ? "good" : "bad"
+                      forecastCashPKR !== null
+                        ? (() => {
+                            let cash = forecastCashPKR;
+                            for (const row of adjustedForecastRows) {
+                              cash += row.profit;
+                              if (cash <= 0) return "bad";
+                            }
+                            return "good";
+                          })()
                         : fcMeetsBE ? "good" : "bad"
                     }
-                    subtext={fcRunwayMonths !== null ? "Months of cash left" : undefined}
+                    subtext={forecastCashPKR !== null ? "Months of cash left" : undefined}
                   />
                 </div>
 
                 {/* ── Section 3: Combined Historical + Forecast Chart ── */}
                 <div className="mt-4">
                   <ChartCard
-                    title="Revenue & Opex — Historical + Forecast"
+                    title={
+                      hasAdjustments
+                        ? `Revenue & Opex — Historical + Adjusted Forecast (Rev ${revAdjPct > 0 ? "+" : ""}${(revAdjPct * 100).toFixed(0)}%, Opex ${expAdjPct > 0 ? "+" : ""}${(expAdjPct * 100).toFixed(0)}%)`
+                        : "Revenue & Opex — Historical + Forecast"
+                    }
                     legend={[
                       { label: "Hist. Revenue", color: "bg-cyan-400" },
                       { label: "Forecast Revenue", color: "bg-cyan-300" },
@@ -2570,7 +2723,28 @@ export default function DashboardPage() {
 
                 {/* ── Section 7: Monthly Forecast Table ── */}
                 <div className="mt-4">
-                  <Panel title={`Monthly Forecast — ${forecastHorizon}-Month Base Projection`}>
+                  <Panel
+                    title={
+                      hasAdjustments
+                        ? `Monthly Forecast — ${forecastHorizon}-Month Adjusted Projection`
+                        : `Monthly Forecast — ${forecastHorizon}-Month Base Projection`
+                    }
+                  >
+                    {hasAdjustments && (
+                      <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                        {revAdjPct !== 0 && (
+                          <span className={`rounded-full px-2.5 py-0.5 font-semibold border ${revAdjPct > 0 ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300" : "border-rose-400/30 bg-rose-500/10 text-rose-300"}`}>
+                            Rev {revAdjPct > 0 ? "+" : ""}{(revAdjPct * 100).toFixed(0)}%
+                          </span>
+                        )}
+                        {expAdjPct !== 0 && (
+                          <span className={`rounded-full px-2.5 py-0.5 font-semibold border ${expAdjPct < 0 ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300" : "border-rose-400/30 bg-rose-500/10 text-rose-300"}`}>
+                            Opex {expAdjPct > 0 ? "+" : ""}{(expAdjPct * 100).toFixed(0)}%
+                          </span>
+                        )}
+                        <span className="text-slate-500">vs base trend</span>
+                      </div>
+                    )}
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
@@ -2584,20 +2758,36 @@ export default function DashboardPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {forecastRows.map((row, i) => {
+                          {adjustedForecastRows.map((row, i) => {
                             const isProfit = row.profit >= 0;
                             const marginPct = row.profitMarginPct ?? 0;
                             const cumProfit = row.cumulativeProfit ?? 0;
+                            // Compare to base row to show delta when adjustments are active
+                            const baseRow = forecastRows[i];
+                            const revDelta = hasAdjustments && baseRow ? row.revenue - baseRow.revenue : 0;
+                            const profitDelta = hasAdjustments && baseRow ? row.profit - baseRow.profit : 0;
                             return (
                               <tr
                                 key={row.month}
                                 className={`border-b border-white/5 hover:bg-white/5 ${i % 2 === 0 ? "" : "bg-white/[0.02]"}`}
                               >
                                 <td className="py-2.5 pr-4 font-medium text-slate-200">{row.month}</td>
-                                <td className="py-2.5 pr-4 text-right text-cyan-200">{formatPKRCompact(row.revenue)}</td>
+                                <td className="py-2.5 pr-4 text-right">
+                                  <span className="text-cyan-200">{formatPKRCompact(row.revenue)}</span>
+                                  {revDelta !== 0 && (
+                                    <span className={`ml-1.5 text-[10px] ${revDelta > 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                      {revDelta > 0 ? "▲" : "▼"}{formatPKRCompact(Math.abs(revDelta))}
+                                    </span>
+                                  )}
+                                </td>
                                 <td className="py-2.5 pr-4 text-right text-rose-200">{formatPKRCompact(row.opex)}</td>
                                 <td className={`py-2.5 pr-4 text-right font-semibold ${isProfit ? "text-emerald-300" : "text-rose-300"}`}>
                                   {formatPKRCompact(row.profit)}
+                                  {profitDelta !== 0 && (
+                                    <span className={`ml-1.5 text-[10px] font-normal ${profitDelta > 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                      {profitDelta > 0 ? "▲" : "▼"}{formatPKRCompact(Math.abs(profitDelta))}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className={`py-2.5 pr-4 text-right ${marginPct >= 0.1 ? "text-emerald-300" : marginPct >= 0 ? "text-amber-300" : "text-rose-300"}`}>
                                   {formatPct(marginPct)}
@@ -2613,17 +2803,17 @@ export default function DashboardPage() {
                           <tr className="border-t-2 border-white/15 bg-white/5">
                             <td className="py-2.5 pr-4 font-semibold text-slate-200">Total</td>
                             <td className="py-2.5 pr-4 text-right font-semibold text-cyan-200">
-                              {formatPKRCompact(forecastRows.reduce((s, r) => s + r.revenue, 0))}
+                              {formatPKRCompact(adjustedForecastRows.reduce((s, r) => s + r.revenue, 0))}
                             </td>
                             <td className="py-2.5 pr-4 text-right font-semibold text-rose-200">
-                              {formatPKRCompact(forecastRows.reduce((s, r) => s + r.opex, 0))}
+                              {formatPKRCompact(adjustedForecastRows.reduce((s, r) => s + r.opex, 0))}
                             </td>
-                            <td className={`py-2.5 pr-4 text-right font-bold ${fcCumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                              {formatPKRCompact(fcCumulativeProfit)}
+                            <td className={`py-2.5 pr-4 text-right font-bold ${fcEffCumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              {formatPKRCompact(fcEffCumulativeProfit)}
                             </td>
                             <td className="py-2.5 pr-4 text-right text-slate-400">—</td>
-                            <td className={`py-2.5 text-right font-bold ${fcCumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                              {formatPKRCompact(fcCumulativeProfit)}
+                            <td className={`py-2.5 text-right font-bold ${fcEffCumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              {formatPKRCompact(fcEffCumulativeProfit)}
                             </td>
                           </tr>
                         </tfoot>
