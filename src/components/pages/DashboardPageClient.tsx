@@ -2940,7 +2940,7 @@ export default function DashboardPage() {
                         {([-0.20, -0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15, 0.20] as const).map((pct) => {
                           const isActive = revAdjPct === pct;
                           const label =
-                            pct === 0 ? "Base" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
+                            pct === 0 ? "0%" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
                           const activeClass = isActive
                             ? pct < 0
                               ? "border-rose-400/60 bg-rose-500/20 text-rose-200"
@@ -2967,7 +2967,7 @@ export default function DashboardPage() {
                         {([-0.20, -0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15, 0.20] as const).map((pct) => {
                           const isActive = expAdjPct === pct;
                           const label =
-                            pct === 0 ? "Base" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
+                            pct === 0 ? "0%" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
                           // For expenses: decrease is good (emerald), increase is bad (rose)
                           const activeClass = isActive
                             ? pct < 0
