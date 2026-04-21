@@ -9,6 +9,10 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
+  AreaChart,
+  Area,
+  ComposedChart,
+  ReferenceLine,
   XAxis,
   YAxis,
   Tooltip,
@@ -143,37 +147,59 @@ type RetainedResp = {
   error?: string;
 };
 
-/** ✅ CFO Forecast API response (OPEX ONLY) */
+/** ✅ CFO Forecast API response */
 type ForecastApiResp = {
   ok: boolean;
   horizon: number;
-  meta?: {
-    monthsUsed: number;
-    lastMonth?: string;
-  };
+  meta?: { monthsUsed: number; lastMonth?: string; currentCash?: number };
   trends?: {
     revenueMoM: number;
     expensesMoM: number;
     revenueTrendLabel?: "Increasing" | "Decreasing" | "Stable";
     expenseTrendLabel?: "Increasing" | "Decreasing" | "Stable";
+    expenseRatio?: number | null;
   };
   averages?: {
     avgMonthlyRevenue: number;
     avgMonthlyOpex: number;
     avgMonthlyProfit: number;
+    avgNetMarginPct?: number;
   };
   benchmarks?: {
     breakevenRevenue: number;
     margin10: number;
     margin20: number;
     margin30: number;
+    monthsToBreakeven?: number | null;
+  };
+  summary?: {
+    nextMonthRevenue: number;
+    nextMonthOpex: number;
+    nextMonthProfit: number;
+    endRevenue: number;
+    endOpex: number;
+    endProfit: number;
+    cumulativeProfit: number;
+    runwayMonths: number | null;
   };
   forecast?: Array<{
     month: string;
     revenue: number;
     opex: number;
     profit: number;
+    profitMarginPct?: number;
+    cumulativeProfit?: number;
   }>;
+  scenarios?: {
+    pessimistic: Array<{ month: string; revenue: number; opex: number; profit: number; profitMarginPct: number; cumulativeProfit: number }>;
+    base: Array<{ month: string; revenue: number; opex: number; profit: number; profitMarginPct: number; cumulativeProfit: number }>;
+    optimistic: Array<{ month: string; revenue: number; opex: number; profit: number; profitMarginPct: number; cumulativeProfit: number }>;
+    summary?: {
+      pessimistic: { endRevenue: number; endOpex: number; endProfit: number; totalProfit: number; endMarginPct: number };
+      base: { endRevenue: number; endOpex: number; endProfit: number; totalProfit: number; endMarginPct: number };
+      optimistic: { endRevenue: number; endOpex: number; endProfit: number; totalProfit: number; endMarginPct: number };
+    };
+  };
   error?: string;
 };
 
@@ -386,6 +412,14 @@ function trendLabelFromMoM(mom: number): "Increasing" | "Decreasing" | "Stable" 
   return "Stable";
 }
 
+function addMonthsLabel(ym: string, add: number): string {
+  if (!ym) return `+${add}m`;
+  const [y, m] = ym.split("-").map(Number);
+  if (!y || !m) return `${ym}+${add}m`;
+  const d = new Date(y, m - 1 + add, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function fmtAxisPKR(v: any) {
   const n = Number(v ?? 0);
   if (!Number.isFinite(n)) return "0";
@@ -516,10 +550,11 @@ export default function DashboardPage() {
   const [retained, setRetained] = useState<RetainedResp | null>(null);
   const [retainedLoading, setRetainedLoading] = useState(false);
 
-  // ✅ CFO Forecasting (Opex-only)
+  // ✅ CFO Forecasting
   const [forecastHorizon, setForecastHorizon] = useState<6 | 12>(6);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastData, setForecastData] = useState<ForecastApiResp | null>(null);
+  const [forecastCashPKR, setForecastCashPKR] = useState<number | null>(null);
 
   // ✅ AR/AP
   const [arApLoading, setArApLoading] = useState(false);
@@ -559,11 +594,15 @@ export default function DashboardPage() {
     return Math.max(1, Math.min(24, span));
   }
 
-  async function fetchForecast(series: DashboardResp["series"], horizon: 6 | 12): Promise<ForecastApiResp | null> {
+  async function fetchForecast(
+    series: DashboardResp["series"],
+    horizon: 6 | 12,
+    currentCash?: number
+  ): Promise<ForecastApiResp | null> {
     const res = await fetch(`/api/forecast`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ series, horizon }),
+      body: JSON.stringify({ series, horizon, ...(currentCash != null ? { currentCash } : {}) }),
     });
     const json: ForecastApiResp = await res.json();
     return json?.ok ? json : null;
@@ -850,23 +889,38 @@ export default function DashboardPage() {
         if (!shouldApplyRequest(requestId)) return;
         setData(cached.dashboard);
         setForecastData(cached.forecastData);
+        setForecastCashPKR(cached.cashPKR ?? null);
         setLastUpdatedNow();
         return;
       }
 
-      const dashRes = await fetch(
-        `/api/dashboard?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
-        { cache: "no-store" }
-      );
+      // Parallel fetch: dashboard series + cash balance (for runway calculation)
+      const [dashRes, cashRes] = await Promise.all([
+        fetch(
+          `/api/dashboard?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
+          { cache: "no-store" }
+        ),
+        fetch(`/api/qbo/cash-banks`, { cache: "no-store" }).catch(() => null),
+      ]);
+
       const dashJson: DashboardResp = await dashRes.json();
       if (!dashJson.ok) throw new Error(dashJson.error || "Dashboard API failed");
 
-      const nextForecast = dashJson?.series?.length ? await fetchForecast(dashJson.series, forecastHorizon) : null;
+      const cashJson: CashBanksResp | null = cashRes
+        ? await cashRes.json().catch(() => null)
+        : null;
+      const cashPKR: number | null =
+        cashJson?.ok ? (cashJson.totalsByCurrency?.["PKR"] ?? null) : null;
 
-      moduleCacheRef.current.set(key, { dashboard: dashJson, forecastData: nextForecast });
+      const nextForecast = dashJson?.series?.length
+        ? await fetchForecast(dashJson.series, forecastHorizon, cashPKR ?? undefined)
+        : null;
+
+      moduleCacheRef.current.set(key, { dashboard: dashJson, forecastData: nextForecast, cashPKR });
       if (!shouldApplyRequest(requestId)) return;
       setData(dashJson);
       setForecastData(nextForecast);
+      setForecastCashPKR(cashPKR);
       setLastUpdatedNow();
     }
   }
@@ -1080,35 +1134,85 @@ export default function DashboardPage() {
   /* ---------------- forecast derived values (UI-safe) ---------------- */
 
   const fcOk = !!forecastData?.ok;
-
   const fcAvgRevenue = forecastData?.averages?.avgMonthlyRevenue ?? 0;
   const fcAvgOpex = forecastData?.averages?.avgMonthlyOpex ?? 0;
-
   const fcRevMoM = forecastData?.trends?.revenueMoM ?? 0;
   const fcExpMoM = forecastData?.trends?.expensesMoM ?? 0;
-
   const fcBreakeven = forecastData?.benchmarks?.breakevenRevenue ?? fcAvgOpex;
   const fcMeetsBE = fcAvgRevenue >= fcBreakeven;
+  const fcAvgNetMarginPct = forecastData?.averages?.avgNetMarginPct ?? 0;
+  const fcCumulativeProfit = forecastData?.summary?.cumulativeProfit ?? 0;
+  const fcNextMonthRevenue = forecastData?.summary?.nextMonthRevenue ?? 0;
+  const fcNextMonthProfit = forecastData?.summary?.nextMonthProfit ?? 0;
+  const fcRunwayMonths = forecastData?.summary?.runwayMonths ?? null;
+  const fcMonthsToBreakeven = forecastData?.benchmarks?.monthsToBreakeven ?? null;
+  const forecastRows = forecastData?.forecast ?? [];
 
+  // Benchmark bar chart data with per-bar fill colors
   const benchmarkBars = useMemo(() => {
     if (!fcOk) return [];
     return [
-      { name: "Avg Revenue", value: fcAvgRevenue },
-      { name: "Break-even", value: fcBreakeven },
-      { name: "10% Margin", value: forecastData?.benchmarks?.margin10 ?? 0 },
-      { name: "20% Margin", value: forecastData?.benchmarks?.margin20 ?? 0 },
-      { name: "30% Margin", value: forecastData?.benchmarks?.margin30 ?? 0 },
+      { name: "Avg Revenue", value: fcAvgRevenue, fill: CHART_COLORS.positive },
+      { name: "Break-even", value: fcBreakeven, fill: CHART_COLORS.caution },
+      { name: "10% Margin", value: forecastData?.benchmarks?.margin10 ?? 0, fill: CHART_COLORS.positiveSoft },
+      { name: "20% Margin", value: forecastData?.benchmarks?.margin20 ?? 0, fill: CHART_COLORS.profit },
+      { name: "30% Margin", value: forecastData?.benchmarks?.margin30 ?? 0, fill: "#059669" },
     ];
-  }, [
-    fcOk,
-    fcAvgRevenue,
-    fcBreakeven,
-    forecastData?.benchmarks?.margin10,
-    forecastData?.benchmarks?.margin20,
-    forecastData?.benchmarks?.margin30,
-  ]);
+  }, [fcOk, fcAvgRevenue, fcBreakeven, forecastData?.benchmarks]);
 
-  const forecastRows = forecastData?.forecast ?? [];
+  // Historical series with renamed keys for combined chart (separate dataKeys per Area)
+  const historicalFcSeries = useMemo(
+    () =>
+      (data?.series ?? []).map((s) => ({
+        month: s.month,
+        histRevenue: s.revenue,
+        histOpex: s.expenses,
+        histProfit: s.profit,
+      })),
+    [data?.series]
+  );
+
+  // Combined historical + forecast chart data
+  const combinedChartData = useMemo(() => {
+    const histPoints = historicalFcSeries.map((p) => ({ ...p, isForecast: false }));
+    const fcPoints = forecastRows.map((p) => ({
+      month: p.month,
+      revenue: p.revenue,
+      opex: p.opex,
+      profit: p.profit,
+      profitMarginPct: p.profitMarginPct,
+      isForecast: true,
+    }));
+    return [...histPoints, ...fcPoints];
+  }, [historicalFcSeries, forecastRows]);
+
+  // Last historical month — used as ReferenceLine x value
+  const fcDividerMonth = historicalFcSeries[historicalFcSeries.length - 1]?.month ?? null;
+
+  // Margin trajectory: historical margins + forecast margins merged
+  const marginTrajectoryData = useMemo(() => {
+    const hist = (data?.series ?? []).map((s) => ({
+      month: s.month,
+      histMargin: s.revenue > 0 ? (s.profit / s.revenue) * 100 : 0,
+      forecastMargin: undefined as number | undefined,
+    }));
+    const fc = forecastRows.map((p) => ({
+      month: p.month,
+      histMargin: undefined as number | undefined,
+      forecastMargin: ((p.profitMarginPct ?? 0) * 100),
+    }));
+    return [...hist, ...fc];
+  }, [data?.series, forecastRows]);
+
+  // Cash runway chart data: current cash declining by avg opex each month
+  const runwayChartData = useMemo(() => {
+    if (fcRunwayMonths === null || !forecastCashPKR || fcAvgOpex <= 0) return [];
+    const totalMonths = Math.min(Math.ceil(fcRunwayMonths) + 2, 24);
+    return Array.from({ length: totalMonths + 1 }, (_, i) => ({
+      month: i === 0 ? "Now" : addMonthsLabel(forecastRows[0]?.month ?? "", i - 1),
+      cash: Math.max(0, forecastCashPKR - fcAvgOpex * i),
+    }));
+  }, [fcRunwayMonths, forecastCashPKR, fcAvgOpex, forecastRows]);
 
   // ✅ compute custom sums for CURRENT asOf (used in AR/AP UI totals)
   const arApCustomPayables = useMemo(() => arApCustomRows.filter((r) => r.section === "payables"), [arApCustomRows]);
@@ -2109,21 +2213,27 @@ export default function DashboardPage() {
           </>
         ) : null}
 
-        {/* CFO FORECAST TAB (OPEX ONLY) */}
+        {/* CFO FORECAST TAB */}
         {tab === "forecast" ? (
           <>
+            {/* ── Section 1: Header ── */}
             <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="text-sm font-semibold">Operating Forecast</div>
-
+                <div>
+                  <div className="text-sm font-semibold text-white">CFO Operating Forecast</div>
+                  {fcOk && (
+                    <div className="mt-0.5 text-xs text-slate-400">
+                      Based on {forecastData?.meta?.monthsUsed ?? 0} months of historical data
+                      {forecastData?.meta?.lastMonth ? ` · through ${forecastData.meta.lastMonth}` : ""}
+                      {forecastCashPKR !== null ? ` · PKR cash position included` : ""}
+                    </div>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-slate-300">Horizon</label>
                   <select
                     value={forecastHorizon}
-                    onChange={(e) => {
-                      const h = Number(e.target.value) as 6 | 12;
-                      setForecastHorizon(h);
-                    }}
+                    onChange={(e) => setForecastHorizon(Number(e.target.value) as 6 | 12)}
                     className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
                   >
                     <option value={6}>Next 6 months</option>
@@ -2134,59 +2244,390 @@ export default function DashboardPage() {
             </div>
 
             {forecastLoading ? (
-              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-slate-300">Loading…</div>
+              <div className="mt-4 space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="animate-pulse rounded-2xl border border-white/10 bg-white/5 p-6" />
+                ))}
+              </div>
             ) : fcOk ? (
               <>
-                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+                {/* ── Section 2: Executive Summary Strip (6 KPI cards) ── */}
+                <div className="mt-6 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
                   <KpiCard
-                    title="Revenue Trend (Avg MoM)"
+                    title="Revenue Trend (MoM)"
                     numericValue={fcRevMoM}
                     formatValue={formatPct}
                     highlight={fcRevMoM < 0 ? "bad" : "good"}
+                    subtext={forecastData?.trends?.revenueTrendLabel}
                   />
                   <KpiCard
-                    title="Opex Trend (Avg MoM)"
+                    title="Opex Trend (MoM)"
                     numericValue={fcExpMoM}
                     formatValue={formatPct}
-                    highlight={fcExpMoM > 0 ? "bad" : "good"}
+                    highlight={fcExpMoM > 0.05 ? "bad" : fcExpMoM < 0 ? "good" : undefined}
+                    subtext={forecastData?.trends?.expenseTrendLabel}
                   />
-                  <KpiCard title="Avg Monthly Opex" numericValue={fcAvgOpex} formatValue={formatPKRCompact} />
                   <KpiCard
-                    title="Break-even Revenue"
-                    numericValue={fcBreakeven}
+                    title="Avg Net Margin"
+                    numericValue={fcAvgNetMarginPct}
+                    formatValue={formatPct}
+                    highlight={fcAvgNetMarginPct >= 0.1 ? "good" : fcAvgNetMarginPct < 0 ? "bad" : undefined}
+                    subtext="Historical avg"
+                  />
+                  <KpiCard
+                    title={`${forecastHorizon}M Cumulative Profit`}
+                    numericValue={fcCumulativeProfit}
                     formatValue={formatPKRCompact}
-                    highlight={fcMeetsBE ? "good" : "bad"}
+                    highlight={fcCumulativeProfit >= 0 ? "good" : "bad"}
+                    subtext="Base scenario"
+                  />
+                  <KpiCard
+                    title="Next Month Revenue"
+                    numericValue={fcNextMonthRevenue}
+                    formatValue={formatPKRCompact}
+                    highlight={fcNextMonthRevenue >= fcBreakeven ? "good" : "bad"}
+                    subtext="Base projection"
+                  />
+                  <KpiCard
+                    title={fcRunwayMonths !== null ? "Cash Runway" : "Break-even Revenue"}
+                    numericValue={fcRunwayMonths !== null ? fcRunwayMonths : fcBreakeven}
+                    formatValue={
+                      fcRunwayMonths !== null
+                        ? (n) => `${n.toFixed(1)} mo`
+                        : formatPKRCompact
+                    }
+                    highlight={
+                      fcRunwayMonths !== null
+                        ? fcRunwayMonths > 6 ? "good" : "bad"
+                        : fcMeetsBE ? "good" : "bad"
+                    }
+                    subtext={fcRunwayMonths !== null ? "Months of cash left" : undefined}
                   />
                 </div>
 
+                {/* ── Section 3: Combined Historical + Forecast Chart ── */}
+                <div className="mt-4">
+                  <ChartCard
+                    title="Revenue & Opex — Historical + Forecast"
+                    legend={[
+                      { label: "Hist. Revenue", color: "bg-cyan-400" },
+                      { label: "Forecast Revenue", color: "bg-cyan-300" },
+                      { label: "Hist. Opex", color: "bg-rose-400" },
+                      { label: "Forecast Opex", color: "bg-rose-300" },
+                    ]}
+                  >
+                    <div className="h-[340px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={combinedChartData} margin={{ top: 10, right: 16, left: 6, bottom: 6 }}>
+                          <defs>
+                            <linearGradient id="fcHistRevGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.35} />
+                              <stop offset="95%" stopColor="#22d3ee" stopOpacity={0.04} />
+                            </linearGradient>
+                            <linearGradient id="fcHistOpexGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#f87171" stopOpacity={0.25} />
+                              <stop offset="95%" stopColor="#f87171" stopOpacity={0.03} />
+                            </linearGradient>
+                            <linearGradient id="fcFcRevGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#67e8f9" stopOpacity={0.5} />
+                              <stop offset="95%" stopColor="#67e8f9" stopOpacity={0.06} />
+                            </linearGradient>
+                            <linearGradient id="fcFcOpexGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#fca5a5" stopOpacity={0.35} />
+                              <stop offset="95%" stopColor="#fca5a5" stopOpacity={0.04} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid {...GRID} />
+                          <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
+                          <Tooltip content={<MoneyTooltip />} />
+                          <Area
+                            type="monotone" dataKey="histRevenue" name="Hist. Revenue"
+                            stroke="#22d3ee" strokeWidth={2} fill="url(#fcHistRevGrad)" dot={false} connectNulls
+                          />
+                          <Area
+                            type="monotone" dataKey="histOpex" name="Hist. Opex"
+                            stroke="#f87171" strokeWidth={2} fill="url(#fcHistOpexGrad)" dot={false} connectNulls
+                          />
+                          <Area
+                            type="monotone" dataKey="revenue" name="Forecast Revenue"
+                            stroke="#67e8f9" strokeWidth={2} strokeDasharray="5 3" fill="url(#fcFcRevGrad)" dot={false} connectNulls
+                          />
+                          <Area
+                            type="monotone" dataKey="opex" name="Forecast Opex"
+                            stroke="#fca5a5" strokeWidth={2} strokeDasharray="5 3" fill="url(#fcFcOpexGrad)" dot={false} connectNulls
+                          />
+                          {fcDividerMonth && (
+                            <ReferenceLine
+                              x={fcDividerMonth}
+                              stroke="rgba(255,255,255,0.25)"
+                              strokeDasharray="4 4"
+                              label={{ value: "Forecast →", fill: "rgba(255,255,255,0.4)", fontSize: 11, position: "insideTopRight" }}
+                            />
+                          )}
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </ChartCard>
+                </div>
+
+                {/* ── Section 4: Scenario Analysis (3 cards) ── */}
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                  {(["pessimistic", "base", "optimistic"] as const).map((scenario) => {
+                    const rows = forecastData?.scenarios?.[scenario] ?? [];
+                    const lastRow = rows[rows.length - 1];
+                    const scenarioSummary = forecastData?.scenarios?.summary?.[scenario];
+                    const borderColor =
+                      scenario === "pessimistic"
+                        ? "border-rose-400/30"
+                        : scenario === "optimistic"
+                        ? "border-emerald-400/30"
+                        : "border-cyan-400/30";
+                    const headerColor =
+                      scenario === "pessimistic"
+                        ? "text-rose-300"
+                        : scenario === "optimistic"
+                        ? "text-emerald-300"
+                        : "text-cyan-300";
+                    const bgGlow =
+                      scenario === "pessimistic"
+                        ? "shadow-[0_16px_45px_rgba(248,113,113,0.12)]"
+                        : scenario === "optimistic"
+                        ? "shadow-[0_16px_45px_rgba(52,211,153,0.12)]"
+                        : "shadow-[0_16px_45px_rgba(34,211,238,0.12)]";
+                    const growthNote =
+                      scenario === "pessimistic"
+                        ? "Rev ×0.5, Opex ×1.5 — headwind case"
+                        : scenario === "optimistic"
+                        ? "Rev ×1.5, Opex ×0.5 — tailwind case"
+                        : "Current trend projection";
+                    return (
+                      <div
+                        key={scenario}
+                        className={`glass-breathe rounded-2xl border ${borderColor} ${bgGlow} bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl`}
+                      >
+                        <div className={`text-xs font-semibold uppercase tracking-[0.14em] ${headerColor}`}>
+                          {scenario.charAt(0).toUpperCase() + scenario.slice(1)}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-slate-400">{growthNote}</div>
+                        {lastRow ? (
+                          <div className="mt-4 space-y-2.5">
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-400">End Revenue</span>
+                              <span className="font-semibold text-white">{formatPKRCompact(lastRow.revenue)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-400">End Opex</span>
+                              <span className="font-semibold text-rose-200">{formatPKRCompact(lastRow.opex)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-400">End Profit</span>
+                              <span className={`font-semibold ${lastRow.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                                {formatPKRCompact(lastRow.profit)}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-400">Net Margin</span>
+                              <span className="font-semibold text-slate-200">{formatPct(lastRow.profitMarginPct)}</span>
+                            </div>
+                            {scenarioSummary && (
+                              <div className="mt-1 flex justify-between border-t border-white/10 pt-2 text-sm">
+                                <span className="text-slate-400">Total Profit</span>
+                                <span className={`font-bold ${scenarioSummary.totalProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                                  {formatPKRCompact(scenarioSummary.totalProfit)}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mt-4 text-xs text-slate-500">No scenario data</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* ── Section 5: Margin Trajectory + Break-even Analysis ── */}
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <Panel title="Benchmark Visual">
-                    <div className="h-[320px]">
+                  {/* Left: Margin Trajectory */}
+                  <ChartCard
+                    title="Net Margin Trajectory"
+                    legend={[
+                      { label: "Historical Margin", color: "bg-emerald-400" },
+                      { label: "Forecast Margin", color: "bg-emerald-300" },
+                    ]}
+                  >
+                    <div className="h-[300px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={marginTrajectoryData} margin={{ top: 10, right: 16, left: 6, bottom: 6 }}>
+                          <CartesianGrid {...GRID} />
+                          <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                          <YAxis
+                            tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE}
+                            tickFormatter={(v) => `${Number(v).toFixed(0)}%`}
+                          />
+                          <Tooltip
+                            content={({ active, payload, label }) =>
+                              active && payload?.length ? (
+                                <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
+                                  <div className="mb-1 font-semibold">{label}</div>
+                                  {payload.map((p: any, idx: number) => (
+                                    <div key={idx} className="flex items-center justify-between gap-4">
+                                      <span className="text-slate-300">{p.name}</span>
+                                      <span className="font-semibold">
+                                        {typeof p.value === "number" ? `${p.value.toFixed(1)}%` : "—"}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null
+                            }
+                          />
+                          <ReferenceLine
+                            y={0} stroke="rgba(255,255,255,0.2)" strokeDasharray="4 4"
+                            label={{ value: "Break-even", fill: "rgba(255,255,255,0.35)", fontSize: 10, position: "insideTopLeft" }}
+                          />
+                          <Line
+                            type="monotone" dataKey="histMargin" name="Hist. Margin %"
+                            stroke="#34d399" strokeWidth={2.5} dot={false} connectNulls
+                          />
+                          <Line
+                            type="monotone" dataKey="forecastMargin" name="Forecast Margin %"
+                            stroke="#6ee7b7" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </ChartCard>
+
+                  {/* Right: Break-even Analysis */}
+                  <ChartCard
+                    title="Break-even Analysis"
+                    legend={[
+                      { label: "Revenue Levels", color: "bg-cyan-400" },
+                      { label: "Break-even Line", color: "bg-amber-400" },
+                    ]}
+                  >
+                    <div className="h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={benchmarkBars} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                           <CartesianGrid {...GRID} />
                           <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip single />} />
-                          <Bar dataKey="value" radius={[10, 10, 0, 0]} fill={CHART_COLORS.positive} />
+                          <ReferenceLine
+                            y={fcBreakeven} stroke={CHART_COLORS.caution} strokeDasharray="4 4"
+                            label={{ value: "Break-even", fill: CHART_COLORS.caution, fontSize: 10, position: "insideTopRight" }}
+                          />
+                          <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                            {benchmarkBars.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.fill} />
+                            ))}
+                          </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
-                  </Panel>
+                  </ChartCard>
+                </div>
 
-                  <Panel title="Forecast: Revenue vs Opex">
-                    <div className="h-[320px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={forecastRows} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
-                          <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                          <Tooltip content={<MoneyTooltip />} />
-                          <Legend />
-                          <Line type="monotone" dataKey="revenue" name="Revenue" stroke={CHART_COLORS.profit} strokeWidth={3} dot={false} />
-                          <Line type="monotone" dataKey="opex" name="Opex" stroke={CHART_COLORS.negative} strokeWidth={3} dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
+                {/* ── Section 6: Cash Runway (conditional) ── */}
+                {runwayChartData.length > 0 && (
+                  <div className="mt-4">
+                    <ChartCard
+                      title={`Cash Runway — ${fcRunwayMonths?.toFixed(1) ?? "—"} months at current avg opex burn`}
+                      legend={[
+                        { label: "Cash Remaining", color: "bg-cyan-400" },
+                        { label: "3-Month Danger Zone", color: "bg-rose-400" },
+                      ]}
+                    >
+                      <div className="h-[280px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={runwayChartData} margin={{ top: 10, right: 16, left: 6, bottom: 6 }}>
+                            <defs>
+                              <linearGradient id="fcCashGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.5} />
+                                <stop offset="95%" stopColor="#22d3ee" stopOpacity={0.04} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid {...GRID} />
+                            <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                            <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
+                            <Tooltip content={<MoneyTooltip />} />
+                            <ReferenceLine
+                              y={fcAvgOpex * 3} stroke={CHART_COLORS.negative} strokeDasharray="4 4"
+                              label={{ value: "3-Mo Danger", fill: CHART_COLORS.negative, fontSize: 10, position: "insideTopRight" }}
+                            />
+                            <Area
+                              type="monotone" dataKey="cash" name="Cash Remaining"
+                              stroke="#22d3ee" strokeWidth={2.5} fill="url(#fcCashGrad)" dot={false}
+                            />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </ChartCard>
+                  </div>
+                )}
+
+                {/* ── Section 7: Monthly Forecast Table ── */}
+                <div className="mt-4">
+                  <Panel title={`Monthly Forecast — ${forecastHorizon}-Month Base Projection`}>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10">
+                            <th className="py-2 pr-4 text-left text-[11px] uppercase tracking-[0.12em] text-slate-400">Month</th>
+                            <th className="py-2 pr-4 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Revenue</th>
+                            <th className="py-2 pr-4 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Opex</th>
+                            <th className="py-2 pr-4 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Profit</th>
+                            <th className="py-2 pr-4 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Margin</th>
+                            <th className="py-2 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Cumulative</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {forecastRows.map((row, i) => {
+                            const isProfit = row.profit >= 0;
+                            const marginPct = row.profitMarginPct ?? 0;
+                            const cumProfit = row.cumulativeProfit ?? 0;
+                            return (
+                              <tr
+                                key={row.month}
+                                className={`border-b border-white/5 hover:bg-white/5 ${i % 2 === 0 ? "" : "bg-white/[0.02]"}`}
+                              >
+                                <td className="py-2.5 pr-4 font-medium text-slate-200">{row.month}</td>
+                                <td className="py-2.5 pr-4 text-right text-cyan-200">{formatPKRCompact(row.revenue)}</td>
+                                <td className="py-2.5 pr-4 text-right text-rose-200">{formatPKRCompact(row.opex)}</td>
+                                <td className={`py-2.5 pr-4 text-right font-semibold ${isProfit ? "text-emerald-300" : "text-rose-300"}`}>
+                                  {formatPKRCompact(row.profit)}
+                                </td>
+                                <td className={`py-2.5 pr-4 text-right ${marginPct >= 0.1 ? "text-emerald-300" : marginPct >= 0 ? "text-amber-300" : "text-rose-300"}`}>
+                                  {formatPct(marginPct)}
+                                </td>
+                                <td className={`py-2.5 text-right font-semibold ${cumProfit >= 0 ? "text-slate-200" : "text-rose-300"}`}>
+                                  {formatPKRCompact(cumProfit)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-white/15 bg-white/5">
+                            <td className="py-2.5 pr-4 font-semibold text-slate-200">Total</td>
+                            <td className="py-2.5 pr-4 text-right font-semibold text-cyan-200">
+                              {formatPKRCompact(forecastRows.reduce((s, r) => s + r.revenue, 0))}
+                            </td>
+                            <td className="py-2.5 pr-4 text-right font-semibold text-rose-200">
+                              {formatPKRCompact(forecastRows.reduce((s, r) => s + r.opex, 0))}
+                            </td>
+                            <td className={`py-2.5 pr-4 text-right font-bold ${fcCumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              {formatPKRCompact(fcCumulativeProfit)}
+                            </td>
+                            <td className="py-2.5 pr-4 text-right text-slate-400">—</td>
+                            <td className={`py-2.5 text-right font-bold ${fcCumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              {formatPKRCompact(fcCumulativeProfit)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
                     </div>
                   </Panel>
                 </div>

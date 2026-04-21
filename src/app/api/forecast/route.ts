@@ -11,12 +11,8 @@ function safeNum(x: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
-/**
- * Average MoM growth (no minimum months)
- */
 function averageMoMGrowth(values: number[]) {
   if (!values || values.length < 2) return 0;
-
   let sum = 0;
   let cnt = 0;
   for (let i = 1; i < values.length; i++) {
@@ -30,7 +26,7 @@ function averageMoMGrowth(values: number[]) {
 }
 
 function clampGrowth(g: number) {
-  return Math.max(-0.5, Math.min(0.5, g)); // keep sane
+  return Math.max(-0.5, Math.min(0.5, g));
 }
 
 function addMonths(ym: string, add: number) {
@@ -45,6 +41,8 @@ export async function POST(req: Request) {
     const body = await req.json();
     const seriesRaw: SeriesPoint[] = Array.isArray(body?.series) ? body.series : [];
     const horizon = body?.horizon === 12 ? 12 : 6;
+    const currentCash: number | null =
+      typeof body?.currentCash === "number" ? safeNum(body.currentCash) : null;
 
     if (!seriesRaw.length) {
       return NextResponse.json({ ok: false, error: "No data in selected range" });
@@ -57,55 +55,132 @@ export async function POST(req: Request) {
     }));
 
     const monthsUsed = series.length;
-
     const revenues = series.map((x) => x.revenue);
     const expenses = series.map((x) => x.expenses);
 
     const avgRevenue = revenues.reduce((a, b) => a + b, 0) / monthsUsed;
     const avgOpex = expenses.reduce((a, b) => a + b, 0) / monthsUsed;
+    const avgProfit = avgRevenue - avgOpex;
+    const avgNetMarginPct = avgRevenue > 0 ? avgProfit / avgRevenue : 0;
+    const expenseRatio = avgRevenue > 0 ? avgOpex / avgRevenue : null;
 
     const gRev = clampGrowth(averageMoMGrowth(revenues));
     const gExp = clampGrowth(averageMoMGrowth(expenses));
 
     const last = series[series.length - 1];
 
-    const forecast = [];
-    for (let i = 1; i <= horizon; i++) {
-      const revenue = last.revenue * Math.pow(1 + gRev, i);
-      const opex = last.expenses * Math.pow(1 + gExp, i);
-      forecast.push({
-        month: addMonths(last.month, i),
-        revenue,
-        opex,
-        profit: revenue - opex,
+    // Scenario builder: rMul = revenue growth multiplier, eMul = expense growth multiplier
+    function buildScenario(
+      rMul: number,
+      eMul: number
+    ): Array<{
+      month: string;
+      revenue: number;
+      opex: number;
+      profit: number;
+      profitMarginPct: number;
+      cumulativeProfit: number;
+    }> {
+      let cumProfit = 0;
+      return Array.from({ length: horizon }, (_, i) => {
+        const revenue = last.revenue * Math.pow(1 + clampGrowth(gRev * rMul), i + 1);
+        const opex = last.expenses * Math.pow(1 + clampGrowth(gExp * eMul), i + 1);
+        const profit = revenue - opex;
+        cumProfit += profit;
+        return {
+          month: addMonths(last.month, i + 1),
+          revenue,
+          opex,
+          profit,
+          profitMarginPct: revenue !== 0 ? profit / revenue : 0,
+          cumulativeProfit: cumProfit,
+        };
       });
     }
 
-    const breakevenRevenue = avgOpex;
+    const baseForecast = buildScenario(1.0, 1.0);
+    const pessimisticForecast = buildScenario(0.5, 1.5);
+    const optimisticForecast = buildScenario(1.5, 0.5);
 
+    const breakevenRevenue = avgOpex;
     const revenueForMargin = (m: number) =>
       m >= 1 ? 0 : breakevenRevenue / (1 - m);
+
+    // Months until base forecast first reaches break-even (profit >= 0)
+    const beProfitIdx = baseForecast.findIndex((p) => p.profit >= 0);
+    const monthsToBreakeven = beProfitIdx === -1 ? null : beProfitIdx + 1;
+
+    // Cash runway
+    const runwayMonths =
+      currentCash !== null && avgOpex > 0 ? currentCash / avgOpex : null;
+
+    // Summary metrics
+    const firstFc = baseForecast[0];
+    const lastFc = baseForecast[baseForecast.length - 1];
+    const totalCumulativeProfit = lastFc?.cumulativeProfit ?? 0;
+
+    const scenarioSummary = (rows: typeof baseForecast) => {
+      const last = rows[rows.length - 1];
+      return {
+        endRevenue: last?.revenue ?? 0,
+        endOpex: last?.opex ?? 0,
+        endProfit: last?.profit ?? 0,
+        totalProfit: last?.cumulativeProfit ?? 0,
+        endMarginPct: last?.profitMarginPct ?? 0,
+      };
+    };
 
     return NextResponse.json({
       ok: true,
       horizon,
-      meta: { monthsUsed },
+      meta: {
+        monthsUsed,
+        lastMonth: last.month,
+        ...(currentCash !== null ? { currentCash } : {}),
+      },
       trends: {
         revenueMoM: gRev,
         expensesMoM: gExp,
+        revenueTrendLabel:
+          gRev > 0.01 ? "Increasing" : gRev < -0.01 ? "Decreasing" : "Stable",
+        expenseTrendLabel:
+          gExp > 0.01 ? "Increasing" : gExp < -0.01 ? "Decreasing" : "Stable",
+        expenseRatio,
       },
       averages: {
         avgMonthlyRevenue: avgRevenue,
         avgMonthlyOpex: avgOpex,
-        avgMonthlyProfit: avgRevenue - avgOpex,
+        avgMonthlyProfit: avgProfit,
+        avgNetMarginPct,
       },
       benchmarks: {
         breakevenRevenue,
         margin10: revenueForMargin(0.1),
         margin20: revenueForMargin(0.2),
         margin30: revenueForMargin(0.3),
+        monthsToBreakeven,
       },
-      forecast,
+      summary: {
+        nextMonthRevenue: firstFc?.revenue ?? 0,
+        nextMonthOpex: firstFc?.opex ?? 0,
+        nextMonthProfit: firstFc?.profit ?? 0,
+        endRevenue: lastFc?.revenue ?? 0,
+        endOpex: lastFc?.opex ?? 0,
+        endProfit: lastFc?.profit ?? 0,
+        cumulativeProfit: totalCumulativeProfit,
+        runwayMonths,
+      },
+      forecast: baseForecast,
+      scenarios: {
+        pessimistic: pessimisticForecast,
+        base: baseForecast,
+        optimistic: optimisticForecast,
+        summary: {
+          pessimistic: scenarioSummary(pessimisticForecast),
+          base: scenarioSummary(baseForecast),
+          optimistic: scenarioSummary(optimisticForecast),
+        },
+      },
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "Forecast error" });
