@@ -69,10 +69,15 @@ export async function POST(req: Request) {
 
     const last = series[series.length - 1];
 
-    // Scenario builder: rMul = revenue growth multiplier, eMul = expense growth multiplier
+    // Fixed offset applied to the growth rates to define scenario spread.
+    // Using additive offsets (not multiplicative) so direction is always correct
+    // regardless of whether the baseline trend is positive or negative.
+    const SCENARIO_DELTA = 0.05; // 5 percentage points
+
+    // Scenario builder: takes the final growth rates directly
     function buildScenario(
-      rMul: number,
-      eMul: number
+      rGrowth: number,
+      eGrowth: number
     ): Array<{
       month: string;
       revenue: number;
@@ -83,8 +88,8 @@ export async function POST(req: Request) {
     }> {
       let cumProfit = 0;
       return Array.from({ length: horizon }, (_, i) => {
-        const revenue = last.revenue * Math.pow(1 + clampGrowth(gRev * rMul), i + 1);
-        const opex = last.expenses * Math.pow(1 + clampGrowth(gExp * eMul), i + 1);
+        const revenue = last.revenue * Math.pow(1 + clampGrowth(rGrowth), i + 1);
+        const opex = last.expenses * Math.pow(1 + clampGrowth(eGrowth), i + 1);
         const profit = revenue - opex;
         cumProfit += profit;
         return {
@@ -98,9 +103,13 @@ export async function POST(req: Request) {
       });
     }
 
-    const baseForecast = buildScenario(1.0, 1.0);
-    const pessimisticForecast = buildScenario(0.5, 1.5);
-    const optimisticForecast = buildScenario(1.5, 0.5);
+    // Pessimistic: revenue DELTA below base trend, expenses DELTA above base trend
+    // Optimistic:  revenue DELTA above base trend, expenses DELTA below base trend
+    // Additive offsets ensure the ordering (pessimistic < base < optimistic in
+    // profit terms) is preserved even when gRev or gExp is negative.
+    const baseForecast        = buildScenario(gRev,                  gExp);
+    const pessimisticForecast = buildScenario(gRev - SCENARIO_DELTA, gExp + SCENARIO_DELTA);
+    const optimisticForecast  = buildScenario(gRev + SCENARIO_DELTA, gExp - SCENARIO_DELTA);
 
     const breakevenRevenue = avgOpex;
     const revenueForMargin = (m: number) =>

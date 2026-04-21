@@ -2550,10 +2550,10 @@ export default function DashboardPage() {
                         : "shadow-[0_16px_45px_rgba(34,211,238,0.12)]";
                     const growthNote =
                       scenario === "pessimistic"
-                        ? "Rev ×0.5, Opex ×1.5 — headwind case"
+                        ? "Rev trend −5 pp, Opex trend +5 pp"
                         : scenario === "optimistic"
-                        ? "Rev ×1.5, Opex ×0.5 — tailwind case"
-                        : "Current trend projection";
+                        ? "Rev trend +5 pp, Opex trend −5 pp"
+                        : "Base trend projection";
                     return (
                       <div
                         key={scenario}
