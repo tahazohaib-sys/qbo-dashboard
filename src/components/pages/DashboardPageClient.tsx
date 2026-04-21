@@ -1216,6 +1216,36 @@ export default function DashboardPage() {
   const fcEffNextRevenue = adjustedForecastRows[0]?.revenue ?? fcNextMonthRevenue;
   const fcEffNextProfit = adjustedForecastRows[0]?.profit ?? fcNextMonthProfit;
 
+  // Scenario arrays computed client-side, always pivoted around the user's effective growth rates.
+  // When no adjustments are active this matches the API exactly; when filters are applied the
+  // BASE card shows the adjusted projection and pessimistic/optimistic are ±5 pp from it.
+  const adjustedScenarioRows = useMemo(() => {
+    const lastHist = data?.series?.[data.series.length - 1];
+    const DELTA = 0.05;
+    const clamp = (g: number) => Math.max(-0.5, Math.min(0.5, g));
+    const effRevGrowth = clamp(fcRevMoM + revAdjPct);
+    const effExpGrowth = clamp(fcExpMoM + expAdjPct);
+
+    function buildScenario(rGrowth: number, eGrowth: number) {
+      let cumProfit = 0;
+      return forecastRows.map((row, i) => {
+        const revenue = (lastHist?.revenue ?? 0) * Math.pow(1 + clamp(rGrowth), i + 1);
+        const opex = (lastHist?.expenses ?? 0) * Math.pow(1 + clamp(eGrowth), i + 1);
+        const profit = revenue - opex;
+        cumProfit += profit;
+        return { ...row, revenue, opex, profit, profitMarginPct: revenue > 0 ? profit / revenue : 0, cumulativeProfit: cumProfit };
+      });
+    }
+
+    return {
+      pessimistic: buildScenario(effRevGrowth - DELTA, effExpGrowth + DELTA),
+      base: buildScenario(effRevGrowth, effExpGrowth),
+      optimistic: buildScenario(effRevGrowth + DELTA, effExpGrowth - DELTA),
+      effRevGrowth,
+      effExpGrowth,
+    };
+  }, [forecastRows, revAdjPct, expAdjPct, fcRevMoM, fcExpMoM, data?.series]);
+
   // Benchmark bar chart data with per-bar fill colors
   const benchmarkBars = useMemo(() => {
     if (!fcOk) return [];
@@ -2975,7 +3005,7 @@ export default function DashboardPage() {
                           <strong>{expAdjPct > 0 ? `+${(expAdjPct * 100).toFixed(0)}%` : `${(expAdjPct * 100).toFixed(0)}%`}</strong>
                         </span>
                       )}{" "}
-                      vs base trend. Charts, table and KPIs reflect adjusted projections. Scenario cards remain on base trend.
+                      vs base trend. All charts, KPIs, table, and scenario cards reflect the adjusted projections.
                     </div>
                   )}
                 </div>
@@ -3126,9 +3156,14 @@ export default function DashboardPage() {
                 {/* ── Section 4: Scenario Analysis (3 cards) ── */}
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
                   {(["pessimistic", "base", "optimistic"] as const).map((scenario) => {
-                    const rows = forecastData?.scenarios?.[scenario] ?? [];
+                    const rows = adjustedScenarioRows[scenario] ?? [];
                     const lastRow = rows[rows.length - 1];
-                    const scenarioSummary = forecastData?.scenarios?.summary?.[scenario];
+                    const { effRevGrowth, effExpGrowth } = adjustedScenarioRows;
+                    const DELTA = 0.05;
+                    const clamp = (g: number) => Math.max(-0.5, Math.min(0.5, g));
+                    const scenRevGrowth = scenario === "pessimistic" ? clamp(effRevGrowth - DELTA) : scenario === "optimistic" ? clamp(effRevGrowth + DELTA) : effRevGrowth;
+                    const scenExpGrowth = scenario === "pessimistic" ? clamp(effExpGrowth + DELTA) : scenario === "optimistic" ? clamp(effExpGrowth - DELTA) : effExpGrowth;
+                    const pct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
                     const borderColor =
                       scenario === "pessimistic"
                         ? "border-rose-400/30"
@@ -3147,12 +3182,7 @@ export default function DashboardPage() {
                         : scenario === "optimistic"
                         ? "shadow-[0_16px_45px_rgba(52,211,153,0.12)]"
                         : "shadow-[0_16px_45px_rgba(34,211,238,0.12)]";
-                    const growthNote =
-                      scenario === "pessimistic"
-                        ? "Rev trend −5 pp, Opex trend +5 pp"
-                        : scenario === "optimistic"
-                        ? "Rev trend +5 pp, Opex trend −5 pp"
-                        : "Base trend projection";
+                    const growthNote = `Rev ${pct(scenRevGrowth)}/mo · Opex ${pct(scenExpGrowth)}/mo`;
                     return (
                       <div
                         key={scenario}
@@ -3182,14 +3212,12 @@ export default function DashboardPage() {
                               <span className="text-slate-400">Net Margin</span>
                               <span className="font-semibold text-slate-200">{formatPct(lastRow.profitMarginPct)}</span>
                             </div>
-                            {scenarioSummary && (
-                              <div className="mt-1 flex justify-between border-t border-white/10 pt-2 text-sm">
-                                <span className="text-slate-400">Total Profit</span>
-                                <span className={`font-bold ${scenarioSummary.totalProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                                  {formatPKRCompact(scenarioSummary.totalProfit)}
-                                </span>
-                              </div>
-                            )}
+                            <div className="mt-1 flex justify-between border-t border-white/10 pt-2 text-sm">
+                              <span className="text-slate-400">Total Profit</span>
+                              <span className={`font-bold ${lastRow.cumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                                {formatPKRCompact(lastRow.cumulativeProfit)}
+                              </span>
+                            </div>
                           </div>
                         ) : (
                           <div className="mt-4 text-xs text-slate-500">No scenario data</div>
