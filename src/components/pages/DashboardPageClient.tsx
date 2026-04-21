@@ -8,7 +8,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
-  AreaChart,
   Line,
   AreaChart,
   Area,
@@ -19,13 +18,11 @@ import {
   Tooltip,
   CartesianGrid,
   BarChart,
-  ComposedChart,
   Bar,
   PieChart,
   Pie,
   Cell,
   Legend,
-  ReferenceLine,
 } from "recharts";
 
 type DashboardResp = {
