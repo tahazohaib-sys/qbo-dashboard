@@ -555,9 +555,10 @@ export default function DashboardPage() {
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastData, setForecastData] = useState<ForecastApiResp | null>(null);
   const [forecastCashPKR, setForecastCashPKR] = useState<number | null>(null);
-  // What-if adjustment multipliers (0 = base, 0.05 = +5%, -0.1 = -10%, etc.)
-  const [revAdjPct, setRevAdjPct] = useState<number>(0);
-  const [expAdjPct, setExpAdjPct] = useState<number>(0);
+  // What-if explicit monthly growth rate overrides. null = use historical trend.
+  // e.g. 0 = flat (0%/mo), 0.05 = +5%/mo, -0.10 = -10%/mo.
+  const [revGrowthRate, setRevGrowthRate] = useState<number | null>(null);
+  const [expGrowthRate, setExpGrowthRate] = useState<number | null>(null);
 
   // ✅ AR/AP
   const [arApLoading, setArApLoading] = useState(false);
@@ -1174,28 +1175,22 @@ export default function DashboardPage() {
 
   // Apply what-if adjustments as additional monthly growth rate on top of the base trend.
   // Uses the same exponential formula as the API so selecting "+5%" means each projected
-  // month compounds at (baseline MoM + 5%) from the last historical data point — NOT a
-  // flat rescale of the already-projected values, which would leave the trend unchanged.
-  const adjustedForecastRows = useMemo(() => {
-    if (revAdjPct === 0 && expAdjPct === 0) return forecastRows;
+  // When a growth rate is explicitly selected, use it directly (e.g. 0 = flat revenue).
+  // null means "use the historical trend". Clamped to ±50% to match the API guard.
+  const clampGrowth = (g: number) => Math.max(-0.5, Math.min(0.5, g));
+  const effRevGrowth = revGrowthRate !== null ? clampGrowth(revGrowthRate) : fcRevMoM;
+  const effExpGrowth = expGrowthRate !== null ? clampGrowth(expGrowthRate) : fcExpMoM;
 
-    // Last historical data point — the same base the API forecast uses
+  const adjustedForecastRows = useMemo(() => {
+    if (revGrowthRate === null && expGrowthRate === null) return forecastRows;
+
     const lastHist = data?.series?.[data.series.length - 1];
     if (!lastHist || !forecastRows.length) return forecastRows;
 
-    const lastRevenue = lastHist.revenue;
-    const lastExpenses = lastHist.expenses;
-
-    // Effective monthly growth rates = base trend + user-selected adjustment
-    // Clamped to ±50% to match the API's clampGrowth guard
-    const clamp = (g: number) => Math.max(-0.5, Math.min(0.5, g));
-    const effRevGrowth = clamp(fcRevMoM + revAdjPct);
-    const effExpGrowth = clamp(fcExpMoM + expAdjPct);
-
     let cumProfit = 0;
     return forecastRows.map((row, i) => {
-      const adjRevenue = lastRevenue * Math.pow(1 + effRevGrowth, i + 1);
-      const adjOpex = lastExpenses * Math.pow(1 + effExpGrowth, i + 1);
+      const adjRevenue = lastHist.revenue * Math.pow(1 + effRevGrowth, i + 1);
+      const adjOpex = lastHist.expenses * Math.pow(1 + effExpGrowth, i + 1);
       const adjProfit = adjRevenue - adjOpex;
       cumProfit += adjProfit;
       return {
@@ -1207,30 +1202,25 @@ export default function DashboardPage() {
         cumulativeProfit: cumProfit,
       };
     });
-  }, [forecastRows, revAdjPct, expAdjPct, fcRevMoM, fcExpMoM, data?.series]);
+  }, [forecastRows, revGrowthRate, expGrowthRate, effRevGrowth, effExpGrowth, data?.series]);
 
-  const hasAdjustments = revAdjPct !== 0 || expAdjPct !== 0;
+  const hasAdjustments = revGrowthRate !== null || expGrowthRate !== null;
   // "Effective" scalars — reflect adjustments for KPI cards and table
   const fcEffCumulativeProfit =
     adjustedForecastRows[adjustedForecastRows.length - 1]?.cumulativeProfit ?? fcCumulativeProfit;
   const fcEffNextRevenue = adjustedForecastRows[0]?.revenue ?? fcNextMonthRevenue;
   const fcEffNextProfit = adjustedForecastRows[0]?.profit ?? fcNextMonthProfit;
 
-  // Scenario arrays computed client-side, always pivoted around the user's effective growth rates.
-  // When no adjustments are active this matches the API exactly; when filters are applied the
-  // BASE card shows the adjusted projection and pessimistic/optimistic are ±5 pp from it.
+  // Scenario arrays computed client-side, pivoted around the user's effective growth rates.
   const adjustedScenarioRows = useMemo(() => {
     const lastHist = data?.series?.[data.series.length - 1];
     const DELTA = 0.05;
-    const clamp = (g: number) => Math.max(-0.5, Math.min(0.5, g));
-    const effRevGrowth = clamp(fcRevMoM + revAdjPct);
-    const effExpGrowth = clamp(fcExpMoM + expAdjPct);
 
     function buildScenario(rGrowth: number, eGrowth: number) {
       let cumProfit = 0;
       return forecastRows.map((row, i) => {
-        const revenue = (lastHist?.revenue ?? 0) * Math.pow(1 + clamp(rGrowth), i + 1);
-        const opex = (lastHist?.expenses ?? 0) * Math.pow(1 + clamp(eGrowth), i + 1);
+        const revenue = (lastHist?.revenue ?? 0) * Math.pow(1 + clampGrowth(rGrowth), i + 1);
+        const opex = (lastHist?.expenses ?? 0) * Math.pow(1 + clampGrowth(eGrowth), i + 1);
         const profit = revenue - opex;
         cumProfit += profit;
         return { ...row, revenue, opex, profit, profitMarginPct: revenue > 0 ? profit / revenue : 0, cumulativeProfit: cumProfit };
@@ -1244,7 +1234,7 @@ export default function DashboardPage() {
       effRevGrowth,
       effExpGrowth,
     };
-  }, [forecastRows, revAdjPct, expAdjPct, fcRevMoM, fcExpMoM, data?.series]);
+  }, [forecastRows, effRevGrowth, effExpGrowth, data?.series]);
 
   // Benchmark bar chart data with per-bar fill colors
   const benchmarkBars = useMemo(() => {
@@ -2925,22 +2915,32 @@ export default function DashboardPage() {
                     )}
                     {hasAdjustments && (
                       <button
-                        onClick={() => { setRevAdjPct(0); setExpAdjPct(0); }}
+                        onClick={() => { setRevGrowthRate(null); setExpGrowthRate(null); }}
                         className="ml-auto text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2"
                       >
-                        Reset to base
+                        Reset to trend
                       </button>
                     )}
                   </div>
                   <div className="space-y-3">
-                    {/* Revenue adjustment */}
+                    {/* Revenue growth rate selector */}
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="w-24 shrink-0 text-xs text-slate-400">Revenue adj.</span>
+                      <span className="w-24 shrink-0 text-xs text-slate-400">Revenue /mo</span>
                       <div className="flex flex-wrap gap-1.5">
+                        {/* "Trend" resets to null = use historical MoM trend */}
+                        <button
+                          onClick={() => setRevGrowthRate(null)}
+                          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+                            revGrowthRate === null
+                              ? "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
+                              : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                          }`}
+                        >
+                          Trend
+                        </button>
                         {([-0.20, -0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15, 0.20] as const).map((pct) => {
-                          const isActive = revAdjPct === pct;
-                          const label =
-                            pct === 0 ? "0%" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
+                          const isActive = revGrowthRate === pct;
+                          const label = pct === 0 ? "0%" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
                           const activeClass = isActive
                             ? pct < 0
                               ? "border-rose-400/60 bg-rose-500/20 text-rose-200"
@@ -2949,25 +2949,31 @@ export default function DashboardPage() {
                               : "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
                             : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200";
                           return (
-                            <button
-                              key={pct}
-                              onClick={() => setRevAdjPct(pct)}
-                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${activeClass}`}
-                            >
+                            <button key={pct} onClick={() => setRevGrowthRate(pct)}
+                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${activeClass}`}>
                               {label}
                             </button>
                           );
                         })}
                       </div>
                     </div>
-                    {/* Expense adjustment */}
+                    {/* Expense growth rate selector */}
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="w-24 shrink-0 text-xs text-slate-400">Expense adj.</span>
+                      <span className="w-24 shrink-0 text-xs text-slate-400">Expense /mo</span>
                       <div className="flex flex-wrap gap-1.5">
+                        <button
+                          onClick={() => setExpGrowthRate(null)}
+                          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+                            expGrowthRate === null
+                              ? "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
+                              : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                          }`}
+                        >
+                          Trend
+                        </button>
                         {([-0.20, -0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15, 0.20] as const).map((pct) => {
-                          const isActive = expAdjPct === pct;
-                          const label =
-                            pct === 0 ? "0%" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
+                          const isActive = expGrowthRate === pct;
+                          const label = pct === 0 ? "0%" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
                           // For expenses: decrease is good (emerald), increase is bad (rose)
                           const activeClass = isActive
                             ? pct < 0
@@ -2977,11 +2983,8 @@ export default function DashboardPage() {
                               : "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
                             : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200";
                           return (
-                            <button
-                              key={pct}
-                              onClick={() => setExpAdjPct(pct)}
-                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${activeClass}`}
-                            >
+                            <button key={pct} onClick={() => setExpGrowthRate(pct)}
+                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${activeClass}`}>
                               {label}
                             </button>
                           );
@@ -2991,21 +2994,15 @@ export default function DashboardPage() {
                   </div>
                   {hasAdjustments && (
                     <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                      Showing{" "}
-                      {revAdjPct !== 0 && (
-                        <span>
-                          revenue{" "}
-                          <strong>{revAdjPct > 0 ? `+${(revAdjPct * 100).toFixed(0)}%` : `${(revAdjPct * 100).toFixed(0)}%`}</strong>
-                        </span>
+                      What-if override active —{" "}
+                      {revGrowthRate !== null && (
+                        <span>revenue at <strong>{revGrowthRate === 0 ? "0% (flat)" : revGrowthRate > 0 ? `+${(revGrowthRate * 100).toFixed(0)}%` : `${(revGrowthRate * 100).toFixed(0)}%`}/mo</strong></span>
                       )}
-                      {revAdjPct !== 0 && expAdjPct !== 0 && " · "}
-                      {expAdjPct !== 0 && (
-                        <span>
-                          expenses{" "}
-                          <strong>{expAdjPct > 0 ? `+${(expAdjPct * 100).toFixed(0)}%` : `${(expAdjPct * 100).toFixed(0)}%`}</strong>
-                        </span>
-                      )}{" "}
-                      vs base trend. All charts, KPIs, table, and scenario cards reflect the adjusted projections.
+                      {revGrowthRate !== null && expGrowthRate !== null && " · "}
+                      {expGrowthRate !== null && (
+                        <span>expenses at <strong>{expGrowthRate === 0 ? "0% (flat)" : expGrowthRate > 0 ? `+${(expGrowthRate * 100).toFixed(0)}%` : `${(expGrowthRate * 100).toFixed(0)}%`}/mo</strong></span>
+                      )}.{" "}
+                      All charts, KPIs, table, and scenarios reflect these rates.
                     </div>
                   )}
                 </div>
@@ -3088,7 +3085,7 @@ export default function DashboardPage() {
                   <ChartCard
                     title={
                       hasAdjustments
-                        ? `Revenue & Opex — Historical + Adjusted Forecast (Rev ${revAdjPct > 0 ? "+" : ""}${(revAdjPct * 100).toFixed(0)}%, Opex ${expAdjPct > 0 ? "+" : ""}${(expAdjPct * 100).toFixed(0)}%)`
+                        ? `Revenue & Opex — Historical + Adjusted Forecast (Rev ${effRevGrowth >= 0 ? "+" : ""}${(effRevGrowth * 100).toFixed(1)}%/mo, Opex ${effExpGrowth >= 0 ? "+" : ""}${(effExpGrowth * 100).toFixed(1)}%/mo)`
                         : "Revenue & Opex — Historical + Forecast"
                     }
                     legend={[
@@ -3359,14 +3356,14 @@ export default function DashboardPage() {
                   >
                     {hasAdjustments && (
                       <div className="mb-3 flex flex-wrap gap-2 text-xs">
-                        {revAdjPct !== 0 && (
-                          <span className={`rounded-full px-2.5 py-0.5 font-semibold border ${revAdjPct > 0 ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300" : "border-rose-400/30 bg-rose-500/10 text-rose-300"}`}>
-                            Rev {revAdjPct > 0 ? "+" : ""}{(revAdjPct * 100).toFixed(0)}%
+                        {revGrowthRate !== null && (
+                          <span className={`rounded-full px-2.5 py-0.5 font-semibold border ${revGrowthRate > 0 ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300" : revGrowthRate < 0 ? "border-rose-400/30 bg-rose-500/10 text-rose-300" : "border-cyan-400/30 bg-cyan-500/10 text-cyan-300"}`}>
+                            Rev {revGrowthRate >= 0 ? "+" : ""}{(revGrowthRate * 100).toFixed(0)}%/mo
                           </span>
                         )}
-                        {expAdjPct !== 0 && (
-                          <span className={`rounded-full px-2.5 py-0.5 font-semibold border ${expAdjPct < 0 ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300" : "border-rose-400/30 bg-rose-500/10 text-rose-300"}`}>
-                            Opex {expAdjPct > 0 ? "+" : ""}{(expAdjPct * 100).toFixed(0)}%
+                        {expGrowthRate !== null && (
+                          <span className={`rounded-full px-2.5 py-0.5 font-semibold border ${expGrowthRate < 0 ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300" : expGrowthRate > 0 ? "border-rose-400/30 bg-rose-500/10 text-rose-300" : "border-cyan-400/30 bg-cyan-500/10 text-cyan-300"}`}>
+                            Opex {expGrowthRate >= 0 ? "+" : ""}{(expGrowthRate * 100).toFixed(0)}%/mo
                           </span>
                         )}
                         <span className="text-slate-500">vs base trend</span>
