@@ -3161,6 +3161,8 @@ export default function DashboardPage() {
                     const scenRevGrowth = scenario === "pessimistic" ? clamp(effRevGrowth - DELTA) : scenario === "optimistic" ? clamp(effRevGrowth + DELTA) : effRevGrowth;
                     const scenExpGrowth = scenario === "pessimistic" ? clamp(effExpGrowth + DELTA) : scenario === "optimistic" ? clamp(effExpGrowth - DELTA) : effExpGrowth;
                     const pct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
+                    const horizon = rows.length;
+                    const lastHist = data?.series?.[data.series.length - 1];
                     const borderColor =
                       scenario === "pessimistic"
                         ? "border-rose-400/30"
@@ -3180,6 +3182,37 @@ export default function DashboardPage() {
                         ? "shadow-[0_16px_45px_rgba(52,211,153,0.12)]"
                         : "shadow-[0_16px_45px_rgba(34,211,238,0.12)]";
                     const growthNote = `Rev ${pct(scenRevGrowth)}/mo · Opex ${pct(scenExpGrowth)}/mo`;
+
+                    // Plain-English explanation of how the outcome was derived
+                    const explanationLines: string[] = [];
+                    if (lastHist) {
+                      explanationLines.push(`Starting point: ${lastHist.month} — revenue ${formatPKRCompact(lastHist.revenue)}, opex ${formatPKRCompact(lastHist.expenses)}.`);
+                    }
+                    explanationLines.push(
+                      `Revenue compounds at ${pct(scenRevGrowth)}/mo for ${horizon} months${
+                        scenario === "pessimistic" ? " (base rate −5 pp stress)" : scenario === "optimistic" ? " (base rate +5 pp upside)" : " (your selected rate)"
+                      }.`
+                    );
+                    explanationLines.push(
+                      `Opex compounds at ${pct(scenExpGrowth)}/mo for ${horizon} months${
+                        scenario === "pessimistic" ? " (base rate +5 pp stress)" : scenario === "optimistic" ? " (base rate −5 pp saving)" : " (your selected rate)"
+                      }.`
+                    );
+                    if (lastRow) {
+                      const revMultiple = lastHist && lastHist.revenue !== 0 ? lastRow.revenue / lastHist.revenue : null;
+                      const opexMultiple = lastHist && lastHist.expenses !== 0 ? lastRow.opex / lastHist.expenses : null;
+                      if (revMultiple !== null && opexMultiple !== null) {
+                        explanationLines.push(
+                          `After ${horizon} months: revenue is ${revMultiple >= 1 ? "+" : ""}${((revMultiple - 1) * 100).toFixed(1)}% vs start, opex is ${opexMultiple >= 1 ? "+" : ""}${((opexMultiple - 1) * 100).toFixed(1)}% vs start.`
+                        );
+                      }
+                      explanationLines.push(
+                        lastRow.cumulativeProfit >= 0
+                          ? `Cumulative profit over ${horizon} months is positive — the business covers costs under this scenario.`
+                          : `Cumulative loss over ${horizon} months is ${formatPKRCompact(Math.abs(lastRow.cumulativeProfit))} — expenses exceed revenue throughout.`
+                      );
+                    }
+
                     return (
                       <div
                         key={scenario}
@@ -3214,6 +3247,13 @@ export default function DashboardPage() {
                               <span className={`font-bold ${lastRow.cumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                                 {formatPKRCompact(lastRow.cumulativeProfit)}
                               </span>
+                            </div>
+                            {/* Explanation */}
+                            <div className="mt-3 space-y-1.5 border-t border-white/8 pt-3">
+                              <div className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${headerColor} opacity-70`}>How this was calculated</div>
+                              {explanationLines.map((line, idx) => (
+                                <p key={idx} className="text-[11px] leading-relaxed text-slate-400">{line}</p>
+                              ))}
                             </div>
                           </div>
                         ) : (
