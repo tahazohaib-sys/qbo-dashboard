@@ -3426,12 +3426,18 @@ export default function DashboardPage() {
                             const isProfit = row.profit >= 0;
                             const marginPct = row.profitMarginPct ?? 0;
                             const cumProfit = row.cumulativeProfit ?? 0;
-                            // MoM delta within the adjusted projection (not vs base trend)
+                            // MoM delta within the adjusted projection
                             const prevRow = i === 0 ? null : adjustedForecastRows[i - 1];
                             const prevRevenue = prevRow?.revenue ?? (data?.series?.[data.series.length - 1]?.revenue ?? 0);
+                            const prevOpex = prevRow?.opex ?? (data?.series?.[data.series.length - 1]?.expenses ?? 0);
                             const prevProfit = prevRow?.profit ?? (data?.series?.[data.series.length - 1]?.profit ?? 0);
                             const revDelta = hasAdjustments ? row.revenue - prevRevenue : 0;
+                            const opexDelta = hasAdjustments ? row.opex - prevOpex : 0;
                             const profitDelta = hasAdjustments ? row.profit - prevProfit : 0;
+                            // Only show profit badge when it differs from revenue delta
+                            // (when opex is also moving). If opex is flat, profit delta = revenue
+                            // delta — showing both would be redundant and confusing.
+                            const showProfitDelta = profitDelta !== 0 && Math.abs(profitDelta - revDelta) > 1;
                             return (
                               <tr
                                 key={row.month}
@@ -3449,7 +3455,7 @@ export default function DashboardPage() {
                                 <td className="py-2.5 pr-4 text-right text-rose-200">{formatPKRCompact(row.opex)}</td>
                                 <td className={`py-2.5 pr-4 text-right font-semibold ${isProfit ? "text-emerald-300" : "text-rose-300"}`}>
                                   {formatPKRCompact(row.profit)}
-                                  {profitDelta !== 0 && (
+                                  {showProfitDelta && (
                                     <span className={`ml-1.5 text-[10px] font-normal ${profitDelta > 0 ? "text-emerald-400" : "text-rose-400"}`}>
                                       {profitDelta > 0 ? "▲" : "▼"}{formatPKRCompact(Math.abs(profitDelta))}
                                     </span>
