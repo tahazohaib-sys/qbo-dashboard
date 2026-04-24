@@ -3366,7 +3366,7 @@ export default function DashboardPage() {
                             Opex {expGrowthRate >= 0 ? "+" : ""}{(expGrowthRate * 100).toFixed(0)}%/mo
                           </span>
                         )}
-                        <span className="text-slate-500">vs base trend</span>
+                        <span className="text-slate-500">▲▼ = month-over-month change</span>
                       </div>
                     )}
                     <div className="overflow-x-auto">
@@ -3386,10 +3386,12 @@ export default function DashboardPage() {
                             const isProfit = row.profit >= 0;
                             const marginPct = row.profitMarginPct ?? 0;
                             const cumProfit = row.cumulativeProfit ?? 0;
-                            // Compare to base row to show delta when adjustments are active
-                            const baseRow = forecastRows[i];
-                            const revDelta = hasAdjustments && baseRow ? row.revenue - baseRow.revenue : 0;
-                            const profitDelta = hasAdjustments && baseRow ? row.profit - baseRow.profit : 0;
+                            // MoM delta within the adjusted projection (not vs base trend)
+                            const prevRow = i === 0 ? null : adjustedForecastRows[i - 1];
+                            const prevRevenue = prevRow?.revenue ?? (data?.series?.[data.series.length - 1]?.revenue ?? 0);
+                            const prevProfit = prevRow?.profit ?? (data?.series?.[data.series.length - 1]?.profit ?? 0);
+                            const revDelta = hasAdjustments ? row.revenue - prevRevenue : 0;
+                            const profitDelta = hasAdjustments ? row.profit - prevProfit : 0;
                             return (
                               <tr
                                 key={row.month}
