@@ -1,8 +1,15 @@
-// src/lib/pptx-generator.ts
-// Section-by-section PowerPoint generator for the QBO Finance Dashboard
+// src/lib/pptx-generator.ts — Corporate redesign
 import PptxGenJS from "pptxgenjs";
 
-// ─── Payload type (all data the generator needs) ──────────────────────────────
+// ─── Canvas (LAYOUT_WIDE = 13.33" × 7.5") ────────────────────────────────────
+const SW  = 13.33;   // slide width
+const SH  = 7.5;     // slide height
+const ML  = 0.45;    // left margin
+const CW  = 12.43;   // content width  (SW - 2*ML)
+const CY  = 0.80;    // content Y start (below header)
+const FY  = 7.10;    // footer Y start
+
+// ─── Payload ──────────────────────────────────────────────────────────────────
 export type PptxPayload = {
   companyName: string;
   currency: string;
@@ -14,9 +21,7 @@ export type PptxPayload = {
   cashAccounts: Array<{ name: string; currency: string; currentBalance: number }>;
   cashTotals: Record<string, number>;
   arAp: {
-    totalPayables: number;
-    totalReceivables: number;
-    asOf: string;
+    totalPayables: number; totalReceivables: number; asOf: string;
     apAging: Array<{ vendor: string; current: number; "1_30": number; "31_60": number; "61_90": number; "91_plus": number; total: number }>;
   } | null;
   forecast: {
@@ -27,695 +32,655 @@ export type PptxPayload = {
     forecast: Array<{ month: string; revenue: number; opex: number; profit: number }>;
   } | null;
   retained: {
-    netProfit: number;
-    longTermAssets: number;
-    totalInvestments: number;
-    contributionReceived: number;
-    retainedEarning: number;
+    netProfit: number; longTermAssets: number; totalInvestments: number;
+    contributionReceived: number; retainedEarning: number;
   } | null;
 };
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
-export const THEME = {
-  bg:        "030B1A",
-  bgCard:    "0A1628",
-  bgCard2:   "0D1F35",
-  accent:    "22D3EE",   // cyan
-  green:     "10B981",   // emerald
-  red:       "F43F5E",   // rose
-  amber:     "F59E0B",
-  violet:    "8B5CF6",
-  textPrime: "FFFFFF",
-  textSub:   "94A3B8",
-  textMuted: "475569",
-  border:    "1E3A5F",
-  chartColors: ["22D3EE","10B981","F43F5E","F59E0B","8B5CF6","38BDF8","34D399","FB923C"],
+const T = {
+  bg:    "0D1B2E",
+  panel: "112236",
+  card:  "172D47",
+  acc:   "14B8C8",
+  green: "10B981",
+  red:   "EF4444",
+  amber: "F59E0B",
+  viol:  "8B5CF6",
+  white: "F1F5F9",
+  sub:   "7FA3C0",
+  muted: "3E6080",
+  bord:  "1E3D63",
+  div:   "1A3456",
+  cc:    ["14B8C8","10B981","EF4444","F59E0B","8B5CF6","38BDF8","34D399","FB923C"],
 };
 
-// ─── Number formatters ─────────────────────────────────────────────────────────
-export function fmt(n: number, currency = "PKR"): string {
-  const abs = Math.abs(n);
-  const sign = n < 0 ? "-" : "";
-  if (abs >= 1_000_000_000) return `${sign}${currency} ${(abs / 1_000_000_000).toFixed(2)}B`;
-  if (abs >= 1_000_000)     return `${sign}${currency} ${(abs / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000)         return `${sign}${currency} ${(abs / 1_000).toFixed(1)}K`;
-  return `${sign}${currency} ${abs.toLocaleString()}`;
+// ─── Formatters ───────────────────────────────────────────────────────────────
+export function fmt(n: number, cur = "PKR"): string {
+  const abs = Math.abs(n), s = n < 0 ? "-" : "";
+  if (abs >= 1e9) return `${s}${cur} ${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${s}${cur} ${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${s}${cur} ${(abs / 1e3).toFixed(1)}K`;
+  return `${s}${cur} ${abs.toFixed(0)}`;
 }
 
-export function pct(n: number): string {
-  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
-}
-
-export function monthLabel(ym: string): string {
+function pct(n: number)   { return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`; }
+function mo(ym: string)   {
   const [y, m] = ym.split("-");
-  const d = new Date(Number(y), Number(m) - 1, 1);
-  return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
+  return new Date(+y, +m - 1, 1).toLocaleString("en-US", { month: "short", year: "2-digit" });
+}
+function sub(p: PptxPayload) {
+  return `${p.dateRange.start} – ${p.dateRange.end}  ·  ${p.method} Basis`;
 }
 
-// ─── Slide background helper ──────────────────────────────────────────────────
-export function applyBg(slide: PptxGenJS.Slide) {
-  slide.background = { color: THEME.bg };
-  // subtle top gradient bar
-  slide.addShape("rect", {
-    x: 0, y: 0, w: "100%", h: 0.06,
-    fill: { color: THEME.accent, transparency: 30 },
-    line: { color: THEME.accent, width: 0 },
-  });
+// ─── Slide chrome (header + footer) ──────────────────────────────────────────
+function chrome(slide: PptxGenJS.Slide, title: string, info: string, company: string) {
+  slide.background = { color: T.bg };
+
+  // top accent line
+  slide.addShape("rect", { x: 0, y: 0, w: SW, h: 0.07,
+    fill: { color: T.acc }, line: { color: T.acc, width: 0 } });
+
+  // section title
+  slide.addText(title.toUpperCase(), { x: ML, y: 0.10, w: 8, h: 0.42,
+    fontSize: 10, bold: true, color: T.acc, charSpacing: 2.5, fontFace: "Calibri Light" });
+
+  // right info
+  slide.addText(info, { x: 9.2, y: 0.10, w: 3.68, h: 0.42, align: "right",
+    fontSize: 8, color: T.sub, fontFace: "Calibri" });
+
+  // header divider
+  slide.addShape("line", { x: ML, y: 0.62, w: CW, h: 0,
+    line: { color: T.div, width: 0.8 } });
+
+  // footer band
+  slide.addShape("rect", { x: 0, y: FY, w: SW, h: SH - FY,
+    fill: { color: T.panel }, line: { color: T.panel, width: 0 } });
+  slide.addShape("line", { x: 0, y: FY, w: SW, h: 0,
+    line: { color: T.bord, width: 0.6 } });
+  slide.addText(`${company}  ·  Confidential`, { x: ML, y: FY + 0.07, w: CW, h: 0.24,
+    fontSize: 7.5, color: T.muted, align: "center", fontFace: "Calibri" });
 }
 
-// ─── Section heading ──────────────────────────────────────────────────────────
-export function addSectionHeading(slide: PptxGenJS.Slide, title: string, y = 0.18) {
-  slide.addText(title.toUpperCase(), {
-    x: 0.4, y, w: 9, h: 0.32,
-    fontSize: 9, bold: true, color: THEME.accent,
-    charSpacing: 3, fontFace: "Calibri",
-  });
-  slide.addShape("line", {
-    x: 0.4, y: y + 0.3, w: 9.2, h: 0,
-    line: { color: THEME.border, width: 1 },
-  });
+// ─── KPI card ─────────────────────────────────────────────────────────────────
+function kpi(
+  slide: PptxGenJS.Slide,
+  x: number, y: number, w: number, h: number,
+  label: string, value: string, note: string, col: string,
+) {
+  slide.addShape("roundRect", { x, y, w, h,
+    fill: { color: T.card }, line: { color: col, width: 1.2 }, rectRadius: 0.07 });
+  // colour top bar
+  slide.addShape("rect", { x: x + 0.01, y, w: w - 0.02, h: 0.07,
+    fill: { color: col, transparency: 15 }, line: { color: col, width: 0 } });
+  slide.addText(label, { x: x + 0.16, y: y + 0.12, w: w - 0.32, h: 0.24,
+    fontSize: 8, color: T.sub, fontFace: "Calibri" });
+  slide.addText(value, { x: x + 0.16, y: y + 0.33, w: w - 0.32, h: 0.52,
+    fontSize: 19, bold: true, color: col, fontFace: "Calibri Light", fit: "shrink" });
+  slide.addText(note, { x: x + 0.16, y: y + 0.83, w: w - 0.32, h: 0.20,
+    fontSize: 7.5, color: T.muted, fontFace: "Calibri" });
 }
 
-// ─── Cover Slide ──────────────────────────────────────────────────────────────
+// ─── Section label within content area ───────────────────────────────────────
+function label(slide: PptxGenJS.Slide, text: string, x: number, y: number, w: number) {
+  slide.addText(text.toUpperCase(), { x, y, w, h: 0.26,
+    fontSize: 7.5, bold: true, color: T.sub, charSpacing: 1.8, fontFace: "Calibri" });
+  slide.addShape("line", { x, y: y + 0.25, w, h: 0,
+    line: { color: T.div, width: 0.6 } });
+}
+
+// ─── SLIDE 1: Cover ──────────────────────────────────────────────────────────
 export function addCoverSlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
-  slide.background = { color: THEME.bg };
+  slide.background = { color: T.bg };
 
-  // full-width accent band at top
-  slide.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.4, fill: { color: THEME.bgCard }, line: { color: THEME.bgCard, width: 0 } });
-  slide.addShape("rect", { x: 0, y: 0, w: "100%", h: 0.1, fill: { color: THEME.accent, transparency: 0 }, line: { color: THEME.accent, width: 0 } });
+  // thick top accent
+  slide.addShape("rect", { x: 0, y: 0,    w: SW, h: 0.12, fill: { color: T.acc }, line: { color: T.acc, width: 0 } });
+  // thick bottom accent
+  slide.addShape("rect", { x: 0, y: 7.38, w: SW, h: 0.12, fill: { color: T.acc }, line: { color: T.acc, width: 0 } });
+  // subtle left bar
+  slide.addShape("rect", { x: 0, y: 0.12, w: 0.10, h: 7.26,
+    fill: { color: T.acc, transparency: 55 }, line: { color: T.acc, width: 0 } });
 
   // company name
-  slide.addText(p.companyName, {
-    x: 0.5, y: 0.22, w: 9, h: 0.6,
-    fontSize: 30, bold: true, color: THEME.textPrime, fontFace: "Calibri",
-  });
-  slide.addText("Finance & Operations Report", {
-    x: 0.5, y: 0.82, w: 9, h: 0.42,
-    fontSize: 14, color: THEME.accent, fontFace: "Calibri", charSpacing: 2,
-  });
+  slide.addText(p.companyName, { x: 0.7, y: 0.6, w: 12.23, h: 0.9,
+    fontSize: 36, bold: true, color: T.white, fontFace: "Calibri Light" });
 
-  // centre decorative divider
-  slide.addShape("line", { x: 0.5, y: 1.55, w: 9, h: 0, line: { color: THEME.border, width: 1 } });
+  // subtitle
+  slide.addText("Finance & Operations Report", { x: 0.7, y: 1.48, w: 10, h: 0.46,
+    fontSize: 15, color: T.acc, fontFace: "Calibri Light", charSpacing: 1.5 });
 
-  // big title
-  slide.addText("Financial Performance\nPresentation", {
-    x: 0.5, y: 1.72, w: 9, h: 1.6,
-    fontSize: 44, bold: true, color: THEME.textPrime, fontFace: "Calibri",
-    lineSpacingMultiple: 1.15,
-  });
+  // horizontal rule
+  slide.addShape("line", { x: 0.7, y: 2.14, w: 12.23, h: 0,
+    line: { color: T.bord, width: 1.2 } });
 
-  // date range badge
-  slide.addShape("roundRect", {
-    x: 0.5, y: 3.55, w: 4.2, h: 0.55,
-    fill: { color: THEME.accent, transparency: 80 },
-    line: { color: THEME.accent, width: 1.5 },
-    rectRadius: 0.1,
-  });
-  slide.addText(`Period: ${p.dateRange.start}  →  ${p.dateRange.end}`, {
-    x: 0.5, y: 3.55, w: 4.2, h: 0.55,
-    fontSize: 11, bold: true, color: THEME.accent, align: "center", fontFace: "Calibri",
-  });
+  // big title (two lines)
+  slide.addText("Financial Performance", { x: 0.7, y: 2.32, w: 12.23, h: 1.0,
+    fontSize: 46, bold: true, color: T.white, fontFace: "Calibri" });
+  slide.addText("Presentation", { x: 0.7, y: 3.28, w: 12.23, h: 1.0,
+    fontSize: 46, bold: true, color: T.white, fontFace: "Calibri" });
 
-  // method badge
-  slide.addShape("roundRect", {
-    x: 5.0, y: 3.55, w: 2.4, h: 0.55,
-    fill: { color: THEME.bgCard2 },
-    line: { color: THEME.border, width: 1 },
-    rectRadius: 0.1,
-  });
-  slide.addText(`${p.method} Basis`, {
-    x: 5.0, y: 3.55, w: 2.4, h: 0.55,
-    fontSize: 10, color: THEME.textSub, align: "center", fontFace: "Calibri",
-  });
+  // ── 3 info badges ──
+  const badge = (x: number, w: number, text: string, accent: boolean) => {
+    slide.addShape("roundRect", { x, y: 4.6, w, h: 0.62,
+      fill: { color: accent ? T.acc : T.panel, transparency: accent ? 0 : 0 },
+      line: { color: accent ? T.acc : T.bord, width: 1.4 }, rectRadius: 0.08 });
+    slide.addText(text, { x, y: 4.6, w, h: 0.62, align: "center",
+      fontSize: accent ? 11 : 9.5, bold: accent, color: accent ? T.bg : T.sub, fontFace: "Calibri" });
+  };
+  badge(0.7,  5.4, `Period: ${p.dateRange.start}  →  ${p.dateRange.end}`, true);
+  badge(6.3,  3.0, `${p.method} Basis`, false);
+  badge(9.5,  2.4, `Currency: ${p.currency}`, false);
 
-  // currency badge
-  slide.addShape("roundRect", {
-    x: 7.6, y: 3.55, w: 1.9, h: 0.55,
-    fill: { color: THEME.bgCard2 },
-    line: { color: THEME.border, width: 1 },
-    rectRadius: 0.1,
-  });
-  slide.addText(`Currency: ${p.currency}`, {
-    x: 7.6, y: 3.55, w: 1.9, h: 0.55,
-    fontSize: 10, color: THEME.textSub, align: "center", fontFace: "Calibri",
-  });
-
-  // bottom strip
-  slide.addShape("rect", { x: 0, y: 5.1, w: "100%", h: 0.65, fill: { color: THEME.bgCard }, line: { color: THEME.bgCard, width: 0 } });
-  slide.addShape("rect", { x: 0, y: 5.1, w: "100%", h: 0.05, fill: { color: THEME.accent, transparency: 50 }, line: { color: THEME.accent, width: 0 } });
-  slide.addText(`Generated on ${new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}   |   Confidential`, {
-    x: 0.5, y: 5.15, w: 9, h: 0.5,
-    fontSize: 9, color: THEME.textMuted, fontFace: "Calibri", align: "center",
-  });
+  // generated date
+  slide.addText(
+    `Generated on ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`,
+    { x: 0.7, y: 5.5, w: 12.23, h: 0.35, align: "center",
+      fontSize: 9, color: T.muted, fontFace: "Calibri" }
+  );
 }
 
-// ─── Executive Summary Slide ──────────────────────────────────────────────────
+// ─── SLIDE 2: Executive Summary ───────────────────────────────────────────────
 export function addExecutiveSummarySlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
-  applyBg(slide);
-  addSectionHeading(slide, "Executive Summary");
+  chrome(slide, "Executive Summary", sub(p), p.companyName);
 
   const { revenue, expenses, profit } = p.kpis;
-  const margin = revenue !== 0 ? (profit / revenue) * 100 : 0;
+  const margin   = revenue !== 0 ? (profit / revenue) * 100 : 0;
   const isProfit = profit >= 0;
 
-  // 4 KPI boxes
-  const boxes = [
-    { label: "Total Revenue",  value: fmt(revenue, p.currency),  sub: `Period: ${p.dateRange.start} – ${p.dateRange.end}`, color: THEME.accent },
-    { label: "Total Expenses", value: fmt(expenses, p.currency), sub: "Operating + Other expenses", color: THEME.red },
-    { label: isProfit ? "Net Profit" : "Net Loss", value: fmt(profit, p.currency), sub: isProfit ? "Positive performance" : "Expenses exceed revenue", color: isProfit ? THEME.green : THEME.red },
-    { label: "Profit Margin",  value: `${margin.toFixed(1)}%`,   sub: `${p.method} basis · ${p.series.length} month(s)`, color: margin >= 15 ? THEME.green : margin >= 0 ? THEME.amber : THEME.red },
+  // ── 4 KPI cards (fixed layout) ──
+  // box w = (12.43 - 3×0.22) / 4 = 2.94"
+  const BW = 2.94, BH = 1.12, GAP = 0.22, BY2 = 0.85;
+  const cols = [T.acc, T.red, isProfit ? T.green : T.red, margin >= 0 ? T.green : T.red];
+  const cards = [
+    { label: "Total Revenue",              value: fmt(revenue, p.currency),  note: `${p.dateRange.start} – ${p.dateRange.end}` },
+    { label: "Total Expenses",             value: fmt(expenses, p.currency), note: "Operating + Other" },
+    { label: isProfit ? "Net Profit" : "Net Loss", value: fmt(profit, p.currency), note: isProfit ? "Positive period" : "Loss period" },
+    { label: "Profit Margin",              value: `${margin.toFixed(1)}%`,   note: `${p.series.length} month(s) · ${p.method}` },
   ];
-  const bw = 2.2, bh = 1.05, gap = 0.2, startX = 0.4, startY = 0.68;
-  boxes.forEach((b, i) => addKpiBox(slide, { ...b, x: startX + i * (bw + gap), y: startY, w: bw, h: bh }));
+  cards.forEach((c, i) => kpi(slide, ML + i * (BW + GAP), BY2, BW, BH, c.label, c.value, c.note, cols[i]));
 
-  // monthly series mini-summary table
-  const series = p.series.slice(-6);
-  if (series.length > 0) {
-    addSectionHeading(slide, "Monthly Breakdown (last 6 months)", 1.9);
+  // ── Monthly table (max 6 rows, fixed position) ──
+  const TSTART_Y = 2.14;  // always here
+  const TABLE_H  = 2.72;  // fixed height (6 rows × 0.38" + 0.38" header)
+  const INSIGHT_Y = 5.05; // always here
 
-    const headers = [
-      [{ text: "Month", options: { bold: true, color: THEME.accent } },
-       { text: "Revenue", options: { bold: true, color: THEME.accent } },
-       { text: "Expenses", options: { bold: true, color: THEME.accent } },
-       { text: "Profit / Loss", options: { bold: true, color: THEME.accent } },
-       { text: "Margin %", options: { bold: true, color: THEME.accent } }],
+  label(slide, "Monthly Breakdown", ML, TSTART_Y, CW);
+
+  const series6 = p.series.slice(-6);
+  const hdr = [[
+    { text: "Month",      options: { bold: true, color: T.acc } },
+    { text: "Revenue",    options: { bold: true, color: T.acc } },
+    { text: "Expenses",   options: { bold: true, color: T.acc } },
+    { text: "Profit / Loss", options: { bold: true, color: T.acc } },
+    { text: "Margin %",  options: { bold: true, color: T.acc } },
+  ]];
+  const rows = series6.map(s => {
+    const m = s.revenue !== 0 ? (s.profit / s.revenue) * 100 : 0;
+    return [
+      { text: mo(s.month),               options: { color: T.sub } },
+      { text: fmt(s.revenue, p.currency),options: { color: T.white } },
+      { text: fmt(s.expenses,p.currency),options: { color: T.red } },
+      { text: fmt(s.profit,  p.currency),options: { color: m >= 0 ? T.green : T.red, bold: true } },
+      { text: `${m.toFixed(1)}%`,        options: { color: m >= 0 ? T.green : T.red } },
     ];
-    const rows = series.map((s) => {
-      const m = s.revenue !== 0 ? (s.profit / s.revenue) * 100 : 0;
-      const mColor = m >= 0 ? THEME.green : THEME.red;
-      return [
-        { text: monthLabel(s.month), options: { color: THEME.textSub } },
-        { text: fmt(s.revenue, p.currency), options: { color: THEME.textPrime } },
-        { text: fmt(s.expenses, p.currency), options: { color: THEME.red } },
-        { text: fmt(s.profit, p.currency), options: { color: mColor, bold: true } },
-        { text: `${m.toFixed(1)}%`, options: { color: mColor } },
-      ];
-    });
-
-    slide.addTable([...headers, ...rows], {
-      x: 0.4, y: 2.12, w: 9.2, h: series.length * 0.38 + 0.42,
-      fontSize: 9, fontFace: "Calibri",
-      border: { type: "solid", color: THEME.border, pt: 0.5 },
-      fill: { color: THEME.bgCard },
-      color: THEME.textPrime,
-      rowH: 0.34,
-      align: "center",
-    });
-  }
-
-  // insight text
-  const insightY = 2.12 + series.length * 0.38 + 0.55;
-  const insightText = isProfit
-    ? `Strong performance with ${margin.toFixed(1)}% net profit margin. Revenue reached ${fmt(revenue, p.currency)} over the period.`
-    : `Expenses exceeded revenue by ${fmt(Math.abs(profit), p.currency)}. Immediate focus on revenue realization and cost control recommended.`;
-  slide.addShape("roundRect", {
-    x: 0.4, y: insightY, w: 9.2, h: 0.62,
-    fill: { color: isProfit ? THEME.green : THEME.red, transparency: 88 },
-    line: { color: isProfit ? THEME.green : THEME.red, width: 1 },
-    rectRadius: 0.07,
   });
-  slide.addText(`💡  ${insightText}`, {
-    x: 0.55, y: insightY + 0.05, w: 9.0, h: 0.52,
-    fontSize: 9.5, color: THEME.textPrime, fontFace: "Calibri",
+
+  slide.addTable([...hdr, ...rows], {
+    x: ML, y: TSTART_Y + 0.32, w: CW, h: TABLE_H,
+    fontSize: 9, fontFace: "Calibri", rowH: 0.38,
+    border: { type: "solid", color: T.bord, pt: 0.5 },
+    fill: { color: T.card }, color: T.white, align: "center",
   });
+
+  // ── Insight banner (fixed Y) ──
+  const col = isProfit ? T.green : T.red;
+  const msg = isProfit
+    ? `Strong period with ${margin.toFixed(1)}% profit margin — revenue of ${fmt(revenue, p.currency)} outpacing total expenses of ${fmt(expenses, p.currency)}.`
+    : `Expenses exceeded revenue by ${fmt(Math.abs(profit), p.currency)}. Focus on revenue realisation and cost discipline.`;
+
+  slide.addShape("roundRect", { x: ML, y: INSIGHT_Y, w: CW, h: 0.70,
+    fill: { color: col, transparency: 88 }, line: { color: col, width: 1.2 }, rectRadius: 0.07 });
+  slide.addText(`💡  ${msg}`, { x: ML + 0.2, y: INSIGHT_Y + 0.04, w: CW - 0.4, h: 0.62,
+    fontSize: 9.5, color: T.white, fontFace: "Calibri" });
 }
 
-// ─── P&L Chart Slide ──────────────────────────────────────────────────────────
+// ─── SLIDE 3: P&L Charts ──────────────────────────────────────────────────────
 export function addPnlChartSlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
-  applyBg(slide);
-  addSectionHeading(slide, "Profit & Loss — Monthly Overview");
+  chrome(slide, "Profit & Loss — Monthly Overview", sub(p), p.companyName);
 
-  const series = p.series;
-  if (series.length === 0) {
-    slide.addText("No P&L data available for this period.", {
-      x: 0.5, y: 2, w: 9, h: 1, fontSize: 13, color: THEME.textSub, align: "center", fontFace: "Calibri",
-    });
+  const s = p.series;
+  if (!s.length) {
+    slide.addText("No P&L data for this period.", { x: ML, y: 3, w: CW, h: 0.6,
+      fontSize: 13, color: T.sub, align: "center", fontFace: "Calibri" });
     return;
   }
 
-  const labels = series.map((s) => monthLabel(s.month));
+  const lbl = s.map(x => mo(x.month));
 
-  // Revenue vs Expenses grouped bar chart
+  // ── Revenue vs Expenses bar chart (left 2/3) ──
+  label(slide, "Revenue vs Expenses", ML, CY, 8.4);
   slide.addChart(pres.ChartType.bar, [
-    { name: "Revenue",  labels, values: series.map((s) => s.revenue)  },
-    { name: "Expenses", labels, values: series.map((s) => s.expenses) },
+    { name: "Revenue",  labels: lbl, values: s.map(x => x.revenue)  },
+    { name: "Expenses", labels: lbl, values: s.map(x => x.expenses) },
   ], {
-    x: 0.4, y: 0.6, w: 5.8, h: 3.4,
+    x: ML, y: CY + 0.32, w: 8.4, h: 4.75,
     barGrouping: "clustered",
-    chartColors: [THEME.accent, THEME.red],
+    chartColors: [T.acc, T.red],
     showLegend: true, legendPos: "t", legendFontSize: 8,
     showValue: false,
-    valAxisLabelFontSize: 8,
-    catAxisLabelFontSize: 8,
+    valAxisLabelFontSize: 8, catAxisLabelFontSize: 8,
+    valAxisLabelFormatCode: '#,##0.0,,"M"',
+    valAxisLabelColor: T.sub, catAxisLabelColor: T.sub,
     valAxisLineShow: false,
-    plotArea: { fill: { color: THEME.bgCard } },
-    chartArea: { fill: { color: THEME.bgCard } },
-    dataLabelFontSize: 7,
-    valGridLine: { style: "solid", color: THEME.border, size: 0.5 },
+    chartArea: { fill: { color: T.card } },
+    plotArea: { fill: { color: T.card } },
+    valGridLine: { style: "solid", color: T.bord, size: 0.5 },
   });
 
-  // Profit line chart
+  // ── Profit trend line chart (right 1/3) ──
+  label(slide, "Net Profit Trend", 9.1, CY, 4.23);
   slide.addChart(pres.ChartType.line, [
-    { name: "Net Profit / Loss", labels, values: series.map((s) => s.profit) },
+    { name: "Profit", labels: lbl, values: s.map(x => x.profit) },
   ], {
-    x: 6.4, y: 0.6, w: 3.1, h: 3.4,
-    chartColors: [THEME.green],
-    showLegend: true, legendPos: "t", legendFontSize: 8,
-    lineSize: 2,
-    showValue: false,
-    valAxisLabelFontSize: 8,
-    catAxisLabelFontSize: 7,
+    x: 9.1, y: CY + 0.32, w: 4.23, h: 4.75,
+    chartColors: [T.green],
+    showLegend: false,
+    lineSize: 2.5,
+    showValue: true, dataLabelFontSize: 7, dataLabelColor: T.green,
+    dataLabelFormatCode: '#,##0.0,,"M"',
+    valAxisLabelFontSize: 8, catAxisLabelFontSize: 8,
+    valAxisLabelFormatCode: '#,##0.0,,"M"',
+    valAxisLabelColor: T.sub, catAxisLabelColor: T.sub,
     valAxisLineShow: false,
-    plotArea: { fill: { color: THEME.bgCard } },
-    chartArea: { fill: { color: THEME.bgCard } },
-    valGridLine: { style: "solid", color: THEME.border, size: 0.5 },
+    chartArea: { fill: { color: T.card } },
+    plotArea: { fill: { color: T.card } },
+    valGridLine: { style: "solid", color: T.bord, size: 0.5 },
   });
 
-  // chart labels
-  slide.addText("Revenue vs Expenses", {
-    x: 0.4, y: 0.48, w: 5.8, h: 0.22,
-    fontSize: 8, color: THEME.textSub, fontFace: "Calibri",
-  });
-  slide.addText("Profit Trend", {
-    x: 6.4, y: 0.48, w: 3.1, h: 0.22,
-    fontSize: 8, color: THEME.textSub, fontFace: "Calibri",
-  });
+  // ── 5 stat boxes bottom row (fixed Y = 5.72) ──
+  const totalRev = s.reduce((a, x) => a + x.revenue, 0);
+  const totalExp = s.reduce((a, x) => a + x.expenses, 0);
+  const totalPro = s.reduce((a, x) => a + x.profit, 0);
+  const avgMgn   = s.reduce((a, x) => a + (x.revenue ? x.profit / x.revenue * 100 : 0), 0) / s.length;
+  const best     = s.reduce((b, x) => x.profit > b.profit ? x : b, s[0]);
 
-  // key stats row
-  const totalRev = series.reduce((s, x) => s + x.revenue, 0);
-  const totalExp = series.reduce((s, x) => s + x.expenses, 0);
-  const totalPro = series.reduce((s, x) => s + x.profit, 0);
-  const avgMargin = series.length > 0
-    ? series.reduce((s, x) => s + (x.revenue !== 0 ? x.profit / x.revenue * 100 : 0), 0) / series.length
-    : 0;
-  const bestMonth = series.reduce((b, x) => x.profit > b.profit ? x : b, series[0]);
-
+  const SW2 = (CW - 4 * 0.18) / 5; // stat box width
   const stats = [
-    { label: "Period Revenue",  value: fmt(totalRev, p.currency), color: THEME.accent },
-    { label: "Period Expenses", value: fmt(totalExp, p.currency), color: THEME.red },
-    { label: "Period Profit",   value: fmt(totalPro, p.currency), color: totalPro >= 0 ? THEME.green : THEME.red },
-    { label: "Avg Margin",      value: `${avgMargin.toFixed(1)}%`, color: avgMargin >= 0 ? THEME.green : THEME.red },
-    { label: "Best Month",      value: monthLabel(bestMonth.month), color: THEME.amber },
+    { l: "Period Revenue",  v: fmt(totalRev, p.currency), c: T.acc   },
+    { l: "Period Expenses", v: fmt(totalExp, p.currency), c: T.red   },
+    { l: "Period Profit",   v: fmt(totalPro, p.currency), c: totalPro >= 0 ? T.green : T.red },
+    { l: "Avg Margin",      v: `${avgMgn.toFixed(1)}%`,  c: avgMgn >= 0 ? T.green : T.red },
+    { l: "Best Month",      v: mo(best.month),            c: T.amber  },
   ];
-  const sw = 1.84, sh = 0.78, sy = 4.1, sx = 0.4;
-  stats.forEach((s, i) => {
-    slide.addShape("roundRect", {
-      x: sx + i * (sw + 0.1), y: sy, w: sw, h: sh,
-      fill: { color: THEME.bgCard }, line: { color: THEME.border, width: 0.8 }, rectRadius: 0.07,
-    });
-    slide.addText(s.label, { x: sx + i * (sw + 0.1) + 0.1, y: sy + 0.06, w: sw - 0.2, h: 0.22, fontSize: 7.5, color: THEME.textSub, fontFace: "Calibri" });
-    slide.addText(s.value, { x: sx + i * (sw + 0.1) + 0.1, y: sy + 0.28, w: sw - 0.2, h: 0.38, fontSize: 14, bold: true, color: s.color, fontFace: "Calibri", fit: "shrink" });
+  stats.forEach((st, i) => {
+    const sx = ML + i * (SW2 + 0.18);
+    slide.addShape("roundRect", { x: sx, y: 5.72, w: SW2, h: 1.05,
+      fill: { color: T.card }, line: { color: st.c, width: 1 }, rectRadius: 0.07 });
+    slide.addShape("rect", { x: sx + 0.01, y: 5.72, w: SW2 - 0.02, h: 0.06,
+      fill: { color: st.c, transparency: 15 }, line: { color: st.c, width: 0 } });
+    slide.addText(st.l, { x: sx + 0.14, y: 5.84, w: SW2 - 0.28, h: 0.22,
+      fontSize: 7.5, color: T.sub, fontFace: "Calibri" });
+    slide.addText(st.v, { x: sx + 0.14, y: 6.04, w: SW2 - 0.28, h: 0.42,
+      fontSize: 15, bold: true, color: st.c, fontFace: "Calibri Light", fit: "shrink" });
   });
 }
 
-// ─── Expense Breakdown Slide ──────────────────────────────────────────────────
+// ─── SLIDE 4: Expense Breakdown ───────────────────────────────────────────────
 export function addExpenseBreakdownSlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
-  applyBg(slide);
-  addSectionHeading(slide, "Expense Breakdown — Category Analysis");
+  chrome(slide, "Expense Breakdown — Category Analysis", sub(p), p.companyName);
 
-  const breakdown = p.expenseBreakdown.filter((x) => x.value > 0);
-  if (breakdown.length === 0) {
-    slide.addText("No expense data available.", {
-      x: 0.5, y: 2, w: 9, h: 1, fontSize: 13, color: THEME.textSub, align: "center", fontFace: "Calibri",
-    });
+  const cats = p.expenseBreakdown.filter(x => x.value > 0);
+  if (!cats.length) {
+    slide.addText("No expense data for this period.", { x: ML, y: 3, w: CW, h: 0.6,
+      fontSize: 13, color: T.sub, align: "center", fontFace: "Calibri" });
     return;
   }
 
-  const labels = breakdown.map((x) => x.name);
-  const values = breakdown.map((x) => x.value);
-  const total  = values.reduce((s, v) => s + v, 0);
+  const total = cats.reduce((s, x) => s + x.value, 0);
+  // Cap at 7 rows so table + total box always fit
+  const top7 = cats.slice(0, 7);
+  const rest  = cats.slice(7).reduce((s, x) => s + x.value, 0);
+  const rows  = rest > 0 ? [...top7, { name: "Other", value: rest }] : top7;
 
-  // Doughnut pie chart
-  slide.addChart(pres.ChartType.doughnut, [{ name: "Expenses", labels, values }], {
-    x: 0.3, y: 0.58, w: 4.8, h: 3.8,
-    chartColors: THEME.chartColors,
-    showLegend: true, legendPos: "r", legendFontSize: 8,
-    showLabel: false,
-    showPercent: true,
-    dataLabelFontSize: 8,
-    chartArea: { fill: { color: THEME.bgCard } },
-    plotArea: { fill: { color: THEME.bgCard } },
-    holeSize: 55,
-    dataLabelColor: THEME.textPrime,
+  // ── Doughnut (left, fixed) ──
+  slide.addChart(pres.ChartType.doughnut, [{ name: "Expenses",
+    labels: rows.map(x => x.name.length > 22 ? x.name.slice(0, 20) + "…" : x.name),
+    values: rows.map(x => x.value),
+  }], {
+    x: ML, y: CY, w: 5.9, h: 5.72,
+    chartColors: T.cc,
+    showLegend: true, legendPos: "b", legendFontSize: 7.5,
+    showPercent: true, dataLabelFontSize: 8, dataLabelColor: T.white,
+    chartArea: { fill: { color: T.card } },
+    plotArea: { fill: { color: T.card } },
+    holeSize: 52,
   });
 
-  // Category table on right
-  addSectionHeading(slide, "Top Categories", 0.58);
-  const tableRows = breakdown.map((x, i) => [
-    { text: `${i + 1}`, options: { color: THEME.textMuted, align: "center" as const } },
-    { text: x.name, options: { color: THEME.textPrime } },
-    { text: fmt(x.value, p.currency), options: { color: THEME.red, bold: true } },
-    { text: `${((x.value / total) * 100).toFixed(1)}%`, options: { color: THEME.amber } },
+  // ── Category table (right, fixed positions) ──
+  const TX       = 6.55;
+  const TW       = 6.33;
+  const TABLE_Y  = CY + 0.32;
+  const ROW_H    = 0.46;
+  const TOTAL_Y  = 5.35; // FIXED — never moves
+
+  label(slide, "Top Expense Categories", TX, CY, TW);
+
+  const hdr = [[
+    { text: "#",        options: { bold: true, color: T.acc, align: "center" as const } },
+    { text: "Category", options: { bold: true, color: T.acc } },
+    { text: "Amount",   options: { bold: true, color: T.acc } },
+    { text: "Share",    options: { bold: true, color: T.acc } },
+  ]];
+  const trows = rows.map((x, i) => [
+    { text: `${i + 1}`, options: { color: T.muted, align: "center" as const } },
+    { text: x.name.length > 28 ? x.name.slice(0, 26) + "…" : x.name, options: { color: T.white } },
+    { text: fmt(x.value, p.currency), options: { color: T.red, bold: true } },
+    { text: `${((x.value / total) * 100).toFixed(1)}%`, options: { color: T.amber } },
   ]);
-  const headerRow = [
-    [
-      { text: "#",        options: { bold: true, color: THEME.accent, align: "center" as const } },
-      { text: "Category", options: { bold: true, color: THEME.accent } },
-      { text: "Amount",   options: { bold: true, color: THEME.accent } },
-      { text: "Share",    options: { bold: true, color: THEME.accent } },
-    ],
-  ];
 
-  slide.addTable([...headerRow, ...tableRows], {
-    x: 5.3, y: 0.78, w: 4.3, h: tableRows.length * 0.36 + 0.42,
-    fontSize: 9, fontFace: "Calibri",
-    border: { type: "solid", color: THEME.border, pt: 0.5 },
-    fill: { color: THEME.bgCard },
-    color: THEME.textPrime,
-    rowH: 0.32,
-    align: "left",
+  slide.addTable([...hdr, ...trows], {
+    x: TX, y: TABLE_Y, w: TW, h: (rows.length + 1) * ROW_H,
+    fontSize: 9, fontFace: "Calibri", rowH: ROW_H,
+    border: { type: "solid", color: T.bord, pt: 0.5 },
+    fill: { color: T.card }, color: T.white, align: "left",
+    colW: [0.42, 3.3, 1.6, 1.01],
   });
 
-  // total expense stat
-  slide.addShape("roundRect", {
-    x: 5.3, y: tableRows.length * 0.36 + 1.35, w: 4.3, h: 0.6,
-    fill: { color: THEME.red, transparency: 88 },
-    line: { color: THEME.red, width: 1 },
-    rectRadius: 0.07,
-  });
-  slide.addText(`Total Expenses: ${fmt(total, p.currency)}`, {
-    x: 5.3, y: tableRows.length * 0.36 + 1.35, w: 4.3, h: 0.6,
-    fontSize: 11, bold: true, color: THEME.textPrime, align: "center", fontFace: "Calibri",
-  });
+  // ── Total box (FIXED Y — always below all rows, never overlaps) ──
+  slide.addShape("roundRect", { x: TX, y: TOTAL_Y, w: TW, h: 0.72,
+    fill: { color: T.red, transparency: 88 }, line: { color: T.red, width: 1.2 }, rectRadius: 0.07 });
+  slide.addText(`Total Expenses:  ${fmt(total, p.currency)}`, {
+    x: TX, y: TOTAL_Y, w: TW, h: 0.72,
+    fontSize: 13, bold: true, color: T.white, align: "center", fontFace: "Calibri" });
 }
 
-// ─── Cash & Bank Position Slide ──────────────────────────────────────────────
+// ─── SLIDE 5: Cash & Bank ─────────────────────────────────────────────────────
 export function addCashSlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
-  applyBg(slide);
-  addSectionHeading(slide, "Cash & Bank Position");
+  chrome(slide, "Cash & Bank Position", sub(p), p.companyName);
 
-  const accounts = p.cashAccounts.filter((a) => Math.abs(a.currentBalance) > 0);
-  const totals   = Object.entries(p.cashTotals);
+  const accts   = p.cashAccounts.filter(a => Math.abs(a.currentBalance) > 0);
+  const totals  = Object.entries(p.cashTotals).slice(0, 5);
 
-  // Currency totals as KPI boxes
-  const bw = 2.1, bh = 0.9, gap = 0.18, sy = 0.62;
-  totals.slice(0, 4).forEach(([cur, total], i) => {
-    addKpiBox(slide, {
-      x: 0.4 + i * (bw + gap), y: sy, w: bw, h: bh,
-      label: `Total (${cur})`, value: fmt(total, cur), sub: "Current balance",
-      color: total >= 0 ? THEME.green : THEME.red,
-    });
+  // ── Currency KPI boxes (up to 5) ──
+  const N  = Math.max(1, totals.length);
+  const BW = (CW - (N - 1) * 0.22) / N;
+  totals.forEach(([cur, tot], i) => {
+    kpi(slide, ML + i * (BW + 0.22), 0.85, BW, 1.05,
+      `Total (${cur})`, fmt(tot, cur), "Current balance",
+      tot >= 0 ? T.green : T.red);
   });
 
-  if (accounts.length === 0) {
-    slide.addText("No bank/cash accounts found.", {
-      x: 0.5, y: 2.2, w: 9, h: 0.6, fontSize: 12, color: THEME.textSub, align: "center", fontFace: "Calibri",
-    });
+  if (!accts.length) {
+    slide.addText("No active bank/cash accounts found.", { x: ML, y: 3, w: CW, h: 0.6,
+      fontSize: 12, color: T.sub, align: "center", fontFace: "Calibri" });
     return;
   }
 
-  // Accounts table
-  addSectionHeading(slide, "Account Balances", 1.7);
-  const headerRow = [[
-    { text: "Account Name", options: { bold: true, color: THEME.accent } },
-    { text: "Type",         options: { bold: true, color: THEME.accent } },
-    { text: "Currency",     options: { bold: true, color: THEME.accent } },
-    { text: "Balance",      options: { bold: true, color: THEME.accent } },
+  // ── Accounts table (max 9 rows, fixed) ──
+  label(slide, "Account Balances", ML, 2.10, CW);
+
+  const hdr = [[
+    { text: "Account Name", options: { bold: true, color: T.acc } },
+    { text: "Type",         options: { bold: true, color: T.acc } },
+    { text: "Currency",     options: { bold: true, color: T.acc, align: "center" as const } },
+    { text: "Balance",      options: { bold: true, color: T.acc, align: "right"  as const } },
   ]];
-  const rows = accounts.map((a) => [
-    { text: a.name, options: { color: THEME.textPrime } },
-    { text: "Bank / Cash", options: { color: THEME.textSub } },
-    { text: a.currency, options: { color: THEME.textSub, align: "center" as const } },
-    { text: fmt(a.currentBalance, a.currency), options: { color: a.currentBalance >= 0 ? THEME.green : THEME.red, bold: true } },
+  const rows = accts.slice(0, 9).map(a => [
+    { text: a.name,          options: { color: T.white } },
+    { text: "Bank / Cash",   options: { color: T.sub } },
+    { text: a.currency,      options: { color: T.sub, align: "center" as const } },
+    { text: fmt(a.currentBalance, a.currency),
+      options: { color: a.currentBalance >= 0 ? T.green : T.red, bold: true, align: "right" as const } },
   ]);
 
-  slide.addTable([...headerRow, ...rows], {
-    x: 0.4, y: 1.92, w: 9.2, h: Math.min(rows.length, 10) * 0.36 + 0.42,
-    fontSize: 9, fontFace: "Calibri",
-    border: { type: "solid", color: THEME.border, pt: 0.5 },
-    fill: { color: THEME.bgCard },
-    color: THEME.textPrime,
-    rowH: 0.34,
-    align: "left",
+  slide.addTable([...hdr, ...rows], {
+    x: ML, y: 2.36, w: CW, h: (rows.length + 1) * 0.44,
+    fontSize: 9.5, fontFace: "Calibri", rowH: 0.44,
+    border: { type: "solid", color: T.bord, pt: 0.5 },
+    fill: { color: T.card }, color: T.white, align: "left",
+    colW: [5.5, 2.5, 2.0, 2.43],
   });
-
-  // bar chart if > 1 account
-  if (accounts.length > 1) {
-    const chartAccounts = accounts.slice(0, 8);
-    slide.addChart(pres.ChartType.bar, [{
-      name: "Balance",
-      labels: chartAccounts.map((a) => a.name.length > 18 ? a.name.slice(0, 16) + "…" : a.name),
-      values: chartAccounts.map((a) => a.currentBalance),
-    }], {
-      x: 0.4, y: 1.92 + Math.min(rows.length, 10) * 0.36 + 0.55, w: 9.2, h: 2.0,
-      barDir: "bar",
-      chartColors: [THEME.accent],
-      showLegend: false,
-      showValue: true,
-      dataLabelFontSize: 7,
-      valAxisLabelFontSize: 8,
-      catAxisLabelFontSize: 8,
-      plotArea: { fill: { color: THEME.bgCard } },
-      chartArea: { fill: { color: THEME.bgCard } },
-      valGridLine: { style: "solid", color: THEME.border, size: 0.5 },
-    });
-  }
 }
 
-// ─── AR / AP Slide ────────────────────────────────────────────────────────────
+// ─── SLIDE 6: AR / AP ─────────────────────────────────────────────────────────
 export function addArApSlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
-  applyBg(slide);
-  addSectionHeading(slide, "Accounts Receivable & Payable");
+  chrome(slide, "Accounts Receivable & Payable", sub(p), p.companyName);
 
   if (!p.arAp) {
-    slide.addText("AR/AP data not available for this period.", {
-      x: 0.5, y: 2, w: 9, h: 1, fontSize: 13, color: THEME.textSub, align: "center", fontFace: "Calibri",
-    });
+    slide.addText("AR/AP data not available for this period.", { x: ML, y: 3, w: CW, h: 0.6,
+      fontSize: 13, color: T.sub, align: "center", fontFace: "Calibri" });
     return;
   }
 
   const { totalPayables, totalReceivables, asOf, apAging } = p.arAp;
-  const liquidity = totalPayables > 0 ? totalReceivables / totalPayables : 0;
-  const overdue   = apAging.reduce((s, v) => s + v["61_90"] + v["91_plus"], 0);
-  const overduePct = (p.arAp.totalPayables) > 0 ? (overdue / p.arAp.totalPayables) * 100 : 0;
-  const health    = overduePct > 30 ? "CRITICAL" : overduePct > 15 ? "CAUTION" : "HEALTHY";
-  const healthCol = health === "HEALTHY" ? THEME.green : health === "CAUTION" ? THEME.amber : THEME.red;
+  const overdue    = apAging.reduce((s, v) => s + v["61_90"] + v["91_plus"], 0);
+  const overduePct = totalPayables > 0 ? (overdue / totalPayables) * 100 : 0;
+  const liq        = totalPayables > 0 ? totalReceivables / totalPayables : 0;
+  const health     = overduePct > 30 ? "CRITICAL" : overduePct > 15 ? "CAUTION" : "HEALTHY";
+  const hcol       = health === "HEALTHY" ? T.green : health === "CAUTION" ? T.amber : T.red;
 
-  // health banner
-  slide.addShape("roundRect", {
-    x: 0.4, y: 0.58, w: 9.2, h: 0.5,
-    fill: { color: healthCol, transparency: 85 },
-    line: { color: healthCol, width: 1.2 },
-    rectRadius: 0.07,
-  });
-  slide.addText(`AP Health: ${health}  ·  As of ${asOf}  ·  ${overduePct.toFixed(1)}% overdue (61+ days)`, {
-    x: 0.4, y: 0.58, w: 9.2, h: 0.5,
-    fontSize: 10, bold: true, color: THEME.textPrime, align: "center", fontFace: "Calibri",
-  });
+  // ── Health banner ──
+  slide.addShape("roundRect", { x: ML, y: 0.82, w: CW, h: 0.52,
+    fill: { color: hcol, transparency: 85 }, line: { color: hcol, width: 1.2 }, rectRadius: 0.07 });
+  slide.addText(
+    `AP Health: ${health}  ·  As of ${asOf}  ·  ${overduePct.toFixed(1)}% overdue (61+ days)`,
+    { x: ML + 0.2, y: 0.82, w: CW - 0.4, h: 0.52,
+      fontSize: 10, bold: true, color: T.white, align: "center", fontFace: "Calibri" });
 
-  // 4 KPI boxes
-  const kpis = [
-    { label: "Total Payables",    value: fmt(totalPayables, p.currency),    sub: "Accounts Payable",   color: THEME.red   },
-    { label: "Total Receivables", value: fmt(totalReceivables, p.currency), sub: "Accounts Receivable",color: THEME.green },
-    { label: "Liquidity Ratio",   value: liquidity.toFixed(2),              sub: "Receivables / Payables", color: liquidity >= 1 ? THEME.green : THEME.amber },
-    { label: "Overdue AP (61d+)", value: fmt(overdue, p.currency),          sub: `${overduePct.toFixed(1)}% of total AP`, color: healthCol },
+  // ── 4 KPI cards ──
+  const BW = 2.94, BH = 1.05, GAP = 0.22;
+  const kcards = [
+    { l: "Total Payables",    v: fmt(totalPayables, p.currency),    n: "Accounts Payable",     c: T.red   },
+    { l: "Total Receivables", v: fmt(totalReceivables, p.currency), n: "Accounts Receivable",  c: T.green },
+    { l: "Liquidity Ratio",   v: liq.toFixed(2),                   n: "Receivables / Payables",c: liq >= 1 ? T.green : T.amber },
+    { l: "Overdue AP (61d+)", v: fmt(overdue, p.currency),          n: `${overduePct.toFixed(1)}% of total AP`, c: hcol },
   ];
-  const bw = 2.2, bh = 1.0, gap = 0.18, sy = 1.22;
-  kpis.forEach((k, i) => addKpiBox(slide, { ...k, x: 0.4 + i * (bw + gap), y: sy, w: bw, h: bh }));
+  kcards.forEach((c, i) => kpi(slide, ML + i * (BW + GAP), 1.47, BW, BH, c.l, c.v, c.n, c.c));
 
-  // AP Aging table
-  if (apAging.length > 0) {
-    addSectionHeading(slide, "AP Aging by Vendor", 2.38);
-    const hRow = [[
-      { text: "Vendor",    options: { bold: true, color: THEME.accent } },
-      { text: "Current",   options: { bold: true, color: THEME.accent } },
-      { text: "1–30 d",    options: { bold: true, color: THEME.accent } },
-      { text: "31–60 d",   options: { bold: true, color: THEME.accent } },
-      { text: "61–90 d",   options: { bold: true, color: THEME.amber  } },
-      { text: "91+ d",     options: { bold: true, color: THEME.red    } },
-      { text: "Total",     options: { bold: true, color: THEME.accent } },
-    ]];
-    const dRows = apAging.slice(0, 8).map((v) => [
-      { text: v.vendor.length > 20 ? v.vendor.slice(0, 18) + "…" : v.vendor, options: { color: THEME.textPrime } },
-      { text: fmt(v.current, p.currency),   options: { color: THEME.textSub } },
-      { text: fmt(v["1_30"], p.currency),   options: { color: THEME.textSub } },
-      { text: fmt(v["31_60"], p.currency),  options: { color: THEME.textSub } },
-      { text: fmt(v["61_90"], p.currency),  options: { color: THEME.amber   } },
-      { text: fmt(v["91_plus"], p.currency),options: { color: THEME.red, bold: v["91_plus"] > 0 } },
-      { text: fmt(v.total, p.currency),     options: { color: THEME.textPrime, bold: true } },
-    ]);
-    slide.addTable([...hRow, ...dRows], {
-      x: 0.4, y: 2.6, w: 9.2, h: dRows.length * 0.34 + 0.4,
-      fontSize: 8.5, fontFace: "Calibri",
-      border: { type: "solid", color: THEME.border, pt: 0.5 },
-      fill: { color: THEME.bgCard }, color: THEME.textPrime, rowH: 0.32, align: "right",
-      colW: [2.4, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3],
-    });
-  }
+  // ── AP Aging table (max 7 vendors, fixed) ──
+  label(slide, "AP Aging by Vendor", ML, 2.68, CW);
+
+  const vendors = apAging.slice(0, 7);
+  const hdr = [[
+    { text: "Vendor",  options: { bold: true, color: T.acc } },
+    { text: "Current", options: { bold: true, color: T.acc, align: "right" as const } },
+    { text: "1–30 d",  options: { bold: true, color: T.acc, align: "right" as const } },
+    { text: "31–60 d", options: { bold: true, color: T.acc, align: "right" as const } },
+    { text: "61–90 d", options: { bold: true, color: T.amber,align: "right" as const } },
+    { text: "91+ d",   options: { bold: true, color: T.red,  align: "right" as const } },
+    { text: "Total",   options: { bold: true, color: T.acc, align: "right" as const } },
+  ]];
+  const rows = vendors.map(v => [
+    { text: v.vendor.length > 22 ? v.vendor.slice(0, 20) + "…" : v.vendor, options: { color: T.white } },
+    { text: fmt(v.current,    p.currency), options: { color: T.sub,   align: "right" as const } },
+    { text: fmt(v["1_30"],    p.currency), options: { color: T.sub,   align: "right" as const } },
+    { text: fmt(v["31_60"],   p.currency), options: { color: T.sub,   align: "right" as const } },
+    { text: fmt(v["61_90"],   p.currency), options: { color: T.amber, align: "right" as const } },
+    { text: fmt(v["91_plus"], p.currency), options: { color: T.red, bold: v["91_plus"] > 0, align: "right" as const } },
+    { text: fmt(v.total,      p.currency), options: { color: T.white, bold: true, align: "right" as const } },
+  ]);
+
+  slide.addTable([...hdr, ...rows], {
+    x: ML, y: 2.94, w: CW, h: (rows.length + 1) * 0.44,
+    fontSize: 9, fontFace: "Calibri", rowH: 0.44,
+    border: { type: "solid", color: T.bord, pt: 0.5 },
+    fill: { color: T.card }, color: T.white, align: "left",
+    colW: [3.2, 1.6, 1.6, 1.6, 1.6, 1.6, 1.63],
+  });
 }
 
-// ─── Forecast Slide ──────────────────────────────────────────────────────────
+// ─── SLIDE 7: Forecast ────────────────────────────────────────────────────────
 export function addForecastSlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
-  applyBg(slide);
-  addSectionHeading(slide, `${p.forecast?.horizon ?? 6}-Month Revenue & Expense Forecast`);
+  const horizon = p.forecast?.horizon ?? 6;
+  chrome(slide, `${horizon}-Month Revenue & Expense Forecast`, sub(p), p.companyName);
 
   if (!p.forecast) {
-    slide.addText("Forecast data not available.", {
-      x: 0.5, y: 2, w: 9, h: 1, fontSize: 13, color: THEME.textSub, align: "center", fontFace: "Calibri",
-    });
+    slide.addText("Forecast data not available.", { x: ML, y: 3, w: CW, h: 0.6,
+      fontSize: 13, color: T.sub, align: "center", fontFace: "Calibri" });
     return;
   }
 
   const fc = p.forecast;
-  const avgRev  = fc.averages.avgMonthlyRevenue;
-  const avgOpex = fc.averages.avgMonthlyOpex;
-  const be      = fc.benchmarks.breakevenRevenue;
-  const meetsBE = avgRev >= be;
+  const avgRev = fc.averages.avgMonthlyRevenue;
+  const be     = fc.benchmarks.breakevenRevenue;
 
-  // 4 stat boxes
-  const stats = [
-    { label: "Avg Monthly Revenue", value: fmt(avgRev, p.currency),              color: THEME.accent },
-    { label: "Avg Monthly Expenses", value: fmt(avgOpex, p.currency),             color: THEME.red },
-    { label: "Break-even Revenue",   value: fmt(be, p.currency),                  color: meetsBE ? THEME.green : THEME.amber },
-    { label: "Revenue MoM Trend",    value: pct(fc.trends.revenueMoM * 100),      color: fc.trends.revenueMoM >= 0 ? THEME.green : THEME.red },
+  // ── 4 stat KPI boxes ──
+  const BW = 2.94, BH = 1.05, GAP = 0.22;
+  const fcCards = [
+    { l: "Avg Monthly Revenue",  v: fmt(avgRev, p.currency),                       c: T.acc   },
+    { l: "Avg Monthly Expenses", v: fmt(fc.averages.avgMonthlyOpex, p.currency),   c: T.red   },
+    { l: "Break-even Revenue",   v: fmt(be, p.currency),                            c: avgRev >= be ? T.green : T.amber },
+    { l: "Revenue MoM Trend",    v: pct(fc.trends.revenueMoM * 100),               c: fc.trends.revenueMoM >= 0 ? T.green : T.red },
   ];
-  const bw = 2.2, bh = 0.9, gap = 0.18;
-  stats.forEach((s, i) => addKpiBox(slide, { ...s, x: 0.4 + i * (bw + gap), y: 0.58, w: bw, h: bh }));
+  fcCards.forEach((c, i) => kpi(slide, ML + i * (BW + GAP), 0.85, BW, BH, c.l, c.v, "", c.c));
 
-  // Forecast line chart
-  const labels = fc.forecast.map((r) => monthLabel(r.month));
+  // ── Forecast line chart (full width, fixed) ──
+  const lbl = fc.forecast.map(r => mo(r.month));
   slide.addChart(pres.ChartType.line, [
-    { name: "Projected Revenue",  labels, values: fc.forecast.map((r) => r.revenue) },
-    { name: "Projected Expenses", labels, values: fc.forecast.map((r) => r.opex)    },
-    { name: "Projected Profit",   labels, values: fc.forecast.map((r) => r.profit)  },
+    { name: "Projected Revenue",  labels: lbl, values: fc.forecast.map(r => r.revenue) },
+    { name: "Projected Expenses", labels: lbl, values: fc.forecast.map(r => r.opex)    },
+    { name: "Projected Profit",   labels: lbl, values: fc.forecast.map(r => r.profit)  },
   ], {
-    x: 0.4, y: 1.62, w: 9.2, h: 2.9,
-    chartColors: [THEME.accent, THEME.red, THEME.green],
-    showLegend: true, legendPos: "t", legendFontSize: 8,
-    lineSize: 2,
+    x: ML, y: 2.10, w: CW, h: 3.72,
+    chartColors: [T.acc, T.red, T.green],
+    showLegend: true, legendPos: "t", legendFontSize: 8.5,
+    lineSize: 2.5,
     showValue: false,
-    valAxisLabelFontSize: 8,
-    catAxisLabelFontSize: 8,
+    valAxisLabelFontSize: 8, catAxisLabelFontSize: 8,
+    valAxisLabelFormatCode: '#,##0.0,,"M"',
+    valAxisLabelColor: T.sub, catAxisLabelColor: T.sub,
     valAxisLineShow: false,
-    plotArea: { fill: { color: THEME.bgCard } },
-    chartArea: { fill: { color: THEME.bgCard } },
-    valGridLine: { style: "solid", color: THEME.border, size: 0.5 },
+    chartArea: { fill: { color: T.card } },
+    plotArea: { fill: { color: T.card } },
+    valGridLine: { style: "solid", color: T.bord, size: 0.5 },
   });
 
-  // margin benchmarks
+  // ── 4 benchmark boxes (fixed Y = 6.0) ──
   const bmarks = [
-    { label: "Break-even",  value: be },
-    { label: "10% Margin",  value: fc.benchmarks.margin10 },
-    { label: "20% Margin",  value: fc.benchmarks.margin20 },
-    { label: "30% Margin",  value: fc.benchmarks.margin30 },
+    { l: "Break-even",  v: fc.benchmarks.breakevenRevenue },
+    { l: "10% Margin",  v: fc.benchmarks.margin10 },
+    { l: "20% Margin",  v: fc.benchmarks.margin20 },
+    { l: "30% Margin",  v: fc.benchmarks.margin30 },
   ];
-  const bmY = 4.68, bmW = 2.15, bmH = 0.62, bmGap = 0.1;
+  const BMW = (CW - 3 * 0.22) / 4;
   bmarks.forEach((b, i) => {
-    const col = avgRev >= b.value ? THEME.green : THEME.amber;
-    slide.addShape("roundRect", {
-      x: 0.4 + i * (bmW + bmGap), y: bmY, w: bmW, h: bmH,
-      fill: { color: col, transparency: 88 }, line: { color: col, width: 0.8 }, rectRadius: 0.06,
-    });
-    slide.addText(b.label, { x: 0.4 + i * (bmW + bmGap) + 0.08, y: bmY + 0.05, w: bmW - 0.16, h: 0.2, fontSize: 7, color: THEME.textSub, fontFace: "Calibri" });
-    slide.addText(fmt(b.value, p.currency), { x: 0.4 + i * (bmW + bmGap) + 0.08, y: bmY + 0.24, w: bmW - 0.16, h: 0.3, fontSize: 12, bold: true, color: col, fontFace: "Calibri", fit: "shrink" });
+    const col = avgRev >= b.v ? T.green : T.amber;
+    slide.addShape("roundRect", { x: ML + i * (BMW + 0.22), y: 6.0, w: BMW, h: 0.82,
+      fill: { color: col, transparency: 88 }, line: { color: col, width: 0.8 }, rectRadius: 0.06 });
+    slide.addText(b.l, { x: ML + i * (BMW + 0.22) + 0.1, y: 6.06, w: BMW - 0.2, h: 0.22,
+      fontSize: 7.5, color: T.sub, fontFace: "Calibri" });
+    slide.addText(fmt(b.v, p.currency), { x: ML + i * (BMW + 0.22) + 0.1, y: 6.26, w: BMW - 0.2, h: 0.44,
+      fontSize: 13, bold: true, color: col, fontFace: "Calibri Light", fit: "shrink" });
   });
 }
 
-// ─── Retained Earnings Slide ──────────────────────────────────────────────────
+// ─── SLIDE 8: Retained Earnings ───────────────────────────────────────────────
 export function addRetainedSlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
-  applyBg(slide);
-  addSectionHeading(slide, "Retained Earnings & Investments");
+  chrome(slide, "Retained Earnings & Investments", sub(p), p.companyName);
 
   if (!p.retained) {
-    slide.addText("Retained earnings data not available.", {
-      x: 0.5, y: 2, w: 9, h: 1, fontSize: 13, color: THEME.textSub, align: "center", fontFace: "Calibri",
-    });
+    slide.addText("Retained earnings data not available.", { x: ML, y: 3, w: CW, h: 0.6,
+      fontSize: 13, color: T.sub, align: "center", fontFace: "Calibri" });
     return;
   }
 
   const r = p.retained;
-  const kpis = [
-    { label: "Net Profit",           value: fmt(r.netProfit, p.currency),           color: r.netProfit >= 0 ? THEME.green : THEME.red },
-    { label: "Long-term Assets",     value: fmt(r.longTermAssets, p.currency),       color: THEME.accent },
-    { label: "Total Investments",    value: fmt(r.totalInvestments, p.currency),     color: THEME.violet },
-    { label: "Contribution Received",value: fmt(r.contributionReceived, p.currency), color: THEME.amber  },
-    { label: "Retained Earnings",    value: fmt(r.retainedEarning, p.currency),      color: THEME.green  },
-  ];
-  const bw = 1.78, bh = 1.0, gap = 0.16;
-  kpis.forEach((k, i) => addKpiBox(slide, { ...k, x: 0.4 + i * (bw + gap), y: 0.58, w: bw, h: bh }));
 
-  // Composition bar chart
-  slide.addChart(pres.ChartType.bar, [{
-    name: "Amount",
-    labels: ["Net Profit", "Long-term Assets", "Total Investments", "Contribution", "Retained Earnings"],
-    values: [r.netProfit, r.longTermAssets, r.totalInvestments, r.contributionReceived, r.retainedEarning],
-  }], {
-    x: 0.4, y: 1.75, w: 5.5, h: 3.1,
+  // ── 5 KPI boxes ──
+  // bw = (12.43 - 4×0.18) / 5 = 2.342"
+  const BW = 2.34, BH = 1.0, GAP = 0.18;
+  const rcards = [
+    { l: "Net Profit",            v: fmt(r.netProfit, p.currency),            c: r.netProfit >= 0 ? T.green : T.red },
+    { l: "Long-term Assets",      v: fmt(r.longTermAssets, p.currency),        c: T.acc   },
+    { l: "Total Investments",     v: fmt(r.totalInvestments, p.currency),      c: T.viol  },
+    { l: "Contribution Received", v: fmt(r.contributionReceived, p.currency),  c: T.amber },
+    { l: "Retained Earnings",     v: fmt(r.retainedEarning, p.currency),       c: T.green },
+  ];
+  rcards.forEach((c, i) => kpi(slide, ML + i * (BW + GAP), 0.85, BW, BH, c.l, c.v, "", c.c));
+
+  // ── Bar chart left ──
+  const barLabels = ["Net Profit","Long-term Assets","Investments","Contribution","Retained Earnings"];
+  const barVals   = [r.netProfit, r.longTermAssets, r.totalInvestments, r.contributionReceived, r.retainedEarning];
+  slide.addChart(pres.ChartType.bar, [{ name: "Amount", labels: barLabels, values: barVals }], {
+    x: ML, y: 2.05, w: 6.8, h: 4.68,
     barDir: "bar",
-    chartColors: [THEME.green, THEME.accent, THEME.violet, THEME.amber, THEME.green],
+    chartColors: [T.green, T.acc, T.viol, T.amber, T.green],
     showLegend: false,
-    showValue: true, dataLabelFontSize: 8,
+    showValue: true, dataLabelFontSize: 7.5,
+    dataLabelFormatCode: '#,##0.0,,"M"',
     valAxisLabelFontSize: 8, catAxisLabelFontSize: 8,
-    plotArea: { fill: { color: THEME.bgCard } },
-    chartArea: { fill: { color: THEME.bgCard } },
-    valGridLine: { style: "solid", color: THEME.border, size: 0.5 },
+    valAxisLabelFormatCode: '#,##0.0,,"M"',
+    valAxisLabelColor: T.sub, catAxisLabelColor: T.sub,
+    chartArea: { fill: { color: T.card } },
+    plotArea: { fill: { color: T.card } },
+    valGridLine: { style: "solid", color: T.bord, size: 0.5 },
   });
 
-  // Doughnut for composition
-  const donutData = [
-    { name: "Long-term Assets", value: Math.max(0, r.longTermAssets) },
-    { name: "Net Investments",  value: Math.max(0, r.totalInvestments) },
-    { name: "Retained Earning", value: Math.max(0, r.retainedEarning) },
-  ].filter((x) => x.value > 0);
+  // ── Doughnut right ──
+  const donut = [
+    { name: "Long-term Assets",  value: Math.max(0, r.longTermAssets)    },
+    { name: "Net Investments",   value: Math.max(0, r.totalInvestments)  },
+    { name: "Retained Earnings", value: Math.max(0, r.retainedEarning)   },
+  ].filter(x => x.value > 0);
 
-  if (donutData.length > 0) {
-    slide.addChart(pres.ChartType.doughnut, [{
-      name: "Retained",
-      labels: donutData.map((d) => d.name),
-      values: donutData.map((d) => d.value),
+  if (donut.length) {
+    slide.addChart(pres.ChartType.doughnut, [{ name: "Equity",
+      labels: donut.map(d => d.name), values: donut.map(d => d.value),
     }], {
-      x: 6.1, y: 1.75, w: 3.5, h: 3.1,
-      chartColors: [THEME.accent, THEME.violet, THEME.green],
-      showLegend: true, legendPos: "b", legendFontSize: 8,
-      showPercent: true, dataLabelFontSize: 8,
-      chartArea: { fill: { color: THEME.bgCard } },
-      plotArea: { fill: { color: THEME.bgCard } },
+      x: 7.5, y: 2.05, w: 5.38, h: 4.68,
+      chartColors: [T.acc, T.viol, T.green],
+      showLegend: true, legendPos: "b", legendFontSize: 8.5,
+      showPercent: true, dataLabelFontSize: 8.5, dataLabelColor: T.white,
+      chartArea: { fill: { color: T.card } },
+      plotArea: { fill: { color: T.card } },
       holeSize: 50,
     });
   }
 }
 
-// ─── Closing / Thank-you Slide ─────────────────────────────────────────────────
+// ─── SLIDE 9: Closing ─────────────────────────────────────────────────────────
 export function addClosingSlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
-  slide.background = { color: THEME.bg };
+  slide.background = { color: T.bg };
 
-  // top accent band
-  slide.addShape("rect", { x: 0, y: 0, w: "100%", h: 0.1, fill: { color: THEME.accent }, line: { color: THEME.accent, width: 0 } });
-  // bottom band
-  slide.addShape("rect", { x: 0, y: 5.2, w: "100%", h: 0.55, fill: { color: THEME.bgCard }, line: { color: THEME.bgCard, width: 0 } });
+  // top + bottom accent bars
+  slide.addShape("rect", { x: 0, y: 0,    w: SW, h: 0.12, fill: { color: T.acc }, line: { color: T.acc, width: 0 } });
+  slide.addShape("rect", { x: 0, y: 7.38, w: SW, h: 0.12, fill: { color: T.acc }, line: { color: T.acc, width: 0 } });
 
-  slide.addText("Thank You", {
-    x: 0.5, y: 1.3, w: 9, h: 1.1,
-    fontSize: 54, bold: true, color: THEME.textPrime, align: "center", fontFace: "Calibri",
-  });
-  slide.addText("Questions & Discussion", {
-    x: 0.5, y: 2.4, w: 9, h: 0.6,
-    fontSize: 20, color: THEME.accent, align: "center", fontFace: "Calibri", charSpacing: 2,
-  });
-  slide.addShape("line", { x: 2.5, y: 3.12, w: 5, h: 0, line: { color: THEME.border, width: 1 } });
-  slide.addText(`${p.companyName}  ·  ${p.dateRange.start} to ${p.dateRange.end}  ·  ${p.method} Basis`, {
-    x: 0.5, y: 3.25, w: 9, h: 0.4,
-    fontSize: 9, color: THEME.textSub, align: "center", fontFace: "Calibri",
-  });
-  slide.addText("Confidential — For Internal Use Only", {
-    x: 0.5, y: 5.22, w: 9, h: 0.42,
-    fontSize: 8, color: THEME.textMuted, align: "center", fontFace: "Calibri",
-  });
+  // centre content block
+  slide.addShape("roundRect", { x: 1.8, y: 1.5, w: 9.73, h: 4.3,
+    fill: { color: T.panel }, line: { color: T.bord, width: 1 }, rectRadius: 0.12 });
+
+  slide.addText("Thank You", { x: 1.8, y: 1.75, w: 9.73, h: 1.5,
+    fontSize: 60, bold: true, color: T.white, align: "center", fontFace: "Calibri Light" });
+
+  slide.addText("Questions & Discussion", { x: 1.8, y: 3.22, w: 9.73, h: 0.6,
+    fontSize: 20, color: T.acc, align: "center", fontFace: "Calibri Light", charSpacing: 1.5 });
+
+  slide.addShape("line", { x: 3.5, y: 3.95, w: 6.33, h: 0,
+    line: { color: T.bord, width: 1 } });
+
+  slide.addText(
+    `${p.companyName}  ·  ${p.dateRange.start} to ${p.dateRange.end}  ·  ${p.method} Basis`,
+    { x: 1.8, y: 4.1, w: 9.73, h: 0.42, align: "center",
+      fontSize: 9.5, color: T.sub, fontFace: "Calibri" });
+
+  slide.addText("Confidential — For Internal Use Only", { x: 1.8, y: 5.55, w: 9.73, h: 0.28,
+    fontSize: 8, color: T.muted, align: "center", fontFace: "Calibri" });
 }
 
-// ─── Master build function ────────────────────────────────────────────────────
+// ─── Master build ─────────────────────────────────────────────────────────────
 export async function buildPresentation(payload: PptxPayload): Promise<Buffer> {
   const pres = new PptxGenJS();
-  pres.layout  = "LAYOUT_WIDE";  // 13.33" × 7.5"
+  pres.layout  = "LAYOUT_WIDE";
   pres.author  = payload.companyName;
   pres.company = payload.companyName;
   pres.subject = `Financial Report ${payload.dateRange.start} – ${payload.dateRange.end}`;
@@ -731,34 +696,5 @@ export async function buildPresentation(payload: PptxPayload): Promise<Buffer> {
   addRetainedSlide(pres, payload);
   addClosingSlide(pres, payload);
 
-  const buf = await pres.write({ outputType: "nodebuffer" }) as Buffer;
-  return buf;
-}
-
-// ─── KPI box ──────────────────────────────────────────────────────────────────
-export function addKpiBox(
-  slide: PptxGenJS.Slide,
-  opts: { x: number; y: number; w: number; h: number; label: string; value: string; sub?: string; color?: string }
-) {
-  const col = opts.color ?? THEME.accent;
-  slide.addShape("roundRect", {
-    x: opts.x, y: opts.y, w: opts.w, h: opts.h,
-    fill: { color: THEME.bgCard },
-    line: { color: col, width: 1.2 },
-    rectRadius: 0.08,
-  });
-  slide.addText(opts.label, {
-    x: opts.x + 0.14, y: opts.y + 0.1, w: opts.w - 0.28, h: 0.24,
-    fontSize: 8, color: THEME.textSub, bold: false, fontFace: "Calibri",
-  });
-  slide.addText(opts.value, {
-    x: opts.x + 0.14, y: opts.y + 0.3, w: opts.w - 0.28, h: 0.42,
-    fontSize: 18, bold: true, color: col, fontFace: "Calibri", fit: "shrink",
-  });
-  if (opts.sub) {
-    slide.addText(opts.sub, {
-      x: opts.x + 0.14, y: opts.y + 0.72, w: opts.w - 0.28, h: 0.22,
-      fontSize: 8, color: THEME.textMuted, fontFace: "Calibri",
-    });
-  }
+  return await pres.write({ outputType: "nodebuffer" }) as Buffer;
 }
