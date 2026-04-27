@@ -908,12 +908,7 @@ export default function DashboardPage() {
   async function exportToPptx() {
     setPptxLoading(true);
     try {
-      const { start, end } = buildStartEnd(
-        Math.min(fromYear, toYear) === fromYear && fromMonth <= toMonth ? fromYear : toYear,
-        Math.min(fromYear, toYear) === fromYear && fromMonth <= toMonth ? fromMonth : toMonth,
-        Math.min(fromYear, toYear) === toYear && toMonth >= fromMonth ? toYear : fromYear,
-        Math.min(fromYear, toYear) === toYear && toMonth >= fromMonth ? toMonth : fromMonth
-      );
+      const { start, end } = getNormalizedFilters({ fromYear, fromMonth, toYear, toMonth, method });
       const params = new URLSearchParams({
         start_date: start,
         end_date: end,
