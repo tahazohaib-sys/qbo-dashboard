@@ -541,6 +541,7 @@ export default function DashboardPage() {
   const [customLabel, setCustomLabel] = useState("");
   const [customAmount, setCustomAmount] = useState<string>("");
 
+  const [pptxLoading, setPptxLoading] = useState(false);
   const [err, setErr] = useState<string>("");
   const [lastUpdated, setLastUpdated] = useState("--:--:--");
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -902,6 +903,39 @@ export default function DashboardPage() {
     const nextFilters: AppliedFilter = { fromYear, fromMonth, toYear, toMonth, method };
     setAppliedFilters(nextFilters);
     await runActiveTabLoad(tab, nextFilters);
+  }
+
+  async function exportToPptx() {
+    setPptxLoading(true);
+    try {
+      const { start, end } = buildStartEnd(
+        Math.min(fromYear, toYear) === fromYear && fromMonth <= toMonth ? fromYear : toYear,
+        Math.min(fromYear, toYear) === fromYear && fromMonth <= toMonth ? fromMonth : toMonth,
+        Math.min(fromYear, toYear) === toYear && toMonth >= fromMonth ? toYear : fromYear,
+        Math.min(fromYear, toYear) === toYear && toMonth >= fromMonth ? toMonth : fromMonth
+      );
+      const params = new URLSearchParams({
+        start_date: start,
+        end_date: end,
+        accounting_method: method,
+      });
+      const res = await fetch(`/api/export/powerpoint?${params.toString()}`);
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error((json as any)?.error ?? "Export failed");
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `Finance_Report_${start}_to_${end}.pptx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErr(e?.message ?? "PowerPoint export failed");
+    } finally {
+      setPptxLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -1349,13 +1383,39 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <button
-              onClick={applyFilters}
-              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
-              disabled={loading}
-            >
-              Apply
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={applyFilters}
+                className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
+                disabled={loading}
+              >
+                Apply
+              </button>
+
+              <button
+                onClick={exportToPptx}
+                disabled={pptxLoading || loading}
+                className="flex items-center gap-2 rounded-xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-semibold text-violet-200 hover:bg-violet-500/25 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                title="Export current date range as PowerPoint presentation"
+              >
+                {pptxLoading ? (
+                  <>
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    Generating…
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Export PPTX
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {err ? (
