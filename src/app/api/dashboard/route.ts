@@ -176,33 +176,35 @@ export async function GET(req: Request) {
       rangeEnd = d.end;
     }
 
-    const months = monthsBetweenInclusive(rangeStart, rangeEnd);
-    const [companyInfo, monthlyTotals] = await Promise.all([
-      qboFetch("companyinfo/1"),
-      Promise.all(months.map((m) => fetchMonthlyPnlTotals(m.start, m.end, accounting_method))),
-    ]);
-
+    // Company Info
+    const companyInfo = await qboFetch("companyinfo/1");
     const companyName =
       companyInfo?.CompanyInfo?.CompanyName ??
       companyInfo?.CompanyInfo?.LegalName ??
       "QuickBooks Online";
+
+    const months = monthsBetweenInclusive(rangeStart, rangeEnd);
 
     const series: Array<{
       month: string;
       revenue: number;
       expenses: number; // Expenses + OtherExpenses
       profit: number;   // Net Earnings (NetIncome)
-    }> = months.map((m, idx) => {
-      const totals = monthlyTotals[idx];
-      return {
-        month: m.label,
-        revenue: totals?.totals?.revenue ?? 0,
-        expenses: (totals?.totals?.expenses ?? 0) + (totals?.totals?.otherExpenses ?? 0),
-        profit: totals?.totals?.profit ?? 0,
-      };
-    });
+    }> = [];
 
-    const currency = monthlyTotals.find((r) => r?.currency)?.currency ?? "PKR";
+    let currency = "PKR";
+
+    for (const m of months) {
+      const r = await fetchMonthlyPnlTotals(m.start, m.end, accounting_method);
+      currency = r.currency || currency;
+
+      series.push({
+        month: m.label,
+        revenue: r.totals.revenue,
+        expenses: r.totals.expenses + r.totals.otherExpenses,
+        profit: r.totals.profit,
+      });
+    }
 
     const latest = series[series.length - 1] ?? { revenue: 0, expenses: 0, profit: 0 };
 
