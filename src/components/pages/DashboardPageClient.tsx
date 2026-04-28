@@ -8,21 +8,21 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
-  AreaChart,
   Line,
+  AreaChart,
   Area,
+  ComposedChart,
+  ReferenceLine,
   XAxis,
   YAxis,
   Tooltip,
   CartesianGrid,
   BarChart,
-  ComposedChart,
   Bar,
   PieChart,
   Pie,
   Cell,
   Legend,
-  ReferenceLine,
 } from "recharts";
 
 type DashboardResp = {
@@ -136,37 +136,59 @@ type RetainedResp = {
   error?: string;
 };
 
-/** ✅ CFO Forecast API response (OPEX ONLY) */
+/** ✅ Financial Forecast API response */
 type ForecastApiResp = {
   ok: boolean;
   horizon: number;
-  meta?: {
-    monthsUsed: number;
-    lastMonth?: string;
-  };
+  meta?: { monthsUsed: number; lastMonth?: string; currentCash?: number };
   trends?: {
     revenueMoM: number;
     expensesMoM: number;
     revenueTrendLabel?: "Increasing" | "Decreasing" | "Stable";
     expenseTrendLabel?: "Increasing" | "Decreasing" | "Stable";
+    expenseRatio?: number | null;
   };
   averages?: {
     avgMonthlyRevenue: number;
     avgMonthlyOpex: number;
     avgMonthlyProfit: number;
+    avgNetMarginPct?: number;
   };
   benchmarks?: {
     breakevenRevenue: number;
     margin10: number;
     margin20: number;
     margin30: number;
+    monthsToBreakeven?: number | null;
+  };
+  summary?: {
+    nextMonthRevenue: number;
+    nextMonthOpex: number;
+    nextMonthProfit: number;
+    endRevenue: number;
+    endOpex: number;
+    endProfit: number;
+    cumulativeProfit: number;
+    runwayMonths: number | null;
   };
   forecast?: Array<{
     month: string;
     revenue: number;
     opex: number;
     profit: number;
+    profitMarginPct?: number;
+    cumulativeProfit?: number;
   }>;
+  scenarios?: {
+    pessimistic: Array<{ month: string; revenue: number; opex: number; profit: number; profitMarginPct: number; cumulativeProfit: number }>;
+    base: Array<{ month: string; revenue: number; opex: number; profit: number; profitMarginPct: number; cumulativeProfit: number }>;
+    optimistic: Array<{ month: string; revenue: number; opex: number; profit: number; profitMarginPct: number; cumulativeProfit: number }>;
+    summary?: {
+      pessimistic: { endRevenue: number; endOpex: number; endProfit: number; totalProfit: number; endMarginPct: number };
+      base: { endRevenue: number; endOpex: number; endProfit: number; totalProfit: number; endMarginPct: number };
+      optimistic: { endRevenue: number; endOpex: number; endProfit: number; totalProfit: number; endMarginPct: number };
+    };
+  };
   error?: string;
 };
 
@@ -379,6 +401,14 @@ function trendLabelFromMoM(mom: number): "Increasing" | "Decreasing" | "Stable" 
   return "Stable";
 }
 
+function addMonthsLabel(ym: string, add: number): string {
+  if (!ym) return `+${add}m`;
+  const [y, m] = ym.split("-").map(Number);
+  if (!y || !m) return `${ym}+${add}m`;
+  const d = new Date(y, m - 1 + add, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function fmtAxisPKR(v: any) {
   const n = Number(v ?? 0);
   if (!Number.isFinite(n)) return "0";
@@ -509,10 +539,15 @@ export default function DashboardPage() {
   const [retained, setRetained] = useState<RetainedResp | null>(null);
   const [retainedLoading, setRetainedLoading] = useState(false);
 
-  // ✅ CFO Forecasting (Opex-only)
+  // ✅ Financial Forecasting
   const [forecastHorizon, setForecastHorizon] = useState<6 | 12>(6);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastData, setForecastData] = useState<ForecastApiResp | null>(null);
+  const [forecastCashPKR, setForecastCashPKR] = useState<number | null>(null);
+  // What-if explicit monthly growth rate overrides. null = use historical trend.
+  // e.g. 0 = flat (0%/mo), 0.05 = +5%/mo, -0.10 = -10%/mo.
+  const [revGrowthRate, setRevGrowthRate] = useState<number | null>(null);
+  const [expGrowthRate, setExpGrowthRate] = useState<number | null>(null);
 
   // ✅ AR/AP
   const [arApLoading, setArApLoading] = useState(false);
@@ -552,11 +587,15 @@ export default function DashboardPage() {
     return Math.max(1, Math.min(24, span));
   }
 
-  async function fetchForecast(series: DashboardResp["series"], horizon: 6 | 12): Promise<ForecastApiResp | null> {
+  async function fetchForecast(
+    series: DashboardResp["series"],
+    horizon: 6 | 12,
+    currentCash?: number
+  ): Promise<ForecastApiResp | null> {
     const res = await fetch(`/api/forecast`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ series, horizon }),
+      body: JSON.stringify({ series, horizon, ...(currentCash != null ? { currentCash } : {}) }),
     });
     const json: ForecastApiResp = await res.json();
     return json?.ok ? json : null;
@@ -841,23 +880,38 @@ export default function DashboardPage() {
         if (!shouldApplyRequest(requestId)) return;
         setData(cached.dashboard);
         setForecastData(cached.forecastData);
+        setForecastCashPKR(cached.cashPKR ?? null);
         setLastUpdatedNow();
         return;
       }
 
-      const dashRes = await fetch(
-        `/api/dashboard?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
-        { cache: "no-store" }
-      );
+      // Parallel fetch: dashboard series + cash balance (for runway calculation)
+      const [dashRes, cashRes] = await Promise.all([
+        fetch(
+          `/api/dashboard?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
+          { cache: "no-store" }
+        ),
+        fetch(`/api/qbo/cash-banks`, { cache: "no-store" }).catch(() => null),
+      ]);
+
       const dashJson: DashboardResp = await dashRes.json();
       if (!dashJson.ok) throw new Error(dashJson.error || "Dashboard API failed");
 
-      const nextForecast = dashJson?.series?.length ? await fetchForecast(dashJson.series, forecastHorizon) : null;
+      const cashJson: CashBanksResp | null = cashRes
+        ? await cashRes.json().catch(() => null)
+        : null;
+      const cashPKR: number | null =
+        cashJson?.ok ? (cashJson.totalsByCurrency?.["PKR"] ?? null) : null;
 
-      moduleCacheRef.current.set(key, { dashboard: dashJson, forecastData: nextForecast });
+      const nextForecast = dashJson?.series?.length
+        ? await fetchForecast(dashJson.series, forecastHorizon, cashPKR ?? undefined)
+        : null;
+
+      moduleCacheRef.current.set(key, { dashboard: dashJson, forecastData: nextForecast, cashPKR });
       if (!shouldApplyRequest(requestId)) return;
       setData(dashJson);
       setForecastData(nextForecast);
+      setForecastCashPKR(cashPKR);
       setLastUpdatedNow();
     }
   }
@@ -1084,35 +1138,150 @@ export default function DashboardPage() {
   /* ---------------- forecast derived values (UI-safe) ---------------- */
 
   const fcOk = !!forecastData?.ok;
-
   const fcAvgRevenue = forecastData?.averages?.avgMonthlyRevenue ?? 0;
   const fcAvgOpex = forecastData?.averages?.avgMonthlyOpex ?? 0;
-
   const fcRevMoM = forecastData?.trends?.revenueMoM ?? 0;
   const fcExpMoM = forecastData?.trends?.expensesMoM ?? 0;
-
   const fcBreakeven = forecastData?.benchmarks?.breakevenRevenue ?? fcAvgOpex;
   const fcMeetsBE = fcAvgRevenue >= fcBreakeven;
+  const fcAvgNetMarginPct = forecastData?.averages?.avgNetMarginPct ?? 0;
+  const fcCumulativeProfit = forecastData?.summary?.cumulativeProfit ?? 0;
+  const fcNextMonthRevenue = forecastData?.summary?.nextMonthRevenue ?? 0;
+  const fcNextMonthProfit = forecastData?.summary?.nextMonthProfit ?? 0;
+  const fcRunwayMonths = forecastData?.summary?.runwayMonths ?? null;
+  const fcMonthsToBreakeven = forecastData?.benchmarks?.monthsToBreakeven ?? null;
+  const forecastRows = forecastData?.forecast ?? [];
 
+  // Apply what-if adjustments as additional monthly growth rate on top of the base trend.
+  // Uses the same exponential formula as the API so selecting "+5%" means each projected
+  // When a growth rate is explicitly selected, use it directly (e.g. 0 = flat revenue).
+  // null means "use the historical trend". Clamped to ±50% to match the API guard.
+  const clampGrowth = (g: number) => Math.max(-0.5, Math.min(0.5, g));
+  const effRevGrowth = revGrowthRate !== null ? clampGrowth(revGrowthRate) : fcRevMoM;
+  const effExpGrowth = expGrowthRate !== null ? clampGrowth(expGrowthRate) : fcExpMoM;
+
+  const adjustedForecastRows = useMemo(() => {
+    if (revGrowthRate === null && expGrowthRate === null) return forecastRows;
+
+    const lastHist = data?.series?.[data.series.length - 1];
+    if (!lastHist || !forecastRows.length) return forecastRows;
+
+    let cumProfit = 0;
+    return forecastRows.map((row, i) => {
+      const adjRevenue = lastHist.revenue * Math.pow(1 + effRevGrowth, i + 1);
+      const adjOpex = lastHist.expenses * Math.pow(1 + effExpGrowth, i + 1);
+      const adjProfit = adjRevenue - adjOpex;
+      cumProfit += adjProfit;
+      return {
+        ...row,
+        revenue: adjRevenue,
+        opex: adjOpex,
+        profit: adjProfit,
+        profitMarginPct: adjRevenue > 0 ? adjProfit / adjRevenue : 0,
+        cumulativeProfit: cumProfit,
+      };
+    });
+  }, [forecastRows, revGrowthRate, expGrowthRate, effRevGrowth, effExpGrowth, data?.series]);
+
+  const hasAdjustments = revGrowthRate !== null || expGrowthRate !== null;
+  // "Effective" scalars — reflect adjustments for KPI cards and table
+  const fcEffCumulativeProfit =
+    adjustedForecastRows[adjustedForecastRows.length - 1]?.cumulativeProfit ?? fcCumulativeProfit;
+  const fcEffNextRevenue = adjustedForecastRows[0]?.revenue ?? fcNextMonthRevenue;
+  const fcEffNextProfit = adjustedForecastRows[0]?.profit ?? fcNextMonthProfit;
+
+  // Scenario arrays computed client-side, pivoted around the user's effective growth rates.
+  const adjustedScenarioRows = useMemo(() => {
+    const lastHist = data?.series?.[data.series.length - 1];
+    const DELTA = 0.05;
+
+    function buildScenario(rGrowth: number, eGrowth: number) {
+      let cumProfit = 0;
+      return forecastRows.map((row, i) => {
+        const revenue = (lastHist?.revenue ?? 0) * Math.pow(1 + clampGrowth(rGrowth), i + 1);
+        const opex = (lastHist?.expenses ?? 0) * Math.pow(1 + clampGrowth(eGrowth), i + 1);
+        const profit = revenue - opex;
+        cumProfit += profit;
+        return { ...row, revenue, opex, profit, profitMarginPct: revenue > 0 ? profit / revenue : 0, cumulativeProfit: cumProfit };
+      });
+    }
+
+    return {
+      pessimistic: buildScenario(effRevGrowth - DELTA, effExpGrowth + DELTA),
+      base: buildScenario(effRevGrowth, effExpGrowth),
+      optimistic: buildScenario(effRevGrowth + DELTA, effExpGrowth - DELTA),
+      effRevGrowth,
+      effExpGrowth,
+    };
+  }, [forecastRows, effRevGrowth, effExpGrowth, data?.series]);
+
+  // Benchmark bar chart data with per-bar fill colors
   const benchmarkBars = useMemo(() => {
     if (!fcOk) return [];
     return [
-      { name: "Avg Revenue", value: fcAvgRevenue },
-      { name: "Break-even", value: fcBreakeven },
-      { name: "10% Margin", value: forecastData?.benchmarks?.margin10 ?? 0 },
-      { name: "20% Margin", value: forecastData?.benchmarks?.margin20 ?? 0 },
-      { name: "30% Margin", value: forecastData?.benchmarks?.margin30 ?? 0 },
+      { name: "Avg Revenue", value: fcAvgRevenue, fill: CHART_COLORS.positive },
+      { name: "Break-even", value: fcBreakeven, fill: CHART_COLORS.caution },
+      { name: "10% Margin", value: forecastData?.benchmarks?.margin10 ?? 0, fill: CHART_COLORS.positiveSoft },
+      { name: "20% Margin", value: forecastData?.benchmarks?.margin20 ?? 0, fill: CHART_COLORS.profit },
+      { name: "30% Margin", value: forecastData?.benchmarks?.margin30 ?? 0, fill: "#059669" },
     ];
-  }, [
-    fcOk,
-    fcAvgRevenue,
-    fcBreakeven,
-    forecastData?.benchmarks?.margin10,
-    forecastData?.benchmarks?.margin20,
-    forecastData?.benchmarks?.margin30,
-  ]);
+  }, [fcOk, fcAvgRevenue, fcBreakeven, forecastData?.benchmarks]);
 
-  const forecastRows = forecastData?.forecast ?? [];
+  // Historical series with renamed keys for combined chart (separate dataKeys per Area)
+  const historicalFcSeries = useMemo(
+    () =>
+      (data?.series ?? []).map((s) => ({
+        month: s.month,
+        histRevenue: s.revenue,
+        histOpex: s.expenses,
+        histProfit: s.profit,
+      })),
+    [data?.series]
+  );
+
+  // Combined historical + forecast chart data (uses adjusted rows)
+  const combinedChartData = useMemo(() => {
+    const histPoints = historicalFcSeries.map((p) => ({ ...p, isForecast: false }));
+    const fcPoints = adjustedForecastRows.map((p) => ({
+      month: p.month,
+      revenue: p.revenue,
+      opex: p.opex,
+      profit: p.profit,
+      profitMarginPct: p.profitMarginPct,
+      isForecast: true,
+    }));
+    return [...histPoints, ...fcPoints];
+  }, [historicalFcSeries, adjustedForecastRows]);
+
+  // Last historical month — used as ReferenceLine x value
+  const fcDividerMonth = historicalFcSeries[historicalFcSeries.length - 1]?.month ?? null;
+
+  // Margin trajectory: historical margins + adjusted forecast margins merged
+  const marginTrajectoryData = useMemo(() => {
+    const hist = (data?.series ?? []).map((s) => ({
+      month: s.month,
+      histMargin: s.revenue > 0 ? (s.profit / s.revenue) * 100 : 0,
+      forecastMargin: undefined as number | undefined,
+    }));
+    const fc = adjustedForecastRows.map((p) => ({
+      month: p.month,
+      histMargin: undefined as number | undefined,
+      forecastMargin: (p.profitMarginPct ?? 0) * 100,
+    }));
+    return [...hist, ...fc];
+  }, [data?.series, adjustedForecastRows]);
+
+  // Cash runway: project cash using adjusted monthly profits (more accurate than avg-opex approach)
+  const runwayChartData = useMemo(() => {
+    if (!forecastCashPKR || adjustedForecastRows.length === 0) return [];
+    const result: Array<{ month: string; cash: number }> = [{ month: "Now", cash: forecastCashPKR }];
+    let cash = forecastCashPKR;
+    for (const row of adjustedForecastRows) {
+      cash += row.profit;
+      result.push({ month: row.month, cash: Math.max(0, cash) });
+    }
+    return result;
+  }, [forecastCashPKR, adjustedForecastRows]);
 
   // ✅ compute custom sums for CURRENT asOf (used in AR/AP UI totals)
   const arApCustomPayables = useMemo(() => arApCustomRows.filter((r) => r.section === "payables"), [arApCustomRows]);
@@ -1243,7 +1412,7 @@ export default function DashboardPage() {
             Retained Earning
           </TabButton>
           <TabButton active={tab === "forecast"} onClick={() => setTab("forecast")}>
-            CFO Forecast
+            Financial Forecast
           </TabButton>
 
           <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" prefetch={false} onActivate={() => setTab("revenue")}>
@@ -2674,21 +2843,27 @@ export default function DashboardPage() {
           </>
         ) : null}
 
-        {/* CFO FORECAST TAB (OPEX ONLY) */}
+        {/* CFO FORECAST TAB */}
         {tab === "forecast" ? (
           <>
+            {/* ── Section 1: Header ── */}
             <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div className="text-sm font-semibold">Operating Forecast</div>
-
+                <div>
+                  <div className="text-sm font-semibold text-white">Financial Forecast</div>
+                  {fcOk && (
+                    <div className="mt-0.5 text-xs text-slate-400">
+                      Based on {forecastData?.meta?.monthsUsed ?? 0} months of historical data
+                      {forecastData?.meta?.lastMonth ? ` · through ${forecastData.meta.lastMonth}` : ""}
+                      {forecastCashPKR !== null ? ` · PKR cash position included` : ""}
+                    </div>
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-slate-300">Horizon</label>
                   <select
                     value={forecastHorizon}
-                    onChange={(e) => {
-                      const h = Number(e.target.value) as 6 | 12;
-                      setForecastHorizon(h);
-                    }}
+                    onChange={(e) => setForecastHorizon(Number(e.target.value) as 6 | 12)}
                     className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none"
                   >
                     <option value={6}>Next 6 months</option>
@@ -2699,59 +2874,601 @@ export default function DashboardPage() {
             </div>
 
             {forecastLoading ? (
-              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-slate-300">Loading…</div>
+              <div className="mt-4 space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="animate-pulse rounded-2xl border border-white/10 bg-white/5 p-6" />
+                ))}
+              </div>
             ) : fcOk ? (
               <>
-                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+                {/* ── What-If Analysis Filters ── */}
+                <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
+                      What-If Analysis
+                    </span>
+                    {hasAdjustments && (
+                      <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold text-amber-300 border border-amber-400/30">
+                        Active — projections adjusted
+                      </span>
+                    )}
+                    {hasAdjustments && (
+                      <button
+                        onClick={() => { setRevGrowthRate(null); setExpGrowthRate(null); }}
+                        className="ml-auto text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2"
+                      >
+                        Reset to trend
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-3">
+                    {/* Revenue growth rate selector */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="w-24 shrink-0 text-xs text-slate-400">Revenue /mo</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {/* "Trend" resets to null = use historical MoM trend */}
+                        <button
+                          onClick={() => setRevGrowthRate(null)}
+                          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+                            revGrowthRate === null
+                              ? "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
+                              : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                          }`}
+                        >
+                          Trend
+                        </button>
+                        {([-0.20, -0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15, 0.20] as const).map((pct) => {
+                          const isActive = revGrowthRate === pct;
+                          const label = pct === 0 ? "0%" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
+                          const activeClass = isActive
+                            ? pct < 0
+                              ? "border-rose-400/60 bg-rose-500/20 text-rose-200"
+                              : pct > 0
+                              ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200"
+                              : "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
+                            : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200";
+                          return (
+                            <button key={pct} onClick={() => setRevGrowthRate(pct)}
+                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${activeClass}`}>
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {/* Expense growth rate selector */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="w-24 shrink-0 text-xs text-slate-400">Expense /mo</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          onClick={() => setExpGrowthRate(null)}
+                          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+                            expGrowthRate === null
+                              ? "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
+                              : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                          }`}
+                        >
+                          Trend
+                        </button>
+                        {([-0.20, -0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15, 0.20] as const).map((pct) => {
+                          const isActive = expGrowthRate === pct;
+                          const label = pct === 0 ? "0%" : pct > 0 ? `+${(pct * 100).toFixed(0)}%` : `${(pct * 100).toFixed(0)}%`;
+                          // For expenses: decrease is good (emerald), increase is bad (rose)
+                          const activeClass = isActive
+                            ? pct < 0
+                              ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200"
+                              : pct > 0
+                              ? "border-rose-400/60 bg-rose-500/20 text-rose-200"
+                              : "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
+                            : "border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200";
+                          return (
+                            <button key={pct} onClick={() => setExpGrowthRate(pct)}
+                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${activeClass}`}>
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                  {hasAdjustments && (
+                    <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                      What-if override active —{" "}
+                      {revGrowthRate !== null && (
+                        <span>revenue at <strong>{revGrowthRate === 0 ? "0% (flat)" : revGrowthRate > 0 ? `+${(revGrowthRate * 100).toFixed(0)}%` : `${(revGrowthRate * 100).toFixed(0)}%`}/mo</strong></span>
+                      )}
+                      {revGrowthRate !== null && expGrowthRate !== null && " · "}
+                      {expGrowthRate !== null && (
+                        <span>expenses at <strong>{expGrowthRate === 0 ? "0% (flat)" : expGrowthRate > 0 ? `+${(expGrowthRate * 100).toFixed(0)}%` : `${(expGrowthRate * 100).toFixed(0)}%`}/mo</strong></span>
+                      )}.{" "}
+                      All charts, KPIs, table, and scenarios reflect these rates.
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Section 2: Executive Summary Strip (6 KPI cards) ── */}
+                <div className="mt-4 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
                   <KpiCard
-                    title="Revenue Trend (Avg MoM)"
+                    title="Revenue Trend (MoM)"
                     numericValue={fcRevMoM}
                     formatValue={formatPct}
                     highlight={fcRevMoM < 0 ? "bad" : "good"}
+                    subtext={forecastData?.trends?.revenueTrendLabel}
                   />
                   <KpiCard
-                    title="Opex Trend (Avg MoM)"
+                    title="Opex Trend (MoM)"
                     numericValue={fcExpMoM}
                     formatValue={formatPct}
-                    highlight={fcExpMoM > 0 ? "bad" : "good"}
+                    highlight={fcExpMoM > 0.05 ? "bad" : fcExpMoM < 0 ? "good" : undefined}
+                    subtext={forecastData?.trends?.expenseTrendLabel}
                   />
-                  <KpiCard title="Avg Monthly Opex" numericValue={fcAvgOpex} formatValue={formatPKRCompact} />
                   <KpiCard
-                    title="Break-even Revenue"
-                    numericValue={fcBreakeven}
+                    title="Avg Net Margin"
+                    numericValue={fcAvgNetMarginPct}
+                    formatValue={formatPct}
+                    highlight={fcAvgNetMarginPct >= 0.1 ? "good" : fcAvgNetMarginPct < 0 ? "bad" : undefined}
+                    subtext="Historical avg"
+                  />
+                  <KpiCard
+                    title={`${forecastHorizon}M Cumulative Profit`}
+                    numericValue={fcEffCumulativeProfit}
                     formatValue={formatPKRCompact}
-                    highlight={fcMeetsBE ? "good" : "bad"}
+                    highlight={fcEffCumulativeProfit >= 0 ? "good" : "bad"}
+                    subtext={hasAdjustments ? "Adjusted" : "Base scenario"}
+                  />
+                  <KpiCard
+                    title="Next Month Revenue"
+                    numericValue={fcEffNextRevenue}
+                    formatValue={formatPKRCompact}
+                    highlight={fcEffNextRevenue >= fcBreakeven ? "good" : "bad"}
+                    subtext={hasAdjustments ? "Adjusted" : "Base projection"}
+                  />
+                  <KpiCard
+                    title={forecastCashPKR !== null ? "Cash Runway" : "Break-even Revenue"}
+                    numericValue={
+                      forecastCashPKR !== null
+                        ? (() => {
+                            // Runway = months until cash goes negative on adjusted projections
+                            let cash = forecastCashPKR;
+                            for (let i = 0; i < adjustedForecastRows.length; i++) {
+                              cash += adjustedForecastRows[i].profit;
+                              if (cash <= 0) return i + 1;
+                            }
+                            return adjustedForecastRows.length + 1; // beyond horizon = safe
+                          })()
+                        : fcBreakeven
+                    }
+                    formatValue={
+                      forecastCashPKR !== null
+                        ? (n) => (n > adjustedForecastRows.length ? `>${adjustedForecastRows.length} mo` : `${n.toFixed(0)} mo`)
+                        : formatPKRCompact
+                    }
+                    highlight={
+                      forecastCashPKR !== null
+                        ? (() => {
+                            let cash = forecastCashPKR;
+                            for (const row of adjustedForecastRows) {
+                              cash += row.profit;
+                              if (cash <= 0) return "bad";
+                            }
+                            return "good";
+                          })()
+                        : fcMeetsBE ? "good" : "bad"
+                    }
+                    subtext={forecastCashPKR !== null ? "Months of cash left" : undefined}
                   />
                 </div>
 
+                {/* ── Section 3: Combined Historical + Forecast Chart ── */}
+                <div className="mt-4">
+                  <ChartCard
+                    title={
+                      hasAdjustments
+                        ? `Revenue & Opex — Historical + Adjusted Forecast (Rev ${effRevGrowth >= 0 ? "+" : ""}${(effRevGrowth * 100).toFixed(1)}%/mo, Opex ${effExpGrowth >= 0 ? "+" : ""}${(effExpGrowth * 100).toFixed(1)}%/mo)`
+                        : "Revenue & Opex — Historical + Forecast"
+                    }
+                    legend={[
+                      { label: "Hist. Revenue", color: "bg-cyan-400" },
+                      { label: "Forecast Revenue", color: "bg-cyan-300" },
+                      { label: "Hist. Opex", color: "bg-rose-400" },
+                      { label: "Forecast Opex", color: "bg-rose-300" },
+                    ]}
+                  >
+                    <div className="h-[340px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={combinedChartData} margin={{ top: 10, right: 16, left: 6, bottom: 6 }}>
+                          <defs>
+                            <linearGradient id="fcHistRevGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.35} />
+                              <stop offset="95%" stopColor="#22d3ee" stopOpacity={0.04} />
+                            </linearGradient>
+                            <linearGradient id="fcHistOpexGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#f87171" stopOpacity={0.25} />
+                              <stop offset="95%" stopColor="#f87171" stopOpacity={0.03} />
+                            </linearGradient>
+                            <linearGradient id="fcFcRevGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#67e8f9" stopOpacity={0.5} />
+                              <stop offset="95%" stopColor="#67e8f9" stopOpacity={0.06} />
+                            </linearGradient>
+                            <linearGradient id="fcFcOpexGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#fca5a5" stopOpacity={0.35} />
+                              <stop offset="95%" stopColor="#fca5a5" stopOpacity={0.04} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid {...GRID} />
+                          <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
+                          <Tooltip content={<MoneyTooltip />} />
+                          <Area
+                            type="monotone" dataKey="histRevenue" name="Hist. Revenue"
+                            stroke="#22d3ee" strokeWidth={2} fill="url(#fcHistRevGrad)" dot={false} connectNulls
+                          />
+                          <Area
+                            type="monotone" dataKey="histOpex" name="Hist. Opex"
+                            stroke="#f87171" strokeWidth={2} fill="url(#fcHistOpexGrad)" dot={false} connectNulls
+                          />
+                          <Area
+                            type="monotone" dataKey="revenue" name="Forecast Revenue"
+                            stroke="#67e8f9" strokeWidth={2} strokeDasharray="5 3" fill="url(#fcFcRevGrad)" dot={false} connectNulls
+                          />
+                          <Area
+                            type="monotone" dataKey="opex" name="Forecast Opex"
+                            stroke="#fca5a5" strokeWidth={2} strokeDasharray="5 3" fill="url(#fcFcOpexGrad)" dot={false} connectNulls
+                          />
+                          {fcDividerMonth && (
+                            <ReferenceLine
+                              x={fcDividerMonth}
+                              stroke="rgba(255,255,255,0.25)"
+                              strokeDasharray="4 4"
+                              label={{ value: "Forecast →", fill: "rgba(255,255,255,0.4)", fontSize: 11, position: "insideTopRight" }}
+                            />
+                          )}
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </ChartCard>
+                </div>
+
+                {/* ── Section 4: Scenario Analysis (3 cards) ── */}
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                  {(["pessimistic", "base", "optimistic"] as const).map((scenario) => {
+                    const rows = adjustedScenarioRows[scenario] ?? [];
+                    const lastRow = rows[rows.length - 1];
+                    const { effRevGrowth, effExpGrowth } = adjustedScenarioRows;
+                    const DELTA = 0.05;
+                    const clamp = (g: number) => Math.max(-0.5, Math.min(0.5, g));
+                    const scenRevGrowth = scenario === "pessimistic" ? clamp(effRevGrowth - DELTA) : scenario === "optimistic" ? clamp(effRevGrowth + DELTA) : effRevGrowth;
+                    const scenExpGrowth = scenario === "pessimistic" ? clamp(effExpGrowth + DELTA) : scenario === "optimistic" ? clamp(effExpGrowth - DELTA) : effExpGrowth;
+                    const pct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
+                    const horizon = rows.length;
+                    const lastHist = data?.series?.[data.series.length - 1];
+                    const borderColor =
+                      scenario === "pessimistic"
+                        ? "border-rose-400/30"
+                        : scenario === "optimistic"
+                        ? "border-emerald-400/30"
+                        : "border-cyan-400/30";
+                    const headerColor =
+                      scenario === "pessimistic"
+                        ? "text-rose-300"
+                        : scenario === "optimistic"
+                        ? "text-emerald-300"
+                        : "text-cyan-300";
+                    const bgGlow =
+                      scenario === "pessimistic"
+                        ? "shadow-[0_16px_45px_rgba(248,113,113,0.12)]"
+                        : scenario === "optimistic"
+                        ? "shadow-[0_16px_45px_rgba(52,211,153,0.12)]"
+                        : "shadow-[0_16px_45px_rgba(34,211,238,0.12)]";
+                    const growthNote = `Rev ${pct(scenRevGrowth)}/mo · Opex ${pct(scenExpGrowth)}/mo`;
+
+                    // Plain-English explanation of how the outcome was derived
+                    const explanationLines: string[] = [];
+                    if (lastHist) {
+                      explanationLines.push(`Starting point: ${lastHist.month} — revenue ${formatPKRCompact(lastHist.revenue)}, opex ${formatPKRCompact(lastHist.expenses)}.`);
+                    }
+                    explanationLines.push(
+                      `Revenue compounds at ${pct(scenRevGrowth)}/mo for ${horizon} months${
+                        scenario === "pessimistic" ? " (base rate −5 pp stress)" : scenario === "optimistic" ? " (base rate +5 pp upside)" : " (your selected rate)"
+                      }.`
+                    );
+                    explanationLines.push(
+                      `Opex compounds at ${pct(scenExpGrowth)}/mo for ${horizon} months${
+                        scenario === "pessimistic" ? " (base rate +5 pp stress)" : scenario === "optimistic" ? " (base rate −5 pp saving)" : " (your selected rate)"
+                      }.`
+                    );
+                    if (lastRow) {
+                      const revMultiple = lastHist && lastHist.revenue !== 0 ? lastRow.revenue / lastHist.revenue : null;
+                      const opexMultiple = lastHist && lastHist.expenses !== 0 ? lastRow.opex / lastHist.expenses : null;
+                      if (revMultiple !== null && opexMultiple !== null) {
+                        explanationLines.push(
+                          `After ${horizon} months: revenue is ${revMultiple >= 1 ? "+" : ""}${((revMultiple - 1) * 100).toFixed(1)}% vs start, opex is ${opexMultiple >= 1 ? "+" : ""}${((opexMultiple - 1) * 100).toFixed(1)}% vs start.`
+                        );
+                      }
+                      explanationLines.push(
+                        lastRow.cumulativeProfit >= 0
+                          ? `Cumulative profit over ${horizon} months is positive — the business covers costs under this scenario.`
+                          : `Cumulative loss over ${horizon} months is ${formatPKRCompact(Math.abs(lastRow.cumulativeProfit))} — expenses exceed revenue throughout.`
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={scenario}
+                        className={`glass-breathe rounded-2xl border ${borderColor} ${bgGlow} bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl`}
+                      >
+                        <div className={`text-xs font-semibold uppercase tracking-[0.14em] ${headerColor}`}>
+                          {scenario.charAt(0).toUpperCase() + scenario.slice(1)}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-slate-400">{growthNote}</div>
+                        {lastRow ? (
+                          <div className="mt-4 space-y-2.5">
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-400">End Revenue</span>
+                              <span className="font-semibold text-white">{formatPKRCompact(lastRow.revenue)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-400">End Opex</span>
+                              <span className="font-semibold text-rose-200">{formatPKRCompact(lastRow.opex)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-400">End Profit</span>
+                              <span className={`font-semibold ${lastRow.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                                {formatPKRCompact(lastRow.profit)}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-400">Net Margin</span>
+                              <span className="font-semibold text-slate-200">{formatPct(lastRow.profitMarginPct)}</span>
+                            </div>
+                            <div className="mt-1 flex justify-between border-t border-white/10 pt-2 text-sm">
+                              <span className="text-slate-400">Total Profit</span>
+                              <span className={`font-bold ${lastRow.cumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                                {formatPKRCompact(lastRow.cumulativeProfit)}
+                              </span>
+                            </div>
+                            {/* Explanation */}
+                            <div className="mt-3 space-y-1.5 border-t border-white/8 pt-3">
+                              <div className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${headerColor} opacity-70`}>How this was calculated</div>
+                              {explanationLines.map((line, idx) => (
+                                <p key={idx} className="text-[11px] leading-relaxed text-slate-400">{line}</p>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-4 text-xs text-slate-500">No scenario data</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* ── Section 5: Margin Trajectory + Break-even Analysis ── */}
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <Panel title="Benchmark Visual">
-                    <div className="h-[320px]">
+                  {/* Left: Margin Trajectory */}
+                  <ChartCard
+                    title="Net Margin Trajectory"
+                    legend={[
+                      { label: "Historical Margin", color: "bg-emerald-400" },
+                      { label: "Forecast Margin", color: "bg-emerald-300" },
+                    ]}
+                  >
+                    <div className="h-[300px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={marginTrajectoryData} margin={{ top: 10, right: 16, left: 6, bottom: 6 }}>
+                          <CartesianGrid {...GRID} />
+                          <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                          <YAxis
+                            tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE}
+                            tickFormatter={(v) => `${Number(v).toFixed(0)}%`}
+                          />
+                          <Tooltip
+                            content={({ active, payload, label }) =>
+                              active && payload?.length ? (
+                                <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
+                                  <div className="mb-1 font-semibold">{label}</div>
+                                  {payload.map((p: any, idx: number) => (
+                                    <div key={idx} className="flex items-center justify-between gap-4">
+                                      <span className="text-slate-300">{p.name}</span>
+                                      <span className="font-semibold">
+                                        {typeof p.value === "number" ? `${p.value.toFixed(1)}%` : "—"}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null
+                            }
+                          />
+                          <ReferenceLine
+                            y={0} stroke="rgba(255,255,255,0.2)" strokeDasharray="4 4"
+                            label={{ value: "Break-even", fill: "rgba(255,255,255,0.35)", fontSize: 10, position: "insideTopLeft" }}
+                          />
+                          <Line
+                            type="monotone" dataKey="histMargin" name="Hist. Margin %"
+                            stroke="#34d399" strokeWidth={2.5} dot={false} connectNulls
+                          />
+                          <Line
+                            type="monotone" dataKey="forecastMargin" name="Forecast Margin %"
+                            stroke="#6ee7b7" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </ChartCard>
+
+                  {/* Right: Break-even Analysis */}
+                  <ChartCard
+                    title="Break-even Analysis"
+                    legend={[
+                      { label: "Revenue Levels", color: "bg-cyan-400" },
+                      { label: "Break-even Line", color: "bg-amber-400" },
+                    ]}
+                  >
+                    <div className="h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={benchmarkBars} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
                           <CartesianGrid {...GRID} />
                           <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip single />} />
-                          <Bar dataKey="value" radius={[10, 10, 0, 0]} fill={CHART_COLORS.positive} />
+                          <ReferenceLine
+                            y={fcBreakeven} stroke={CHART_COLORS.caution} strokeDasharray="4 4"
+                            label={{ value: "Break-even", fill: CHART_COLORS.caution, fontSize: 10, position: "insideTopRight" }}
+                          />
+                          <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                            {benchmarkBars.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.fill} />
+                            ))}
+                          </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
-                  </Panel>
+                  </ChartCard>
+                </div>
 
-                  <Panel title="Forecast: Revenue vs Opex">
-                    <div className="h-[320px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={forecastRows} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
-                          <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                          <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                          <Tooltip content={<MoneyTooltip />} />
-                          <Legend />
-                          <Line type="monotone" dataKey="revenue" name="Revenue" stroke={CHART_COLORS.profit} strokeWidth={3} dot={false} />
-                          <Line type="monotone" dataKey="opex" name="Opex" stroke={CHART_COLORS.negative} strokeWidth={3} dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
+                {/* ── Section 6: Cash Runway (conditional) ── */}
+                {runwayChartData.length > 0 && (
+                  <div className="mt-4">
+                    <ChartCard
+                      title={`Cash Runway — ${fcRunwayMonths?.toFixed(1) ?? "—"} months at current avg opex burn`}
+                      legend={[
+                        { label: "Cash Remaining", color: "bg-cyan-400" },
+                        { label: "3-Month Danger Zone", color: "bg-rose-400" },
+                      ]}
+                    >
+                      <div className="h-[280px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={runwayChartData} margin={{ top: 10, right: 16, left: 6, bottom: 6 }}>
+                            <defs>
+                              <linearGradient id="fcCashGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.5} />
+                                <stop offset="95%" stopColor="#22d3ee" stopOpacity={0.04} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid {...GRID} />
+                            <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                            <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
+                            <Tooltip content={<MoneyTooltip />} />
+                            <ReferenceLine
+                              y={fcAvgOpex * 3} stroke={CHART_COLORS.negative} strokeDasharray="4 4"
+                              label={{ value: "3-Mo Danger", fill: CHART_COLORS.negative, fontSize: 10, position: "insideTopRight" }}
+                            />
+                            <Area
+                              type="monotone" dataKey="cash" name="Cash Remaining"
+                              stroke="#22d3ee" strokeWidth={2.5} fill="url(#fcCashGrad)" dot={false}
+                            />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </ChartCard>
+                  </div>
+                )}
+
+                {/* ── Section 7: Monthly Forecast Table ── */}
+                <div className="mt-4">
+                  <Panel
+                    title={
+                      hasAdjustments
+                        ? `Monthly Forecast — ${forecastHorizon}-Month Adjusted Projection`
+                        : `Monthly Forecast — ${forecastHorizon}-Month Base Projection`
+                    }
+                  >
+                    {hasAdjustments && (
+                      <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                        {revGrowthRate !== null && (
+                          <span className={`rounded-full px-2.5 py-0.5 font-semibold border ${revGrowthRate > 0 ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300" : revGrowthRate < 0 ? "border-rose-400/30 bg-rose-500/10 text-rose-300" : "border-cyan-400/30 bg-cyan-500/10 text-cyan-300"}`}>
+                            Rev {revGrowthRate >= 0 ? "+" : ""}{(revGrowthRate * 100).toFixed(0)}%/mo
+                          </span>
+                        )}
+                        {expGrowthRate !== null && (
+                          <span className={`rounded-full px-2.5 py-0.5 font-semibold border ${expGrowthRate < 0 ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300" : expGrowthRate > 0 ? "border-rose-400/30 bg-rose-500/10 text-rose-300" : "border-cyan-400/30 bg-cyan-500/10 text-cyan-300"}`}>
+                            Opex {expGrowthRate >= 0 ? "+" : ""}{(expGrowthRate * 100).toFixed(0)}%/mo
+                          </span>
+                        )}
+                        <span className="text-slate-500">▲▼ = month-over-month change</span>
+                      </div>
+                    )}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10">
+                            <th className="py-2 pr-4 text-left text-[11px] uppercase tracking-[0.12em] text-slate-400">Month</th>
+                            <th className="py-2 pr-4 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Revenue</th>
+                            <th className="py-2 pr-4 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Opex</th>
+                            <th className="py-2 pr-4 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Profit</th>
+                            <th className="py-2 pr-4 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Margin</th>
+                            <th className="py-2 text-right text-[11px] uppercase tracking-[0.12em] text-slate-400">Cumulative</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adjustedForecastRows.map((row, i) => {
+                            const isProfit = row.profit >= 0;
+                            const marginPct = row.profitMarginPct ?? 0;
+                            const cumProfit = row.cumulativeProfit ?? 0;
+                            // MoM delta within the adjusted projection
+                            const prevRow = i === 0 ? null : adjustedForecastRows[i - 1];
+                            const prevRevenue = prevRow?.revenue ?? (data?.series?.[data.series.length - 1]?.revenue ?? 0);
+                            const prevOpex = prevRow?.opex ?? (data?.series?.[data.series.length - 1]?.expenses ?? 0);
+                            const prevProfit = prevRow?.profit ?? (data?.series?.[data.series.length - 1]?.profit ?? 0);
+                            const revDelta = hasAdjustments ? row.revenue - prevRevenue : 0;
+                            const opexDelta = hasAdjustments ? row.opex - prevOpex : 0;
+                            const profitDelta = hasAdjustments ? row.profit - prevProfit : 0;
+                            // Only show profit badge when it differs from revenue delta
+                            // (when opex is also moving). If opex is flat, profit delta = revenue
+                            // delta — showing both would be redundant and confusing.
+                            const showProfitDelta = profitDelta !== 0 && Math.abs(profitDelta - revDelta) > 1;
+                            return (
+                              <tr
+                                key={row.month}
+                                className={`border-b border-white/5 hover:bg-white/5 ${i % 2 === 0 ? "" : "bg-white/[0.02]"}`}
+                              >
+                                <td className="py-2.5 pr-4 font-medium text-slate-200">{row.month}</td>
+                                <td className="py-2.5 pr-4 text-right">
+                                  <span className="text-cyan-200">{formatPKRCompact(row.revenue)}</span>
+                                  {revDelta !== 0 && (
+                                    <span className={`ml-1.5 text-[10px] ${revDelta > 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                      {revDelta > 0 ? "▲" : "▼"}{formatPKRCompact(Math.abs(revDelta))}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-2.5 pr-4 text-right text-rose-200">{formatPKRCompact(row.opex)}</td>
+                                <td className={`py-2.5 pr-4 text-right font-semibold ${isProfit ? "text-emerald-300" : "text-rose-300"}`}>
+                                  {formatPKRCompact(row.profit)}
+                                  {showProfitDelta && (
+                                    <span className={`ml-1.5 text-[10px] font-normal ${profitDelta > 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                                      {profitDelta > 0 ? "▲" : "▼"}{formatPKRCompact(Math.abs(profitDelta))}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className={`py-2.5 pr-4 text-right ${marginPct >= 0.1 ? "text-emerald-300" : marginPct >= 0 ? "text-amber-300" : "text-rose-300"}`}>
+                                  {formatPct(marginPct)}
+                                </td>
+                                <td className={`py-2.5 text-right font-semibold ${cumProfit >= 0 ? "text-slate-200" : "text-rose-300"}`}>
+                                  {formatPKRCompact(cumProfit)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-white/15 bg-white/5">
+                            <td className="py-2.5 pr-4 font-semibold text-slate-200">Total</td>
+                            <td className="py-2.5 pr-4 text-right font-semibold text-cyan-200">
+                              {formatPKRCompact(adjustedForecastRows.reduce((s, r) => s + r.revenue, 0))}
+                            </td>
+                            <td className="py-2.5 pr-4 text-right font-semibold text-rose-200">
+                              {formatPKRCompact(adjustedForecastRows.reduce((s, r) => s + r.opex, 0))}
+                            </td>
+                            <td className={`py-2.5 pr-4 text-right font-bold ${fcEffCumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              {formatPKRCompact(fcEffCumulativeProfit)}
+                            </td>
+                            <td className="py-2.5 pr-4 text-right text-slate-400">—</td>
+                            <td className={`py-2.5 text-right font-bold ${fcEffCumulativeProfit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                              {formatPKRCompact(fcEffCumulativeProfit)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
                     </div>
                   </Panel>
                 </div>
