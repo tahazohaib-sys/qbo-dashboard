@@ -158,49 +158,51 @@ export async function GET(req: Request) {
     const ltPrior = ltDetail.reduce((s, x) => s + x.prior, 0);
     const longTermAssetsMovement = ltEnd - ltPrior;
 
-    /* -------- Investments (period movement) -------- */
-    // Your QBO labels (including misspellings)
-    const invLabelMap = {
-      buraq: ["Buraq AI Investment"],
-      convoi: ["Convoi AI Investment"],
-      stratger: ["Stratger AI Investment", "Strateger AI Investment", "Strateg AI Investment"],
-      stratgerContribution: ["Strategr AI Contribution Received", "Stratger AI Contribution Received", "Strateger AI Contribution Received"],
-      buracContribution: ["Burac AI Contribution Received", "Burac AI Contribution Recieved", "Buraq AI Contribution Received", "Buraq AI Contribution Recieved"],
-    };
+    /* -------- Investments (period movement — dynamic discovery) -------- */
 
-    function bal(rows: FlatRow[], keys: keyof typeof invLabelMap) {
-      const r = findRowByLabel(rows, invLabelMap[keys]);
-      return r ? getVal(r) : 0;
+    // All Data rows in the Shareholders' equity section of the end balance sheet
+    const equityEndRows = endRows.filter(
+      (r) => r.type === "Data" && r.path.toLowerCase().includes("equity")
+    );
+
+    function findPriorByLabel(label: string): FlatRow | undefined {
+      const n = norm(label);
+      return priorRows.find((r) => norm(r.label) === n);
     }
 
-    const buraqEnd = bal(endRows, "buraq");
-    const buraqPrior = bal(priorRows, "buraq");
-    const convoiEnd = bal(endRows, "convoi");
-    const convoiPrior = bal(priorRows, "convoi");
-    const stratEnd = bal(endRows, "stratger");
-    const stratPrior = bal(priorRows, "stratger");
-    const stratContribEnd = bal(endRows, "stratgerContribution");
-    const stratContribPrior = bal(priorRows, "stratgerContribution");
-    const buracContribEnd = bal(endRows, "buracContribution");
-    const buracContribPrior = bal(priorRows, "buracContribution");
+    type InvItem = { label: string; amount: number; type: "investment" | "contribution" };
 
-    // movement = end - prior (balances are negative in equity)
-    const buraqMove = buraqEnd - buraqPrior;
-    const convoiMove = convoiEnd - convoiPrior;
-    const stratMove = stratEnd - stratPrior;
-    const stratContribMove = stratContribEnd - stratContribPrior;
-    const buracContribMove = buracContribEnd - buracContribPrior;
+    // Contribution rows first (more specific keyword) so investment filter can exclude them
+    const contributionItems: InvItem[] = equityEndRows
+      .filter((r) => r.label.toLowerCase().includes("contribution received"))
+      .map((r) => {
+        const endVal = getVal(r);
+        const priorRow = findPriorByLabel(r.label);
+        const priorValue = priorRow ? toNum(priorRow.cols?.[1]?.value) : 0;
+        return { label: r.label, amount: Math.max(0, endVal - priorValue), type: "contribution" };
+      })
+      .filter((x) => x.amount !== 0);
 
-    // Spend shown as positive movement magnitude
-    const buraq = Math.abs(buraqMove);
-    const convoi = Math.abs(convoiMove);
-    const stratger = Math.abs(stratMove);
-    const stratgerContribution = Math.max(0, stratContribMove); // contribution increases equity positive
-    const buracContribution = Math.max(0, buracContribMove); // contribution increases equity positive
-    const contributionMove = stratContribMove + buracContribMove;
-    const contribution = Math.max(0, contributionMove);
+    const contributionLabels = new Set(contributionItems.map((x) => x.label));
 
-    const totalInvestments = buraq + convoi + stratger;
+    const investmentItems: InvItem[] = equityEndRows
+      .filter(
+        (r) =>
+          r.label.toLowerCase().includes("investment") &&
+          !contributionLabels.has(r.label)
+      )
+      .map((r) => {
+        const endVal = getVal(r);
+        const priorRow = findPriorByLabel(r.label);
+        const priorValue = priorRow ? toNum(priorRow.cols?.[1]?.value) : 0;
+        return { label: r.label, amount: Math.abs(endVal - priorValue), type: "investment" };
+      })
+      .filter((x) => x.amount !== 0);
+
+    const allInvItems: InvItem[] = [...investmentItems, ...contributionItems];
+
+    const totalInvestments = investmentItems.reduce((s, x) => s + x.amount, 0);
+    const contribution = contributionItems.reduce((s, x) => s + x.amount, 0);
     const netInvestments = totalInvestments - contribution;
 
     /* -------- Net Profit (P&L) -------- */
@@ -250,50 +252,10 @@ export async function GET(req: Request) {
       },
 
       investments: {
-        buraq,
-        convoi,
-        stratger,
-        stratgerContribution,
-        buracContribution,
+        items: allInvItems,
         contribution,
         totalInvestments,
         netInvestments,
-        period: {
-          buraq,
-          convoi,
-          stratger,
-          stratgerContribution,
-          buracContribution,
-          contribution,
-          totalInvestments,
-          netInvestments,
-        },
-        debugBalances: {
-          end: {
-            buraq: buraqEnd,
-            convoi: convoiEnd,
-            strateger: stratEnd,
-            stratgerContribution: stratContribEnd,
-            buracContribution: buracContribEnd,
-            contribution: stratContribEnd + buracContribEnd,
-          },
-          prior: {
-            buraq: buraqPrior,
-            convoi: convoiPrior,
-            strateger: stratPrior,
-            stratgerContribution: stratContribPrior,
-            buracContribution: buracContribPrior,
-            contribution: stratContribPrior + buracContribPrior,
-          },
-          movement: {
-            buraqMove,
-            convoiMove,
-            strategerMove: stratMove,
-            stratgerContributionMove: stratContribMove,
-            buracContributionMove: buracContribMove,
-            contribMove: contributionMove,
-          },
-        },
       },
 
       retainedEarning,

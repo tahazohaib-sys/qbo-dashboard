@@ -111,21 +111,10 @@ type RetainedResp = {
   };
 
   investments?: {
-    buraq: number;
-    convoi: number;
-    stratger: number;
+    items?: Array<{ label: string; amount: number; type: "investment" | "contribution" }>;
     contribution: number;
     totalInvestments: number;
     netInvestments: number;
-
-    period?: {
-      buraq: number;
-      convoi: number;
-      stratger: number;
-      contribution: number;
-      totalInvestments: number;
-      netInvestments: number;
-    };
   };
 
   retainedEarning?: number;
@@ -1089,18 +1078,10 @@ export default function DashboardPage() {
   }, [retained]);
 
   const invDetail = useMemo(() => {
-    if (reInvestments) {
-      return [
-        { label: "Buraq AI Investment", amount: reInvestments.buraq ?? 0 },
-        { label: "Convoi AI Investment", amount: reInvestments.convoi ?? 0 },
-        { label: "Stratger AI Investment", amount: reInvestments.stratger ?? 0 },
-        { label: "Strategr AI Contribution Received", amount: reInvestments.contribution ?? 0 },
-      ];
-    }
-
+    if (reInvestments?.items?.length) return reInvestments.items;
     if (retained?.investmentsByEntity?.length) return retained.investmentsByEntity;
     return [];
-  }, [reInvestments, retained?.investmentsByEntity]);
+  }, [reInvestments?.items, retained?.investmentsByEntity]);
 
   /* ---------------- forecast derived values (UI-safe) ---------------- */
 
