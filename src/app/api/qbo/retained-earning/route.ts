@@ -167,19 +167,34 @@ export async function GET(req: Request) {
 
     function findPriorByLabel(label: string): FlatRow | undefined {
       const n = norm(label);
-      return priorRows.find((r) => norm(r.label) === n);
+      // Exact normalised match
+      const exact = priorRows.find((r) => norm(r.label) === n);
+      if (exact) return exact;
+      // Fallback: same equity section + same keyword category + common 8-char prefix
+      // Handles minor spelling variants (e.g. "Stratger" vs "Strateger") if label was corrected mid-period
+      const prefix = n.slice(0, 8);
+      return priorRows.find(
+        (r) =>
+          r.type === "Data" &&
+          r.path.toLowerCase().includes("equity") &&
+          norm(r.label).startsWith(prefix)
+      );
     }
 
     type InvItem = { label: string; amount: number; type: "investment" | "contribution" };
 
     // Contribution rows first (more specific keyword) so investment filter can exclude them
+    // Match both "received" and the common "recieved" typo found in QBO data
     const contributionItems: InvItem[] = equityEndRows
-      .filter((r) => r.label.toLowerCase().includes("contribution received"))
+      .filter((r) => {
+        const l = r.label.toLowerCase();
+        return l.includes("contribution received") || l.includes("contribution recieved");
+      })
       .map((r) => {
         const endVal = getVal(r);
         const priorRow = findPriorByLabel(r.label);
         const priorValue = priorRow ? toNum(priorRow.cols?.[1]?.value) : 0;
-        return { label: r.label, amount: Math.max(0, endVal - priorValue), type: "contribution" };
+        return { label: r.label, amount: Math.max(0, endVal - priorValue), type: "contribution" as const };
       })
       .filter((x) => x.amount !== 0);
 
@@ -195,7 +210,7 @@ export async function GET(req: Request) {
         const endVal = getVal(r);
         const priorRow = findPriorByLabel(r.label);
         const priorValue = priorRow ? toNum(priorRow.cols?.[1]?.value) : 0;
-        return { label: r.label, amount: Math.abs(endVal - priorValue), type: "investment" };
+        return { label: r.label, amount: Math.abs(endVal - priorValue), type: "investment" as const };
       })
       .filter((x) => x.amount !== 0);
 
