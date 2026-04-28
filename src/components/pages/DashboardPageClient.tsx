@@ -742,6 +742,7 @@ export default function DashboardPage() {
       for (const r of expenseRows) map.set(r.label, (map.get(r.label) ?? 0) + (r.amount ?? 0));
       const sorted = Array.from(map.entries())
         .map(([name, value]) => ({ name, value }))
+        .filter(({ value }) => value > 0)
         .sort((a, b) => b.value - a.value);
       const nextBreakdown = sorted;
 
