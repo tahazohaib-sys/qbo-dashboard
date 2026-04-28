@@ -743,10 +743,7 @@ export default function DashboardPage() {
       const sorted = Array.from(map.entries())
         .map(([name, value]) => ({ name, value }))
         .sort((a, b) => b.value - a.value);
-      const top = sorted.slice(0, 8);
-      const rest = sorted.slice(8);
-      const restSum = rest.reduce((s, x) => s + x.value, 0);
-      const nextBreakdown = restSum > 0 ? [...top, { name: "Other", value: restSum }] : top;
+      const nextBreakdown = sorted;
 
       moduleCacheRef.current.set(key, { dashboard: dashJson, pnlBreakdown: nextBreakdown });
       if (!shouldApplyRequest(requestId)) return;
