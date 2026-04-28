@@ -195,8 +195,7 @@ export async function GET(req: Request) {
         const priorRow = findPriorByLabel(r.label);
         const priorValue = priorRow ? toNum(priorRow.cols?.[1]?.value) : 0;
         return { label: r.label, amount: Math.max(0, endVal - priorValue), type: "contribution" as const };
-      })
-      .filter((x) => x.amount !== 0);
+      });
 
     const contributionLabels = new Set(contributionItems.map((x) => x.label));
 
@@ -211,8 +210,7 @@ export async function GET(req: Request) {
         const priorRow = findPriorByLabel(r.label);
         const priorValue = priorRow ? toNum(priorRow.cols?.[1]?.value) : 0;
         return { label: r.label, amount: Math.abs(endVal - priorValue), type: "investment" as const };
-      })
-      .filter((x) => x.amount !== 0);
+      });
 
     const allInvItems: InvItem[] = [...investmentItems, ...contributionItems];
 
