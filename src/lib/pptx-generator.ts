@@ -147,25 +147,32 @@ function kpiCard(
   slide: PptxGenJS.Slide,
   x: number, y: number, w: number, h: number,
   label: string, value: string, sub: string, col: string,
+  icon?: string,
 ) {
-  // Card body
+  // Background tint: red for negative, green for strongly positive, neutral otherwise
+  const bgColor = col === T.red ? "1C0D10" : col === T.green ? "0A1C12" : T.bgCard;
   slide.addShape("roundRect", { x, y, w, h,
-    fill: { color: T.bgCard }, line: { color: col, width: 1.0 }, rectRadius: 0.06 });
+    fill: { color: bgColor }, line: { color: col, width: 1.2 }, rectRadius: 0.06 });
 
   // Icon circle
   const iS = 0.58, iX = x + 0.14, iY = y + (h - iS) / 2;
   slide.addShape("ellipse", { x: iX, y: iY, w: iS, h: iS,
     fill: { color: T.bg }, line: { color: col, width: 1.4 } });
 
-  // Mini bar-chart icon inside circle
-  const bW = 0.07, bMaxH = 0.22, bBase = iY + iS * 0.72;
-  ([0.55, 1.0, 0.75] as const).forEach((frac, i) => {
-    const bH = bMaxH * frac;
-    slide.addShape("rect", {
-      x: iX + 0.10 + i * (bW + 0.04), y: bBase - bH, w: bW, h: bH,
-      fill: { color: col }, line: { color: col, width: 0 },
+  if (icon) {
+    slide.addText(icon, { x: iX, y: iY, w: iS, h: iS,
+      fontSize: 17, bold: true, color: col, align: "center", valign: "middle", fontFace: "Calibri" });
+  } else {
+    // Mini bar-chart icon
+    const bW = 0.07, bMaxH = 0.22, bBase = iY + iS * 0.72;
+    ([0.55, 1.0, 0.75] as const).forEach((frac, i) => {
+      const bH = bMaxH * frac;
+      slide.addShape("rect", {
+        x: iX + 0.10 + i * (bW + 0.04), y: bBase - bH, w: bW, h: bH,
+        fill: { color: col }, line: { color: col, width: 0 },
+      });
     });
-  });
+  }
 
   // Label
   slide.addText(label, { x: x + 0.86, y: y + 0.10, w: w - 0.96, h: 0.28,
@@ -226,12 +233,6 @@ function starBanner(
 function addCoverSlide(pres: PptxGenJS, p: PptxPayload) {
   const slide = pres.addSlide();
   slide.background = { color: T.bg };
-
-  // Decorative diagonal shapes (top right)
-  slide.addShape("rect", { x: 7.8, y: -0.3, w: 3.2, h: 4.2,
-    fill: { color: "0D2240" }, line: { color: T.teal, width: 0.8 }, rotate: 20 });
-  slide.addShape("rect", { x: 8.6, y: -0.5, w: 2.6, h: 4.0,
-    fill: { color: "091828" }, line: { color: T.gold, width: 0.6 }, rotate: 20 });
 
   // Company abbreviation circle (top left)
   const abbr = p.companyName.split(/\s+/).map((w) => w[0] ?? "").join("").slice(0, 3).toUpperCase();
@@ -321,12 +322,12 @@ function addExecutiveSummarySlide(pres: PptxGenJS, p: PptxPayload) {
   // 4 KPI cards
   const kw = CW / 4 - 0.12;
   const cards = [
-    { label: "Total Revenue",  value: fmt(p.kpis.revenue, p.currency),  sub: `${p.series.length} months`,  col: T.teal },
-    { label: "Total Expenses", value: fmt(p.kpis.expenses, p.currency), sub: "Operating costs",              col: T.red },
-    { label: "Net Profit",     value: fmt(p.kpis.profit, p.currency),   sub: p.kpis.profit >= 0 ? "Profitable" : "Loss", col: p.kpis.profit >= 0 ? T.teal : T.red },
-    { label: "Profit Margin",  value: `${Math.abs(margin).toFixed(1)}%`,sub: margin >= 0 ? "Positive" : "Negative",  col: margin >= 10 ? T.green : margin >= 0 ? T.amber : T.red },
+    { label: "Total Revenue",  value: fmt(p.kpis.revenue, p.currency),  sub: `${p.series.length} months`,  col: T.teal,  icon: "$" },
+    { label: "Total Expenses", value: fmt(p.kpis.expenses, p.currency), sub: "Operating costs",              col: T.red,   icon: "▼" },
+    { label: "Net Profit",     value: fmt(p.kpis.profit, p.currency),   sub: p.kpis.profit >= 0 ? "Profitable" : "Loss", col: p.kpis.profit >= 0 ? T.teal : T.red, icon: p.kpis.profit >= 0 ? "▲" : "▼" },
+    { label: "Profit Margin",  value: `${Math.abs(margin).toFixed(1)}%`,sub: margin >= 0 ? "Positive" : "Negative",  col: margin >= 10 ? T.green : margin >= 0 ? T.amber : T.red, icon: "%" },
   ];
-  cards.forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col));
+  cards.forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col, c.icon));
 
   // Left panel: Monthly Performance Overview
   const lw = 7.42, lx = ML;
@@ -398,11 +399,11 @@ function addPnlChartSlide(pres: PptxGenJS, p: PptxPayload) {
   // 4 KPI cards
   const kw = CW / 4 - 0.12;
   [
-    { label: "Period Revenue",  value: fmt(totalRev, p.currency),  sub: "Total income",           col: T.teal },
-    { label: "Period Expenses", value: fmt(totalExp, p.currency),  sub: "Total costs",             col: T.red },
-    { label: "Period Profit",   value: fmt(totalProf, p.currency), sub: totalProf >= 0 ? "Net positive" : "Net loss", col: totalProf >= 0 ? T.teal : T.red },
-    { label: "Best Month",      value: best ? mo(best.month) : "—", sub: best ? fmt(best.profit, p.currency) : "", col: T.gold },
-  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col));
+    { label: "Period Revenue",  value: fmt(totalRev, p.currency),  sub: "Total income",           col: T.teal, icon: "$" },
+    { label: "Period Expenses", value: fmt(totalExp, p.currency),  sub: "Total costs",             col: T.red,  icon: "▼" },
+    { label: "Period Profit",   value: fmt(totalProf, p.currency), sub: totalProf >= 0 ? "Net positive" : "Net loss", col: totalProf >= 0 ? T.teal : T.red, icon: totalProf >= 0 ? "▲" : "▼" },
+    { label: "Best Month",      value: best ? mo(best.month) : "—", sub: best ? fmt(best.profit, p.currency) : "", col: T.gold, icon: "★" },
+  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col, c.icon));
 
   // Left: bar chart (Revenue vs Expenses)
   const lw = 7.42;
@@ -436,8 +437,8 @@ function addPnlChartSlide(pres: PptxGenJS, p: PptxPayload) {
       lineSize: 2.5,
       showLegend: false,
       showValue: true,
-      valAxisLabelFormatCode: '#,##0.0,"K"',
-      dataLabelFormatCode: '#,##0.0,"K"',
+      valAxisLabelFormatCode: '#,##0,"K"',
+      dataLabelFormatCode: '#,##0,"K"',
     } as any
   );
 
@@ -467,11 +468,11 @@ function addExpenseBreakdownSlide(pres: PptxGenJS, p: PptxPayload) {
   // 4 KPI cards
   const kw = CW / 4 - 0.12;
   [
-    { label: "Total Expenses",    value: fmt(total, p.currency),                   sub: "All categories",         col: T.red },
-    { label: "Largest Category",  value: top ? top.name.slice(0, 20) : "—",        sub: top ? fmt(top.value, p.currency) : "", col: T.teal },
-    { label: "Top Category Mix",  value: top ? `${topPct.toFixed(0)}%` : "—",      sub: "approx.",                col: T.gold },
-    { label: "Other Categories",  value: other ? fmt(other.value, p.currency) : fmt(0, p.currency), sub: "Remaining", col: T.viol },
-  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col));
+    { label: "Total Expenses",    value: fmt(total, p.currency),                   sub: "All categories",         col: T.red,  icon: "≡" },
+    { label: "Largest Category",  value: top ? top.name.slice(0, 14) : "—",        sub: top ? fmt(top.value, p.currency) : "", col: T.teal, icon: "1" },
+    { label: "Top Category Mix",  value: top ? `${topPct.toFixed(0)}%` : "—",      sub: "approx.",                col: T.gold, icon: "%" },
+    { label: "Other Categories",  value: other ? fmt(other.value, p.currency) : fmt(0, p.currency), sub: "Remaining", col: T.viol, icon: "+" },
+  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col, c.icon));
 
   // Left: doughnut chart
   const lw = 5.90;
@@ -485,9 +486,7 @@ function addExpenseBreakdownSlide(pres: PptxGenJS, p: PptxPayload) {
       chartColors: T.cc,
       holeSize: 52,
       showLegend: true, legendPos: "r", legendFontSize: 7.5, legendColor: "A8C0D8",
-      showValue: true,
-      dataLabelFormatCode: '0.0%',
-      dataLabelFontSize: 7.5,
+      showValue: false,
     } as any
   );
 
@@ -507,7 +506,11 @@ function addExpenseBreakdownSlide(pres: PptxGenJS, p: PptxPayload) {
   items.slice(0, 8).forEach((item, i) => {
     const share = total > 0 ? (item.value / total) * 100 : 0;
     const rf = { color: i % 2 === 0 ? T.bgPanel : "0B2040" };
-    const name = item.name.length > 20 ? item.name.slice(0, 19) + "…" : item.name;
+    // Abbreviate known long dept names so columns don't overflow
+    const name = item.name
+      .replace("Department", "Dept").replace("department", "dept")
+      .replace("Salaries", "Sal.").replace("Salary", "Sal.")
+      .slice(0, 28);
     trows.push([
       { text: String(i + 1),              options: { ...bf, fill: rf, align: "center", color: T.teal } },
       { text: name,                        options: { ...bf, fill: rf, align: "left" } },
@@ -549,14 +552,16 @@ function addCashSlide(pres: PptxGenJS, p: PptxPayload) {
 
   // 4 KPI cards
   const kw = CW / 4 - 0.12;
+  const curIcons: Record<string, string> = { PKR: "₨", USD: "$", GBP: "£", EUR: "€" };
   const kpiDefs = currencies.slice(0, 3).map(([cur, tot]) => ({
     label: `Total ${cur} Balance`, value: fmt(tot, cur),
     sub: `${p.cashAccounts.filter((a) => a.currency === cur).length} account(s)`,
     col: tot >= 0 ? T.teal : T.red,
+    icon: curIcons[cur] ?? "$",
   }));
-  while (kpiDefs.length < 3) kpiDefs.push({ label: "Balance", value: fmt(0, p.currency), sub: "No accounts", col: T.textM });
-  kpiDefs.push({ label: "Liquidity Status", value: isLow ? "Critical" : "Adequate", sub: "Overall health", col: isLow ? T.red : T.green });
-  kpiDefs.forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col));
+  while (kpiDefs.length < 3) kpiDefs.push({ label: "Balance", value: fmt(0, p.currency), sub: "No accounts", col: T.textM, icon: "$" });
+  kpiDefs.push({ label: "Liquidity Status", value: isLow ? "Critical" : "Adequate", sub: "Overall health", col: isLow ? T.red : T.green, icon: isLow ? "!" : "◎" });
+  kpiDefs.forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col, c.icon));
 
   // Left panel: account table
   const lw = 7.42;
@@ -595,28 +600,27 @@ function addCashSlide(pres: PptxGenJS, p: PptxPayload) {
   // Right panel: currency composition doughnut
   const rw = CW - lw - 0.14, rx = ML + lw + 0.14;
   panel(slide, rx, CHT_Y, rw, CHT_H, `Currency Composition (By Balance)`);
-  if (currencies.length > 0) {
-    slide.addChart(pres.ChartType.doughnut,
-      [{ name: "Balance", labels: currencies.map(([c]) => c), values: currencies.map(([, v]) => Math.abs(v)) }],
-      {
-        ...CHART_DEFAULTS,
-        x: rx + 0.12, y: CHT_Y + 0.44, w: rw - 0.22, h: CHT_H * 0.55,
-        chartColors: T.cc,
-        holeSize: 55,
-        showLegend: false,
-        showValue: false,
-      } as any
-    );
-  }
-  // Currency breakdown text
-  currencies.slice(0, 3).forEach(([cur, tot], i) => {
-    const share = grandTotal > 0 ? (Math.abs(tot) / Math.abs(grandTotal)) * 100 : 0;
-    const ty = CHT_Y + 0.44 + CHT_H * 0.58 + i * 0.48;
-    slide.addShape("ellipse", { x: rx + 0.18, y: ty + 0.08, w: 0.22, h: 0.22,
+  // Horizontal proportional balance bar (works even with single currency)
+  const barY = CHT_Y + 0.50, barH = 0.38, barW = rw - 0.28;
+  const absTotal = currencies.reduce((s, [, v]) => s + Math.abs(v), 0) || 1;
+  let barOffset = 0;
+  currencies.forEach(([, v], i) => {
+    const segW = (Math.abs(v) / absTotal) * barW;
+    slide.addShape("rect", { x: rx + 0.14 + barOffset, y: barY, w: segW, h: barH,
       fill: { color: T.cc[i] ?? T.teal }, line: { color: T.cc[i] ?? T.teal, width: 0 } });
-    slide.addText(cur, { x: rx + 0.46, y: ty, w: 1.0, h: 0.38, fontSize: 8.5, color: T.textD, fontFace: "Calibri" });
-    slide.addText(fmt(tot, cur), { x: rx + 1.5, y: ty, w: rw - 1.7, h: 0.38, fontSize: 8.5, color: T.teal, fontFace: "Calibri", align: "right" });
-    slide.addText(`${share.toFixed(1)}%`, { x: rx + 0.46, y: ty + 0.20, w: rw - 0.60, h: 0.24, fontSize: 7.5, color: T.textM, fontFace: "Calibri" });
+    barOffset += segW;
+  });
+  // Currency breakdown rows
+  currencies.slice(0, 5).forEach(([cur, tot], i) => {
+    const share = grandTotal > 0 ? (Math.abs(tot) / Math.abs(grandTotal)) * 100 : 0;
+    const ry = CHT_Y + 1.06 + i * 0.50;
+    slide.addShape("roundRect", { x: rx + 0.14, y: ry, w: rw - 0.22, h: 0.44,
+      fill: { color: i % 2 === 0 ? T.bgPanel : "0B2040" }, line: { color: T.bord, width: 0.5 }, rectRadius: 0.03 });
+    slide.addShape("ellipse", { x: rx + 0.20, y: ry + 0.11, w: 0.22, h: 0.22,
+      fill: { color: T.cc[i] ?? T.teal }, line: { color: T.cc[i] ?? T.teal, width: 0 } });
+    slide.addText(cur, { x: rx + 0.50, y: ry + 0.08, w: 0.80, h: 0.28, fontSize: 9, bold: true, color: T.textD, fontFace: "Calibri" });
+    slide.addText(fmt(tot, cur), { x: rx + 1.34, y: ry + 0.08, w: rw - 1.60, h: 0.28, fontSize: 9, color: T.teal, fontFace: "Calibri", align: "right" });
+    slide.addText(`${share.toFixed(1)}%`, { x: rx + 0.50, y: ry + 0.28, w: 1.2, h: 0.18, fontSize: 7.5, color: T.textM, fontFace: "Calibri" });
   });
 
   starBanner(slide, [
@@ -648,11 +652,11 @@ function addArApSlide(pres: PptxGenJS, p: PptxPayload) {
   // 4 KPI cards
   const kw = CW / 4 - 0.12;
   [
-    { label: "Total Payables",     value: fmt(totalPayables, p.currency),     sub: "Owed by you",         col: T.red },
-    { label: "Total Receivables",  value: fmt(totalReceivables, p.currency),  sub: "Owed to you",         col: totalReceivables >= 0 ? T.teal : T.amber },
-    { label: "Liquidity Ratio",    value: liqRatio.toFixed(2),                sub: "AR / AP",             col: liqRatio >= 1 ? T.green : T.amber },
-    { label: "Overdue AP (61+ d)", value: fmt(overdue91, p.currency),         sub: `${overduePct.toFixed(1)}% of payables`, col: overdue91 > 0 ? T.red : T.green },
-  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col));
+    { label: "Total Payables",     value: fmt(totalPayables, p.currency),     sub: "Owed by you",         col: T.red,   icon: "▼" },
+    { label: "Total Receivables",  value: fmt(totalReceivables, p.currency),  sub: totalReceivables < 0 ? "Credit / advance" : "Owed to you", col: totalReceivables >= 0 ? T.teal : T.amber, icon: totalReceivables >= 0 ? "▲" : "≈" },
+    { label: "Liquidity Ratio",    value: liqRatio.toFixed(2),                sub: "AR / AP",             col: liqRatio >= 1 ? T.green : T.amber, icon: "≈" },
+    { label: "Overdue AP (61+ d)", value: fmt(overdue91, p.currency),         sub: `${overduePct.toFixed(1)}% of payables`, col: overdue91 > 0 ? T.red : T.green, icon: overdue91 > 0 ? "!" : "◎" },
+  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col, c.icon));
 
   // Left panel: AP Aging bar chart (proportional buckets)
   const lw = 7.42;
@@ -661,21 +665,39 @@ function addArApSlide(pres: PptxGenJS, p: PptxPayload) {
     (acc, v) => { acc[0] += v.current; acc[1] += v["1_30"]; acc[2] += v["31_60"]; acc[3] += v["61_90"]; acc[4] += v["91_plus"]; return acc; },
     [0, 0, 0, 0, 0]
   );
-  const bucketLabels = ["Current\n(0–30 days)", "1–30 days", "31–60 days", "61–90 days", "91+ days"];
-  const bucketCols = [T.teal, T.tealD, T.amber, T.red, "8B0000"];
-  slide.addChart(pres.ChartType.bar,
-    [{ name: "AP Aging", labels: bucketLabels, values: bucketTotals }],
-    {
-      ...CHART_DEFAULTS,
-      x: ML + 0.14, y: CHT_Y + 0.44, w: lw - 0.22, h: CHT_H - 0.52,
-      barDir: "col", barGrouping: "clustered",
-      chartColors: bucketCols,
-      showLegend: false,
-      showValue: true,
-      valAxisLabelFormatCode: '#,##0.0,,"M"',
-      dataLabelFormatCode: '#,##0.0,,"M"',
-    } as any
-  );
+  const allBucketsZero = bucketTotals.every((v) => v === 0);
+  if (allBucketsZero) {
+    // QBO hasn't bucket-categorized the payables — show a callout instead of an empty chart
+    slide.addShape("roundRect", { x: ML + 0.14, y: CHT_Y + 0.50, w: lw - 0.22, h: CHT_H - 0.60,
+      fill: { color: "1C0D10" }, line: { color: T.amber, width: 1.0 }, rectRadius: 0.06 });
+    slide.addText("!", { x: ML + 0.50, y: CHT_Y + 0.90, w: 0.60, h: 0.60,
+      fontSize: 28, bold: true, color: T.amber, align: "center", valign: "middle" });
+    slide.addText("Aging buckets not categorized", { x: ML + 1.20, y: CHT_Y + 0.80, w: lw - 1.50, h: 0.40,
+      fontSize: 11, bold: true, color: T.amber, fontFace: "Calibri" });
+    slide.addText(
+      `Total payables of ${fmt(totalPayables, p.currency)} exist in QBO but are classified as "Unclassified" — they do not appear in any aging bucket. The aging detail cannot be visualized until the payables are properly assigned to vendors with due dates.`,
+      { x: ML + 1.20, y: CHT_Y + 1.26, w: lw - 1.40, h: 1.60,
+        fontSize: 9, color: T.textD, fontFace: "Calibri" }
+    );
+    slide.addText(`Total Payables:  ${fmt(totalPayables, p.currency)}`, { x: ML + 1.20, y: CHT_Y + 2.96, w: lw - 1.40, h: 0.38,
+      fontSize: 12, bold: true, color: T.teal, fontFace: "Calibri" });
+  } else {
+    const bucketLabels = ["Current\n(0–30 days)", "1–30 days", "31–60 days", "61–90 days", "91+ days"];
+    const bucketCols = [T.teal, T.tealD, T.amber, T.red, "8B0000"];
+    slide.addChart(pres.ChartType.bar,
+      [{ name: "AP Aging", labels: bucketLabels, values: bucketTotals }],
+      {
+        ...CHART_DEFAULTS,
+        x: ML + 0.14, y: CHT_Y + 0.44, w: lw - 0.22, h: CHT_H - 0.52,
+        barDir: "col", barGrouping: "clustered",
+        chartColors: bucketCols,
+        showLegend: false,
+        showValue: true,
+        valAxisLabelFormatCode: '#,##0.0,,"M"',
+        dataLabelFormatCode: '#,##0.0,,"M"',
+      } as any
+    );
+  }
 
   // Right panel: AP Aging by bucket table + AP Health
   const rw = CW - lw - 0.14, rx = ML + lw + 0.14;
@@ -741,20 +763,28 @@ function addForecastSlide(pres: PptxGenJS, p: PptxPayload) {
   // 4 KPI cards
   const kw = CW / 4 - 0.12;
   [
-    { label: "Avg Monthly Revenue",  value: fmt(averages.avgMonthlyRevenue, p.currency),  sub: "Historical avg",      col: T.teal },
-    { label: "Avg Monthly Expenses", value: fmt(averages.avgMonthlyOpex, p.currency),     sub: "Historical avg",      col: T.red },
-    { label: "Break-even Revenue",   value: fmt(benchmarks.breakevenRevenue, p.currency), sub: "Min to cover costs",  col: T.amber },
-    { label: "Revenue MoM Trend",    value: pct(trends.revenueMoM),                       sub: "Month-over-month",    col: trends.revenueMoM >= 0 ? T.green : T.red },
-  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col));
+    { label: "Avg Monthly Revenue",  value: fmt(averages.avgMonthlyRevenue, p.currency),  sub: "Historical avg",      col: T.teal,  icon: "$" },
+    { label: "Avg Monthly Expenses", value: fmt(averages.avgMonthlyOpex, p.currency),     sub: "Historical avg",      col: T.red,   icon: "≡" },
+    { label: "Break-even Revenue",   value: fmt(benchmarks.breakevenRevenue, p.currency), sub: "Min to cover costs",  col: T.amber, icon: "=" },
+    { label: "Revenue MoM Trend",    value: pct(trends.revenueMoM),                       sub: "Month-over-month",    col: trends.revenueMoM >= 0 ? T.green : T.red, icon: "%" },
+  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.12), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col, c.icon));
 
   const fLabels = forecast.map((f) => mo(f.month));
 
+  // When forecast revenue is all zero the model only projected expenses — fall back to flat historical avg
+  const rawRevenues = forecast.map((f) => f.revenue);
+  const revenueIsFlat = rawRevenues.every((v) => v === 0);
+  const displayRevenues = revenueIsFlat
+    ? rawRevenues.map(() => averages.avgMonthlyRevenue)
+    : rawRevenues;
+
   // Left: Revenue & Expense forecast line chart
   const lw = 7.42;
-  panel(slide, ML, CHT_Y, lw, CHT_H, `6-Month Revenue & Expense Forecast`);
+  const revLabel = revenueIsFlat ? `Projected Revenue (flat avg${p.currency})` : "Projected Revenue";
+  panel(slide, ML, CHT_Y, lw, CHT_H, `6-Month Revenue & Expense Forecast${revenueIsFlat ? " — revenue assumes flat historical avg" : ""}`);
   slide.addChart(pres.ChartType.line,
     [
-      { name: "Projected Revenue",  labels: fLabels, values: forecast.map((f) => f.revenue) },
+      { name: revLabel,             labels: fLabels, values: displayRevenues },
       { name: "Projected Expenses", labels: fLabels, values: forecast.map((f) => f.opex) },
     ],
     {
@@ -839,12 +869,12 @@ function addRetainedSlide(pres: PptxGenJS, p: PptxPayload) {
   // 5 KPI cards
   const kw = CW / 5 - 0.10;
   [
-    { label: "Net Profit",           value: fmt(netProfit, p.currency),           sub: "Period earnings",   col: netProfit >= 0 ? T.teal : T.red },
-    { label: "Long-term Assets",     value: fmt(longTermAssets, p.currency),      sub: "Fixed + LT",        col: T.teal },
-    { label: "Total Investments",    value: fmt(totalInvestments, p.currency),    sub: "Portfolio",          col: totalInvestments >= 0 ? T.teal : T.amber },
-    { label: "Contribution Received",value: fmt(contributionReceived, p.currency),sub: "Owner injection",   col: T.gold },
-    { label: "Retained Earnings",    value: fmt(retainedEarning, p.currency),     sub: "Cumulative equity", col: retainedEarning >= 0 ? T.green : T.red },
-  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.10), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col));
+    { label: "Net Profit",           value: fmt(netProfit, p.currency),           sub: "Period earnings",   col: netProfit >= 0 ? T.teal : T.red, icon: netProfit >= 0 ? "▲" : "▼" },
+    { label: "Long-term Assets",     value: fmt(longTermAssets, p.currency),      sub: "Fixed + LT",        col: T.teal,  icon: "A" },
+    { label: "Total Investments",    value: fmt(totalInvestments, p.currency),    sub: "Portfolio",          col: totalInvestments >= 0 ? T.teal : T.amber, icon: "◈" },
+    { label: "Contribution Received",value: fmt(contributionReceived, p.currency),sub: "Owner injection",   col: T.gold,  icon: "↓" },
+    { label: "Retained Earnings",    value: fmt(retainedEarning, p.currency),     sub: "Cumulative equity", col: retainedEarning >= 0 ? T.green : T.red, icon: "∑" },
+  ].forEach((c, i) => kpiCard(slide, ML + i * (kw + 0.10), KPI_Y, kw, KPI_H, c.label, c.value, c.sub, c.col, c.icon));
 
   // Left: bar chart
   const lw = 7.42;
@@ -922,39 +952,37 @@ function addClosingSlide(pres: PptxGenJS, p: PptxPayload) {
   slide.addText("Focused actions to strengthen performance and drive sustainable growth",
     { x: 1.92, y: 0.94, w: 9.4, h: 0.28, fontSize: 10, color: T.teal, fontFace: "Calibri" });
 
-  // 4 action cards
+  // 4 action cards — tall enough to fill the space to the banner
   const margin = p.kpis.revenue > 0 ? (p.kpis.profit / p.kpis.revenue) * 100 : 0;
   const priorities = [
-    { title: "Stabilize Revenue",      body: "Improve pipeline conversion\nand reduce client volatility.", col: T.teal },
-    { title: "Control Costs",          body: "Review salaries, subscriptions,\nand overhead.",             col: T.gold },
-    { title: "Protect Liquidity",      body: "Tighten cash planning and\npreserve working capital.",       col: T.red },
-    { title: "Improve Profitability",  body: `Raise margin discipline and\ntrack monthly performance.`,   col: margin >= 15 ? T.green : T.amber },
+    { title: "Stabilize Revenue",     body: "Improve pipeline conversion and reduce client volatility.\n\nRevenue target: avg monthly consistent growth.", icon: "▲", col: T.teal },
+    { title: "Control Costs",         body: "Review salaries, subscriptions, and overhead.\n\nTarget: reduce expense run-rate by 10–15%.",             icon: "≡", col: T.gold },
+    { title: "Protect Liquidity",     body: "Tighten cash planning and preserve working capital.\n\nMaintain 30-day cash reserve at minimum.",           icon: "$", col: T.red },
+    { title: "Improve Profitability", body: `Raise margin discipline and track monthly performance.\n\nTarget: ${margin >= 15 ? "maintain" : "achieve"} 15%+ net margin.`, icon: "%", col: margin >= 15 ? T.green : T.amber },
   ];
-  const cw = CW / 4 - 0.14, cy = 1.40;
+  // Cards stretch from header bottom (y=1.38) to banner (INS_Y - 0.16)
+  const CY_START = 1.38, CY_END = INS_Y - 0.14;
+  const CARD_H = CY_END - CY_START;
+  const cw = CW / 4 - 0.14;
   priorities.forEach((pr, i) => {
     const cx = ML + i * (cw + 0.14);
-    slide.addShape("roundRect", { x: cx, y: cy, w: cw, h: 2.80,
+    slide.addShape("roundRect", { x: cx, y: CY_START, w: cw, h: CARD_H,
       fill: { color: T.bgCard }, line: { color: pr.col, width: 1.0 }, rectRadius: 0.06 });
     // Icon circle
-    const iS = 0.70, iX = cx + (cw - iS) / 2, iY = cy + 0.28;
+    const iS = 0.72, iX = cx + (cw - iS) / 2, iY = CY_START + 0.32;
     slide.addShape("ellipse", { x: iX, y: iY, w: iS, h: iS,
       fill: { color: T.bg }, line: { color: pr.col, width: 1.5 } });
-    // Mini bars in icon
-    const bW = 0.09, bBase = iY + iS * 0.78;
-    ([0.50, 1.0, 0.72] as const).forEach((frac, bi) => {
-      const bH = 0.28 * frac;
-      slide.addShape("rect", { x: iX + 0.10 + bi * (bW + 0.05), y: bBase - bH, w: bW, h: bH,
-        fill: { color: pr.col }, line: { color: pr.col, width: 0 } });
-    });
+    slide.addText(pr.icon, { x: iX, y: iY, w: iS, h: iS,
+      fontSize: 22, bold: true, color: pr.col, align: "center", valign: "middle", fontFace: "Calibri" });
     // Title
-    slide.addText(pr.title, { x: cx + 0.12, y: cy + 1.12, w: cw - 0.22, h: 0.48,
+    slide.addText(pr.title, { x: cx + 0.12, y: CY_START + 1.18, w: cw - 0.22, h: 0.44,
       fontSize: 12, bold: true, color: pr.col, fontFace: "Calibri", align: "center" });
     // Gold divider
-    slide.addShape("line", { x: cx + (cw / 2) - 0.50, y: cy + 1.62, w: 1.0, h: 0,
+    slide.addShape("line", { x: cx + (cw / 2) - 0.50, y: CY_START + 1.64, w: 1.0, h: 0,
       line: { color: T.gold, width: 0.8 } });
     // Body text
-    slide.addText(pr.body, { x: cx + 0.12, y: cy + 1.74, w: cw - 0.22, h: 0.90,
-      fontSize: 9, color: T.textD, fontFace: "Calibri", align: "center" });
+    slide.addText(pr.body, { x: cx + 0.12, y: CY_START + 1.76, w: cw - 0.22, h: CARD_H - 1.90,
+      fontSize: 8.5, color: T.textD, fontFace: "Calibri", align: "center" });
   });
 
   // Summary banner
