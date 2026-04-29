@@ -1398,7 +1398,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Tabs */}
-        <div className="mt-6 flex gap-2 flex-wrap">
+        <div className="mt-6 flex flex-wrap gap-2 rounded-2xl border border-cyan-400/15 bg-[#071527]/80 p-3 shadow-[0_20px_45px_rgba(1,12,26,0.45)] backdrop-blur-xl">
           <TabButton active={tab === "pnl"} onClick={() => setTab("pnl")}>
             Profit & Loss
           </TabButton>
@@ -3541,10 +3541,10 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       onClick={onClick}
       className={[
-        "rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200 backdrop-blur-md",
+        "rounded-2xl border px-5 py-2.5 text-sm font-semibold text-slate-200 transition duration-200 backdrop-blur-md",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "border-cyan-300/45 bg-cyan-500/25 text-cyan-50 shadow-[0_0_0_1px_rgba(34,211,238,0.3),0_0_24px_rgba(34,211,238,0.3)]"
+          : "border-slate-400/25 bg-slate-800/35 hover:border-cyan-300/25 hover:bg-slate-700/40",
       ].join(" ")}
     >
       {children}
@@ -3571,10 +3571,10 @@ function TabLinkButton({
       onClick={() => onActivate?.()}
       prefetch={prefetch}
       className={[
-        "inline-flex items-center rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200",
+        "inline-flex items-center rounded-2xl border px-5 py-2.5 text-sm font-semibold text-slate-200 transition duration-200",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "border-cyan-300/45 bg-cyan-500/25 text-cyan-50 shadow-[0_0_0_1px_rgba(34,211,238,0.3),0_0_24px_rgba(34,211,238,0.3)]"
+          : "border-slate-400/25 bg-slate-800/35 hover:border-cyan-300/25 hover:bg-slate-700/40",
       ].join(" ")}
     >
       {children}
