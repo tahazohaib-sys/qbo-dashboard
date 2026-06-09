@@ -35,7 +35,7 @@ AUTH_EMAIL_FROM="QBO Dashboard <your-verified-sender@your-domain.com>"
 AUTH_APPROVER_EMAIL="taha.zohaib@rtcleague.com"
 ```
 
-In local development, if `RESEND_API_KEY` is not configured, verification and approval links are returned/logged for testing instead of sending real emails.
+If `RESEND_API_KEY` is not configured, verification and approval links are returned/logged for testing instead of sending real emails. Configure Resend before production use so real users receive verification and approval emails securely.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

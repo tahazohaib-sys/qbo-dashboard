@@ -42,7 +42,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      message: "Verification email sent. Please verify your email to request approval.",
+      message: emailResult.sent
+        ? "Verification email sent. Please verify your email to request approval."
+        : "Email delivery is not configured yet. Use the verification link below to continue testing this request.",
       devVerifyUrl: emailResult.sent ? undefined : verifyUrl,
     });
   } catch (e: any) {

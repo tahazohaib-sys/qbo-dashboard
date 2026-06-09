@@ -109,11 +109,8 @@ export async function sendAuthEmail({
   const from = process.env.AUTH_EMAIL_FROM || "QBO Dashboard <onboarding@resend.dev>";
 
   if (!apiKey) {
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[auth-email-dev] To: ${to}\nSubject: ${subject}\n${html}`);
-      return { sent: false, reason: "RESEND_API_KEY is not configured" };
-    }
-    throw new Error("RESEND_API_KEY is required to send auth emails");
+    console.log(`[auth-email-fallback] To: ${to}\nSubject: ${subject}\n${html}`);
+    return { sent: false, reason: "Email delivery is not configured yet." };
   }
 
   const res = await fetch("https://api.resend.com/emails", {
