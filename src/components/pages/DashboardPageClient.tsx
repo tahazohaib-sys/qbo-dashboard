@@ -3632,12 +3632,8 @@ export default function DashboardPage() {
           position: absolute;
           left: 6px;
           top: 8px;
-          display: flex;
           height: 26px;
           width: 30px;
-          align-items: center;
-          justify-content: center;
-          gap: 5px;
           border: 1px solid rgba(255, 255, 255, 0.24);
           border-radius: 10px;
           background: linear-gradient(180deg, #dff9ff, #81e6ff);
@@ -3645,10 +3641,41 @@ export default function DashboardPage() {
         }
 
         .metric-coach-eye {
+          position: absolute;
+          top: 9px;
           height: 5px;
           width: 5px;
           border-radius: 999px;
           background: #07111f;
+        }
+
+        .metric-coach-eye:first-child {
+          left: 8px;
+        }
+
+        .metric-coach-eye:nth-child(2) {
+          right: 8px;
+        }
+
+        .metric-coach-mouth {
+          position: absolute;
+          left: 50%;
+          top: 15px;
+          height: 7px;
+          width: 13px;
+          border: 2px solid #07111f;
+          border-left-color: transparent;
+          border-right-color: transparent;
+          border-top-color: transparent;
+          border-radius: 0 0 999px 999px;
+          transform: translateX(-50%);
+        }
+
+        .metric-coach-alert .metric-coach-mouth {
+          top: 17px;
+          border-top-color: #07111f;
+          border-bottom-color: transparent;
+          border-radius: 999px 999px 0 0;
         }
 
         .metric-coach-antenna {
@@ -4076,6 +4103,7 @@ function MetricCoachRobot({ tone, message }: { tone: "good" | "alert"; message: 
         <div className="metric-coach-head">
           <span className="metric-coach-eye" />
           <span className="metric-coach-eye" />
+          <span className="metric-coach-mouth" />
         </div>
         <div className="metric-coach-arm metric-coach-arm-left" />
         <div className="metric-coach-arm metric-coach-arm-right" />
