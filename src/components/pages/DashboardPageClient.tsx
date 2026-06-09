@@ -394,6 +394,8 @@ const CHART_COLORS = {
   profit: "#34d399",
 } as const;
 
+const TAB_ORDER: TabKey[] = ["pnl", "cash", "arAp", "retained", "forecast", "revenue"];
+
 function trendLabelFromMoM(mom: number): "Increasing" | "Decreasing" | "Stable" {
   if (!Number.isFinite(mom)) return "Stable";
   if (mom > 0.01) return "Increasing";
@@ -513,6 +515,7 @@ export default function DashboardPage() {
   const now = new Date();
 
   const [tab, setTab] = useState<TabKey>("pnl");
+  const [tabSlideDirection, setTabSlideDirection] = useState<"forward" | "backward">("forward");
 
   const [fromYear, setFromYear] = useState<number>(now.getFullYear());
   const [fromMonth, setFromMonth] = useState<number>(1);
@@ -574,6 +577,15 @@ export default function DashboardPage() {
   const moduleCacheRef = useRef<Map<string, any>>(new Map());
   const hasInitializedRef = useRef(false);
   const hasHandledInitialTabEffectRef = useRef(false);
+
+  function switchTab(nextTab: TabKey) {
+    if (nextTab === tab) return;
+
+    const currentIndex = TAB_ORDER.indexOf(tab);
+    const nextIndex = TAB_ORDER.indexOf(nextTab);
+    setTabSlideDirection(nextIndex >= currentIndex ? "forward" : "backward");
+    setTab(nextTab);
+  }
 
   function buildStartEnd(fy: number, fm: number, ty: number, tm: number) {
     const start = `${fy}-${String(fm).padStart(2, "0")}-01`;
@@ -1399,23 +1411,23 @@ export default function DashboardPage() {
 
         {/* Tabs */}
         <div className="mt-6 flex gap-2 flex-wrap">
-          <TabButton active={tab === "pnl"} onClick={() => setTab("pnl")}>
+          <TabButton active={tab === "pnl"} onClick={() => switchTab("pnl")}>
             Profit & Loss
           </TabButton>
-          <TabButton active={tab === "cash"} onClick={() => setTab("cash")}>
+          <TabButton active={tab === "cash"} onClick={() => switchTab("cash")}>
             Bank & Cash Balances
           </TabButton>
-          <TabButton active={tab === "arAp"} onClick={() => setTab("arAp")}>
+          <TabButton active={tab === "arAp"} onClick={() => switchTab("arAp")}>
             AR/AP
           </TabButton>
-          <TabButton active={tab === "retained"} onClick={() => setTab("retained")}>
+          <TabButton active={tab === "retained"} onClick={() => switchTab("retained")}>
             Retained Earning
           </TabButton>
-          <TabButton active={tab === "forecast"} onClick={() => setTab("forecast")}>
+          <TabButton active={tab === "forecast"} onClick={() => switchTab("forecast")}>
             Financial Forecast
           </TabButton>
 
-          <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" prefetch={false} onActivate={() => setTab("revenue")}>
+          <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" prefetch={false} onActivate={() => switchTab("revenue")}>
             Revenue Analytics
           </TabLinkButton>
         </div>
@@ -1511,8 +1523,9 @@ export default function DashboardPage() {
           ) : null}
         </div>
 
-        {/* Revenue route helper */}
-        {tab === "revenue" ? (
+        <div key={tab} className={`module-slide module-slide-${tabSlideDirection}`}>
+          {/* Revenue route helper */}
+          {tab === "revenue" ? (
           <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5">
             <div className="text-sm font-semibold">Revenue Analytics</div>
             <div className="mt-4 flex flex-wrap gap-2">
@@ -1525,7 +1538,7 @@ export default function DashboardPage() {
               </Link>
 
               <button
-                onClick={() => setTab("pnl")}
+                onClick={() => switchTab("pnl")}
                 className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold hover:bg-white/10"
               >
                 Back
@@ -3480,9 +3493,35 @@ export default function DashboardPage() {
             )}
           </>
         ) : null}
+        </div>
       </div>
 
       <style jsx global>{`
+        .module-slide {
+          animation: moduleSlideIn 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+          transform-origin: center top;
+          will-change: transform, opacity;
+        }
+
+        .module-slide-forward {
+          --module-slide-x: 34px;
+        }
+
+        .module-slide-backward {
+          --module-slide-x: -34px;
+        }
+
+        @keyframes moduleSlideIn {
+          from {
+            opacity: 0;
+            transform: translate3d(var(--module-slide-x), 0, 0);
+          }
+          to {
+            opacity: 1;
+            transform: translate3d(0, 0, 0);
+          }
+        }
+
         .glass-breathe {
           position: relative;
           isolation: isolate;
@@ -3514,6 +3553,10 @@ export default function DashboardPage() {
           }
         }
         @media (prefers-reduced-motion: reduce) {
+          .module-slide {
+            animation: none;
+          }
+
           .glass-breathe::after {
             animation: none;
           }
