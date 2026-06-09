@@ -1044,6 +1044,19 @@ export default function DashboardPage() {
             message: "hey, keep it up",
           } as const)
       : null;
+  const robotCoachReplayKey = robotCoach
+    ? [
+        tab,
+        appliedFilters.fromYear,
+        appliedFilters.fromMonth,
+        appliedFilters.toYear,
+        appliedFilters.toMonth,
+        appliedFilters.method,
+        robotCoach.target,
+        Math.round(kpi.revenue),
+        Math.round(kpi.expenses),
+      ].join("|")
+    : "";
 
   const financialSummary = isProfit
     ? `The selected period delivered a net profit of ${formatPKRMillions(
@@ -2283,10 +2296,16 @@ export default function DashboardPage() {
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Income</span>
                 </div>
                 <div className="relative mt-3 inline-flex items-center text-[26px] font-semibold tracking-tight text-white">
-                  <span className={robotCoach?.target === "revenue" ? "robot-value-target robot-value-target-good" : ""}>
-                    {formatPKRCompact(kpi.revenue)}
-                  </span>
-                  {robotCoach?.target === "revenue" ? <MetricCoachRobot tone="good" message={robotCoach.message} /> : null}
+                  {robotCoach?.target === "revenue" ? (
+                    <span key={`revenue-value-${robotCoachReplayKey}`} className="robot-value-target robot-value-target-good">
+                      {formatPKRCompact(kpi.revenue)}
+                    </span>
+                  ) : (
+                    <span>{formatPKRCompact(kpi.revenue)}</span>
+                  )}
+                  {robotCoach?.target === "revenue" ? (
+                    <MetricCoachRobot key={`revenue-robot-${robotCoachReplayKey}`} tone="good" message={robotCoach.message} />
+                  ) : null}
                 </div>
                 <div className="mt-2 flex items-center gap-1.5">
                   {momRevenue === null
@@ -2308,10 +2327,16 @@ export default function DashboardPage() {
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Expenses</span>
                 </div>
                 <div className="relative mt-3 inline-flex items-center text-[26px] font-semibold tracking-tight text-white">
-                  <span className={robotCoach?.target === "expense" ? "robot-value-target robot-value-target-alert" : ""}>
-                    {formatPKRCompact(kpi.expenses)}
-                  </span>
-                  {robotCoach?.target === "expense" ? <MetricCoachRobot tone="alert" message={robotCoach.message} /> : null}
+                  {robotCoach?.target === "expense" ? (
+                    <span key={`expense-value-${robotCoachReplayKey}`} className="robot-value-target robot-value-target-alert">
+                      {formatPKRCompact(kpi.expenses)}
+                    </span>
+                  ) : (
+                    <span>{formatPKRCompact(kpi.expenses)}</span>
+                  )}
+                  {robotCoach?.target === "expense" ? (
+                    <MetricCoachRobot key={`expense-robot-${robotCoachReplayKey}`} tone="alert" message={robotCoach.message} />
+                  ) : null}
                 </div>
                 <div className="mt-2 flex items-center gap-1.5">
                   {momExpenses === null
