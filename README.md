@@ -21,7 +21,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 The dashboard is protected by an email/password login flow:
 
 - A user requests access with email and password at `/login`.
-- The user verifies their email.
+- The user verifies their email with a 6-digit code sent to their email address.
 - An approval email is sent to `taha.zohaib@rtcleague.com` with Approve and Reject buttons.
 - Approved users can log in. Rejected users are blocked.
 
@@ -35,7 +35,7 @@ AUTH_EMAIL_FROM="QBO Dashboard <your-verified-sender@your-domain.com>"
 AUTH_APPROVER_EMAIL="taha.zohaib@rtcleague.com"
 ```
 
-If `RESEND_API_KEY` is not configured, verification and approval links are returned/logged for testing instead of sending real emails. Configure Resend before production use so real users receive verification and approval emails securely.
+If `RESEND_API_KEY` is not configured, verification codes and approval links are returned/logged for testing instead of sending real emails. Configure Resend before production use so real users receive verification and approval emails securely.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

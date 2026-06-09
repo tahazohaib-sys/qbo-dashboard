@@ -13,24 +13,28 @@ function LoginForm() {
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [awaitingCode, setAwaitingCode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [devLink, setDevLink] = useState("");
+  const [devCode, setDevCode] = useState("");
+  const [devApproval, setDevApproval] = useState<{ approveUrl: string; rejectUrl: string } | null>(null);
   const [error, setError] = useState("");
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setMessage("");
-    setDevLink("");
+    setDevCode("");
+    setDevApproval(null);
     setError("");
 
     try {
-      const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
+      const endpoint = mode === "login" ? "/api/auth/login" : awaitingCode ? "/api/auth/verify-code" : "/api/auth/register";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(awaitingCode ? { email, code: verificationCode } : { email, password }),
       });
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Request failed.");
@@ -41,8 +45,13 @@ function LoginForm() {
         return;
       }
 
-      setMessage(json.message || "Verification email sent.");
-      if (json.devVerifyUrl) setDevLink(json.devVerifyUrl);
+      setMessage(json.message || (awaitingCode ? "Your request has been forwarded for approval." : "Verification code sent."));
+      if (json.needsCode) setAwaitingCode(true);
+      if (json.devVerificationCode) {
+        setVerificationCode(json.devVerificationCode);
+        setDevCode(json.devVerificationCode);
+      }
+      if (json.devApproval) setDevApproval(json.devApproval);
     } catch (err: any) {
       setError(err?.message || "Something went wrong.");
     } finally {
@@ -81,7 +90,10 @@ function LoginForm() {
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
-                onClick={() => setMode("login")}
+                onClick={() => {
+                  setMode("login");
+                  setAwaitingCode(false);
+                }}
                 className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
                   mode === "login" ? "bg-cyan-400/18 text-cyan-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]" : "text-slate-400 hover:text-white"
                 }`}
@@ -90,7 +102,10 @@ function LoginForm() {
               </button>
               <button
                 type="button"
-                onClick={() => setMode("request")}
+                onClick={() => {
+                  setMode("request");
+                  setAwaitingCode(false);
+                }}
                 className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
                   mode === "request" ? "bg-cyan-400/18 text-cyan-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]" : "text-slate-400 hover:text-white"
                 }`}
@@ -101,12 +116,14 @@ function LoginForm() {
           </div>
 
           <h2 className="text-2xl font-semibold tracking-tight text-white">
-            {mode === "login" ? "Sign in" : "Request dashboard access"}
+            {mode === "login" ? "Sign in" : awaitingCode ? "Verify your email" : "Request dashboard access"}
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-400">
             {mode === "login"
               ? "Use an approved email and password to continue."
-              : "Set your email and password. After verification, approval is sent to taha.zohaib@rtcleague.com."}
+              : awaitingCode
+              ? "Enter the verification code sent to your email. After verification, your request will be forwarded for approval."
+              : "Set your email and password. A verification code will be sent to your email before approval is requested."}
           </p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
@@ -130,16 +147,40 @@ function LoginForm() {
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
                 required
                 minLength={8}
+                disabled={awaitingCode}
                 className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-400/10"
               />
             </div>
+            {mode === "request" && awaitingCode ? (
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Verification Code</label>
+                <input
+                  value={verificationCode}
+                  onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                  minLength={6}
+                  maxLength={6}
+                  className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-center text-lg font-bold tracking-[0.45em] text-white outline-none transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-400/10"
+                />
+              </div>
+            ) : null}
 
             {error ? <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">{error}</div> : null}
             {message ? <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{message}</div> : null}
-            {devLink ? (
-              <a href={devLink} className="block break-all rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-sm font-semibold text-cyan-100">
-                Development verify link: {devLink}
-              </a>
+            {devCode ? (
+              <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-sm font-semibold text-cyan-100">
+                Development verification code: <span className="tracking-[0.28em]">{devCode}</span>
+              </div>
+            ) : null}
+            {devApproval ? (
+              <div className="space-y-2 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-sm font-semibold text-cyan-100">
+                <div>Development approval links:</div>
+                <a href={devApproval.approveUrl} className="block break-all text-emerald-200">Approve: {devApproval.approveUrl}</a>
+                <a href={devApproval.rejectUrl} className="block break-all text-rose-200">Reject: {devApproval.rejectUrl}</a>
+              </div>
             ) : null}
 
             <button
@@ -147,7 +188,7 @@ function LoginForm() {
               disabled={loading}
               className="h-12 w-full rounded-2xl border border-cyan-300/20 bg-cyan-400/16 px-5 text-sm font-semibold text-cyan-50 shadow-[0_14px_34px_rgba(8,145,178,0.18)] transition hover:bg-cyan-400/22 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Working..." : mode === "login" ? "Login" : "Send Verification"}
+              {loading ? "Working..." : mode === "login" ? "Login" : awaitingCode ? "Verify Email" : "Send Verification Code"}
             </button>
           </form>
         </div>

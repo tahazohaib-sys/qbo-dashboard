@@ -89,7 +89,9 @@ export async function upsertPendingUser(email: string, passwordHash: string) {
   return rows[0];
 }
 
-export async function createAuthToken(userId: string, tokenType: "email_verify" | "approval", expiresInHours: number) {
+type AuthTokenType = "email_verify" | "approval";
+
+export async function createAuthToken(userId: string, tokenType: AuthTokenType, expiresInHours: number) {
   await ensureAuthTables();
   await query(
     `update dashboard_auth_tokens set consumed_at = now() where user_id = $1 and token_type = $2 and consumed_at is null`,
@@ -107,7 +109,49 @@ export async function createAuthToken(userId: string, tokenType: "email_verify" 
   return rawToken;
 }
 
-export async function consumeAuthToken(rawToken: string, tokenType: "email_verify" | "approval") {
+export async function createEmailVerificationCode(userId: string) {
+  await ensureAuthTables();
+  await query(
+    `update dashboard_auth_tokens set consumed_at = now() where user_id = $1 and token_type = 'email_verify' and consumed_at is null`,
+    [userId]
+  );
+
+  const code = String(crypto.randomInt(100000, 1000000));
+  await query(
+    `
+      insert into dashboard_auth_tokens (token_hash, user_id, token_type, expires_at)
+      values ($1, $2, 'email_verify', now() + interval '15 minutes')
+    `,
+    [hashToken(code), userId]
+  );
+  return code;
+}
+
+export async function consumeEmailVerificationCode(email: string, code: string) {
+  await ensureAuthTables();
+  const normalizedCode = code.replace(/\D/g, "");
+  if (normalizedCode.length !== 6) return null;
+
+  const user = await findUserByEmail(email);
+  if (!user) return null;
+
+  const { rows } = await query<{ user_id: string }>(
+    `
+      update dashboard_auth_tokens
+      set consumed_at = now()
+      where token_hash = $1
+        and user_id = $2
+        and token_type = 'email_verify'
+        and consumed_at is null
+        and expires_at > now()
+      returning user_id
+    `,
+    [hashToken(normalizedCode), user.id]
+  );
+  return rows[0]?.user_id ?? null;
+}
+
+export async function consumeAuthToken(rawToken: string, tokenType: AuthTokenType) {
   await ensureAuthTables();
   const hashed = hashToken(rawToken);
   const { rows } = await query<{ user_id: string }>(

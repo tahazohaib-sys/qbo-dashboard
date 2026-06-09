@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { ADMIN_APPROVER_EMAIL, getBaseUrl, hashPassword, sendAuthEmail } from "@/lib/auth";
-import { createAuthToken, findUserByEmail, upsertPendingUser } from "@/lib/auth-db";
+import { ADMIN_APPROVER_EMAIL, hashPassword, sendAuthEmail } from "@/lib/auth";
+import { createEmailVerificationCode, findUserByEmail, upsertPendingUser } from "@/lib/auth-db";
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -25,17 +25,17 @@ export async function POST(req: Request) {
     }
 
     const user = await upsertPendingUser(email, hashPassword(password));
-    const rawToken = await createAuthToken(user.id, "email_verify", 24);
-    const verifyUrl = `${getBaseUrl(req)}/api/auth/verify?token=${encodeURIComponent(rawToken)}`;
+    const verificationCode = await createEmailVerificationCode(user.id);
     const emailResult = await sendAuthEmail({
       to: user.email,
-      subject: "Verify your QBO Dashboard access request",
+      subject: "Your QBO Dashboard verification code",
       html: `
         <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
           <h2>Verify your email</h2>
-          <p>Please verify this email address before your dashboard access request is sent to ${ADMIN_APPROVER_EMAIL}.</p>
-          <p><a href="${verifyUrl}" style="display:inline-block;background:#0891b2;color:white;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700">Verify email</a></p>
-          <p>This link expires in 24 hours.</p>
+          <p>Use this verification code to continue your QBO Dashboard access request:</p>
+          <div style="display:inline-block;background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:12px;padding:12px 18px;font-size:28px;font-weight:800;letter-spacing:6px">${verificationCode}</div>
+          <p>After verification, your request will be forwarded to ${ADMIN_APPROVER_EMAIL} for approval.</p>
+          <p>This code expires in 15 minutes.</p>
         </div>
       `,
     });
@@ -43,9 +43,10 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       message: emailResult.sent
-        ? "Verification email sent. Please verify your email to request approval."
-        : "Email delivery is not configured yet. Use the verification link below to continue testing this request.",
-      devVerifyUrl: emailResult.sent ? undefined : verifyUrl,
+        ? "Verification code sent. Enter the code below to verify your email."
+        : "Email delivery is not configured yet. Use the development verification code below to continue testing this request.",
+      needsCode: true,
+      devVerificationCode: emailResult.sent ? undefined : verificationCode,
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Registration failed." }, { status: 500 });
