@@ -1345,26 +1345,25 @@ export default function DashboardPage() {
   }, [fromYear, fromMonth, toYear, toMonth]);
 
   return (
-    <div className='relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(34,211,238,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(99,102,241,0.14),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(244,63,94,0.08),transparent_55%),linear-gradient(180deg,#030711_0%,#050b19_45%,#040714_100%)] text-slate-100 [font-family:ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Inter,Roboto,Arial]'>
-      <div className="pointer-events-none absolute inset-0 opacity-[0.03] [background-image:radial-gradient(rgba(255,255,255,0.7)_0.7px,transparent_0.7px)] [background-size:4px_4px]" />
-      <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
+    <div className='premium-dashboard relative min-h-screen overflow-hidden bg-[radial-gradient(1000px_720px_at_9%_0%,rgba(37,99,235,0.30),transparent_58%),radial-gradient(900px_680px_at_86%_8%,rgba(14,165,233,0.16),transparent_55%),radial-gradient(900px_650px_at_62%_100%,rgba(15,118,110,0.11),transparent_60%),linear-gradient(180deg,#061429_0%,#050915_44%,#030610_100%)] text-slate-100 [font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Roboto,Arial]'>
+      <div className="pointer-events-none absolute inset-0 opacity-[0.045] [background-image:linear-gradient(rgba(255,255,255,0.6)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.6)_1px,transparent_1px)] [background-size:42px_42px]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-blue-500/10 to-transparent" />
       <WorldMapVideoBackground />
-      <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
 
-      <div className="relative z-10 mx-auto max-w-7xl px-5 py-8">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+      <div className="relative z-10 mx-auto w-full max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8">
+        <div className="premium-topbar flex flex-col gap-4 rounded-[28px] border border-white/10 bg-[#070d1c]/78 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
-            <div className="relative h-12 w-12 shrink-0">
+            <div className="relative h-14 w-14 shrink-0 rounded-2xl border border-white/10 bg-white/5 p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
               <Image src="/logo.png" alt="RTC League Logo" fill className="object-contain" priority />
             </div>
 
             <div>
-              <h1 className="text-[26px] font-semibold tracking-tight text-white">Finance Dashboard</h1>
+              <h1 className="text-[28px] font-semibold tracking-tight text-white md:text-[32px]">Finance Dashboard</h1>
             </div>
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
+            <div className="flex items-center gap-2 rounded-2xl border border-emerald-300/20 bg-emerald-400/10 px-3.5 py-2.5 text-xs text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
               <span className="relative inline-flex h-2.5 w-2.5">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300/60 motion-reduce:animate-none" />
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300" />
@@ -1373,14 +1372,14 @@ export default function DashboardPage() {
               <span className="text-emerald-100/80">Last updated: {lastUpdated}</span>
             </div>
 
-            <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.07] px-3.5 py-2.5 text-xs text-slate-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
               <div className="font-medium text-slate-200">
                 Company: {data?.companyName ?? "—"} ({data?.currency ?? "PKR"})
               </div>
               <div className="opacity-80">As of: {headerAsOf || "—"}</div>
             </div>
 
-            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200">
+            <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.07] px-3.5 py-2.5 text-xs text-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
               <span className="uppercase tracking-[0.12em]">Auto refresh</span>
               <button
                 type="button"
@@ -1401,7 +1400,7 @@ export default function DashboardPage() {
 
             <button
               onClick={applyFilters}
-              className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 active:scale-[0.99]"
+              className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-50 shadow-[0_12px_28px_rgba(8,145,178,0.12)] transition hover:bg-cyan-400/15 active:scale-[0.99]"
               disabled={loading}
             >
               {loading ? "Refreshing..." : "Refresh"}
@@ -1410,7 +1409,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Tabs */}
-        <div className="mt-6 flex gap-2 flex-wrap">
+        <div className="mt-5 flex gap-2 overflow-x-auto rounded-[22px] border border-white/10 bg-black/20 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
           <TabButton active={tab === "pnl"} onClick={() => switchTab("pnl")}>
             Profit & Loss
           </TabButton>
@@ -1433,11 +1432,11 @@ export default function DashboardPage() {
         </div>
 
         {/* Filters */}
-        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_24px_60px_rgba(2,6,23,0.35)] backdrop-blur-xl">
+        <div className="premium-filter mt-5 rounded-[24px] border border-white/10 bg-[#071020]/72 p-5 shadow-[0_22px_70px_rgba(0,0,0,0.34)] backdrop-blur-2xl">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">From Year</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">From Year</label>
                 <select
                   value={fromYear}
                   onChange={(e) => setFromYear(Number(e.target.value))}
@@ -1452,7 +1451,7 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">From Month</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">From Month</label>
                 <select
                   value={fromMonth}
                   onChange={(e) => setFromMonth(Number(e.target.value))}
@@ -1467,7 +1466,7 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">To Year</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">To Year</label>
                 <select
                   value={toYear}
                   onChange={(e) => setToYear(Number(e.target.value))}
@@ -1482,7 +1481,7 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">To Month</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">To Month</label>
                 <select
                   value={toMonth}
                   onChange={(e) => setToMonth(Number(e.target.value))}
@@ -1497,7 +1496,7 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">Accounting Method</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Accounting Method</label>
                 <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value as any)}
@@ -1511,7 +1510,7 @@ export default function DashboardPage() {
 
             <button
               onClick={applyFilters}
-              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
+              className="rounded-2xl border border-emerald-300/20 bg-emerald-400/15 px-5 py-2.5 text-sm font-semibold text-emerald-50 shadow-[0_14px_34px_rgba(16,185,129,0.12)] transition hover:bg-emerald-400/20 active:scale-[0.99]"
               disabled={loading}
             >
               Apply
@@ -3522,6 +3521,102 @@ export default function DashboardPage() {
           }
         }
 
+        .premium-dashboard {
+          color-scheme: dark;
+        }
+
+        .premium-dashboard::selection {
+          background: rgba(34, 211, 238, 0.28);
+          color: white;
+        }
+
+        .premium-dashboard select,
+        .premium-dashboard input,
+        .premium-dashboard textarea {
+          min-height: 42px;
+          border-radius: 16px;
+          border-color: rgba(255, 255, 255, 0.1) !important;
+          background: rgba(2, 6, 23, 0.46) !important;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        }
+
+        .premium-dashboard select:focus,
+        .premium-dashboard input:focus,
+        .premium-dashboard textarea:focus {
+          border-color: rgba(103, 232, 249, 0.5) !important;
+          box-shadow:
+            0 0 0 3px rgba(34, 211, 238, 0.1),
+            inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        }
+
+        .premium-dashboard table {
+          border-collapse: separate;
+          border-spacing: 0;
+        }
+
+        .premium-dashboard thead tr {
+          background: rgba(15, 23, 42, 0.42);
+        }
+
+        .premium-dashboard th:first-child {
+          border-top-left-radius: 14px;
+        }
+
+        .premium-dashboard th:last-child {
+          border-top-right-radius: 14px;
+        }
+
+        .premium-dashboard tbody tr {
+          transition: background-color 180ms ease, transform 180ms ease;
+        }
+
+        .premium-dashboard tbody tr:hover {
+          background: rgba(14, 165, 233, 0.075) !important;
+        }
+
+        .premium-dashboard .recharts-cartesian-grid line {
+          stroke: rgba(148, 163, 184, 0.13);
+        }
+
+        .premium-dashboard .recharts-tooltip-cursor {
+          fill: rgba(14, 165, 233, 0.08);
+        }
+
+        .premium-surface {
+          position: relative;
+          overflow: hidden;
+        }
+
+        .premium-surface::before,
+        .premium-kpi::before,
+        .premium-topbar::before,
+        .premium-filter::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          border-radius: inherit;
+          background:
+            linear-gradient(135deg, rgba(255, 255, 255, 0.12), transparent 32%),
+            radial-gradient(circle at 90% 10%, rgba(34, 211, 238, 0.12), transparent 32%);
+          opacity: 0.72;
+        }
+
+        .premium-topbar,
+        .premium-filter,
+        .premium-kpi {
+          position: relative;
+          overflow: hidden;
+        }
+
+        .premium-topbar > *,
+        .premium-filter > *,
+        .premium-surface > *,
+        .premium-kpi > * {
+          position: relative;
+          z-index: 1;
+        }
+
         .glass-breathe {
           position: relative;
           isolation: isolate;
@@ -3584,10 +3679,10 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       onClick={onClick}
       className={[
-        "rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200 backdrop-blur-md",
+        "shrink-0 rounded-2xl border px-4 py-2.5 text-sm font-semibold tracking-tight transition duration-200 backdrop-blur-md",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "border-cyan-300/45 bg-gradient-to-r from-cyan-400/22 to-blue-500/18 text-cyan-50 shadow-[0_12px_32px_rgba(8,145,178,0.24),inset_0_1px_0_rgba(255,255,255,0.16)]"
+          : "border-white/10 bg-white/[0.045] text-slate-300 hover:border-cyan-200/20 hover:bg-white/[0.08] hover:text-white",
       ].join(" ")}
     >
       {children}
@@ -3614,10 +3709,10 @@ function TabLinkButton({
       onClick={() => onActivate?.()}
       prefetch={prefetch}
       className={[
-        "inline-flex items-center rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200",
+        "inline-flex shrink-0 items-center rounded-2xl border px-4 py-2.5 text-sm font-semibold tracking-tight transition duration-200",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "border-cyan-300/45 bg-gradient-to-r from-cyan-400/22 to-blue-500/18 text-cyan-50 shadow-[0_12px_32px_rgba(8,145,178,0.24),inset_0_1px_0_rgba(255,255,255,0.16)]"
+          : "border-white/10 bg-white/[0.045] text-slate-300 hover:border-cyan-200/20 hover:bg-white/[0.08] hover:text-white",
       ].join(" ")}
     >
       {children}
@@ -3627,9 +3722,10 @@ function TabLinkButton({
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-      <div className="mb-3">
-        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
+    <div className="premium-surface glass-breathe rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.86),rgba(3,7,18,0.76))] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-2xl">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-100">{title}</div>
+        <span className="h-1.5 w-10 rounded-full bg-gradient-to-r from-cyan-300 to-blue-500 opacity-70" />
       </div>
       {children}
     </div>
@@ -3646,13 +3742,13 @@ function ChartCard({
   legend: Array<{ label: string; color: string }>;
 }) {
   return (
-    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
+    <div className="premium-surface glass-breathe rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.86),rgba(3,7,18,0.76))] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-2xl">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-100">{title}</div>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           {legend.map((item, index) => (
-            <div key={`${item.label}-${index}`} className="flex items-center gap-1.5 text-[11px] text-slate-300">
-              <span className={`h-2.5 w-2.5 rounded-full ${item.color}`} />
+            <div key={`${item.label}-${index}`} className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-slate-300">
+              <span className={`h-2 w-2 rounded-full ${item.color} shadow-[0_0_12px_currentColor]`} />
               {item.label}
             </div>
           ))}
@@ -3686,27 +3782,27 @@ function KpiCard({
         : `${Math.round(animatedValue)}`
       : value ?? "—";
 
-  const ring = highlight === "good" ? "border-emerald-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
+  const ring = highlight === "good" ? "border-cyan-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
 
   const glow =
     highlight === "good"
-      ? "shadow-[0_16px_45px_rgba(6,182,212,0.18)]"
+      ? "shadow-[0_18px_48px_rgba(8,145,178,0.20)]"
       : highlight === "bad"
       ? "shadow-[0_16px_45px_rgba(244,63,94,0.18)]"
-      : "shadow-[0_20px_80px_rgba(0,0,0,0.35)]";
+      : "shadow-[0_22px_70px_rgba(0,0,0,0.38)]";
 
   const dot = highlight === "good" ? "bg-cyan-300" : highlight === "bad" ? "bg-rose-300" : "bg-slate-300";
 
   return (
     <div
-      className={`glass-breathe group rounded-2xl border ${ring} ${glow} bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl transition hover:shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_16px_45px_rgba(6,182,212,0.15)]`}
+      className={`premium-kpi glass-breathe group rounded-[24px] border ${ring} ${glow} bg-[radial-gradient(circle_at_86%_20%,rgba(14,165,233,0.16),transparent_30%),linear-gradient(180deg,rgba(15,23,42,0.90),rgba(3,7,18,0.80))] p-5 backdrop-blur-2xl transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.10),0_20px_52px_rgba(8,145,178,0.18)]`}
     >
-      <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.14em] text-slate-300">
-        <span className={`h-2 w-2 rounded-full ${dot}`} />
+      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+        <span className={`h-2 w-2 rounded-full ${dot} shadow-[0_0_14px_currentColor]`} />
         {title}
       </div>
-      <div className="mt-3 text-[24px] font-semibold tracking-tight text-white">{resolvedValue}</div>
-      {subtext ? <div className="mt-1 text-xs text-slate-400">{subtext}</div> : null}
+      <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{resolvedValue}</div>
+      {subtext ? <div className="mt-1 text-xs font-medium text-slate-400">{subtext}</div> : null}
     </div>
   );
 }
