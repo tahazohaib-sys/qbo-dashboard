@@ -1032,6 +1032,18 @@ export default function DashboardPage() {
   const marginGlow = isProfit
     ? "shadow-[0_0_50px_rgba(16,185,129,0.35)]"
     : "shadow-[0_0_50px_rgba(244,63,94,0.35)]";
+  const robotCoach =
+    kpi.revenue > 0 || kpi.expenses > 0
+      ? kpi.expenses > kpi.revenue
+        ? ({
+            target: "expense",
+            message: "hey, it needs your attention",
+          } as const)
+        : ({
+            target: "revenue",
+            message: "hey, keep it up",
+          } as const)
+      : null;
 
   const financialSummary = isProfit
     ? `The selected period delivered a net profit of ${formatPKRMillions(
@@ -2270,7 +2282,12 @@ export default function DashboardPage() {
                   </svg>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Income</span>
                 </div>
-                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.revenue)}</div>
+                <div className="relative mt-3 inline-flex items-center text-[26px] font-semibold tracking-tight text-white">
+                  <span className={robotCoach?.target === "revenue" ? "robot-value-target robot-value-target-good" : ""}>
+                    {formatPKRCompact(kpi.revenue)}
+                  </span>
+                  {robotCoach?.target === "revenue" ? <MetricCoachRobot tone="good" message={robotCoach.message} /> : null}
+                </div>
                 <div className="mt-2 flex items-center gap-1.5">
                   {momRevenue === null
                     ? <span className="text-[11px] text-slate-500">No prior data</span>
@@ -2290,7 +2307,12 @@ export default function DashboardPage() {
                   </svg>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Expenses</span>
                 </div>
-                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.expenses)}</div>
+                <div className="relative mt-3 inline-flex items-center text-[26px] font-semibold tracking-tight text-white">
+                  <span className={robotCoach?.target === "expense" ? "robot-value-target robot-value-target-alert" : ""}>
+                    {formatPKRCompact(kpi.expenses)}
+                  </span>
+                  {robotCoach?.target === "expense" ? <MetricCoachRobot tone="alert" message={robotCoach.message} /> : null}
+                </div>
                 <div className="mt-2 flex items-center gap-1.5">
                   {momExpenses === null
                     ? <span className="text-[11px] text-slate-500">No prior data</span>
@@ -3521,6 +3543,210 @@ export default function DashboardPage() {
           }
         }
 
+        .robot-value-target {
+          position: relative;
+          display: inline-block;
+          border-radius: 12px;
+          animation: robotValuePulse 5200ms ease-out 700ms both;
+        }
+
+        .robot-value-target-good {
+          --robot-target-glow: rgba(34, 211, 238, 0.32);
+        }
+
+        .robot-value-target-alert {
+          --robot-target-glow: rgba(251, 113, 133, 0.34);
+        }
+
+        .metric-coach {
+          position: absolute;
+          left: min(100% + 12px, calc(100vw - 280px));
+          top: -78px;
+          z-index: 20;
+          display: flex;
+          align-items: flex-end;
+          gap: 8px;
+          width: max-content;
+          pointer-events: none;
+          animation: robotCoachEnter 5200ms cubic-bezier(0.22, 1, 0.36, 1) 450ms both;
+        }
+
+        .metric-coach-bubble {
+          max-width: 176px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          border-radius: 16px 16px 6px 16px;
+          background: rgba(3, 7, 18, 0.92);
+          padding: 8px 10px;
+          color: #f8fafc;
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1.2;
+          text-transform: none;
+          box-shadow: 0 18px 38px rgba(0, 0, 0, 0.42);
+          backdrop-filter: blur(18px);
+        }
+
+        .metric-coach-good .metric-coach-bubble {
+          border-color: rgba(34, 211, 238, 0.28);
+          box-shadow: 0 18px 38px rgba(8, 145, 178, 0.24);
+        }
+
+        .metric-coach-alert .metric-coach-bubble {
+          border-color: rgba(251, 113, 133, 0.3);
+          box-shadow: 0 18px 38px rgba(244, 63, 94, 0.22);
+        }
+
+        .metric-coach-body {
+          position: relative;
+          height: 54px;
+          width: 42px;
+          animation: robotCoachHit 900ms ease-in-out 1450ms 3;
+        }
+
+        .metric-coach-head {
+          position: absolute;
+          left: 6px;
+          top: 8px;
+          display: flex;
+          height: 26px;
+          width: 30px;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          border: 1px solid rgba(255, 255, 255, 0.24);
+          border-radius: 10px;
+          background: linear-gradient(180deg, #dff9ff, #81e6ff);
+          box-shadow: 0 10px 22px rgba(8, 145, 178, 0.22);
+        }
+
+        .metric-coach-eye {
+          height: 5px;
+          width: 5px;
+          border-radius: 999px;
+          background: #07111f;
+        }
+
+        .metric-coach-antenna {
+          position: absolute;
+          left: 20px;
+          top: 0;
+          height: 9px;
+          width: 2px;
+          border-radius: 999px;
+          background: #67e8f9;
+        }
+
+        .metric-coach-antenna::before {
+          content: "";
+          position: absolute;
+          left: -3px;
+          top: -4px;
+          height: 8px;
+          width: 8px;
+          border-radius: 999px;
+          background: #22d3ee;
+          box-shadow: 0 0 14px rgba(34, 211, 238, 0.85);
+        }
+
+        .metric-coach-torso {
+          position: absolute;
+          left: 10px;
+          top: 34px;
+          height: 18px;
+          width: 22px;
+          border-radius: 8px 8px 10px 10px;
+          background: linear-gradient(180deg, #1e40af, #0f172a);
+          border: 1px solid rgba(255, 255, 255, 0.14);
+        }
+
+        .metric-coach-arm {
+          position: absolute;
+          top: 35px;
+          height: 5px;
+          width: 18px;
+          border-radius: 999px;
+          background: #67e8f9;
+          transform-origin: center right;
+        }
+
+        .metric-coach-arm-left {
+          left: -2px;
+          transform: rotate(-24deg);
+        }
+
+        .metric-coach-arm-right {
+          right: -3px;
+          transform: rotate(28deg);
+          animation: robotCoachArmHit 900ms ease-in-out 1450ms 3;
+        }
+
+        .metric-coach-alert .metric-coach-head {
+          background: linear-gradient(180deg, #ffe4e6, #fb7185);
+          box-shadow: 0 10px 22px rgba(244, 63, 94, 0.24);
+        }
+
+        .metric-coach-alert .metric-coach-arm,
+        .metric-coach-alert .metric-coach-antenna,
+        .metric-coach-alert .metric-coach-antenna::before {
+          background: #fb7185;
+          box-shadow: 0 0 14px rgba(251, 113, 133, 0.62);
+        }
+
+        @keyframes robotCoachEnter {
+          0% {
+            opacity: 0;
+            transform: translate3d(42px, 12px, 0) scale(0.9);
+          }
+          16%,
+          78% {
+            opacity: 1;
+            transform: translate3d(0, 0, 0) scale(1);
+          }
+          100% {
+            opacity: 0;
+            transform: translate3d(12px, -8px, 0) scale(0.96);
+          }
+        }
+
+        @keyframes robotCoachHit {
+          0%,
+          100% {
+            transform: translate3d(0, 0, 0) rotate(0deg);
+          }
+          45% {
+            transform: translate3d(-10px, 8px, 0) rotate(-8deg);
+          }
+          62% {
+            transform: translate3d(-18px, 10px, 0) rotate(-12deg);
+          }
+        }
+
+        @keyframes robotCoachArmHit {
+          0%,
+          100% {
+            transform: rotate(28deg);
+          }
+          54% {
+            transform: rotate(104deg);
+          }
+        }
+
+        @keyframes robotValuePulse {
+          0%,
+          20%,
+          44%,
+          68%,
+          100% {
+            box-shadow: none;
+            transform: translateX(0);
+          }
+          30%,
+          54% {
+            box-shadow: 0 0 0 8px var(--robot-target-glow);
+            transform: translateX(-2px);
+          }
+        }
+
         .premium-dashboard {
           color-scheme: dark;
         }
@@ -3649,6 +3875,13 @@ export default function DashboardPage() {
         }
         @media (prefers-reduced-motion: reduce) {
           .module-slide {
+            animation: none;
+          }
+
+          .metric-coach,
+          .metric-coach-body,
+          .metric-coach-arm-right,
+          .robot-value-target {
             animation: none;
           }
 
@@ -3803,6 +4036,26 @@ function KpiCard({
       </div>
       <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{resolvedValue}</div>
       {subtext ? <div className="mt-1 text-xs font-medium text-slate-400">{subtext}</div> : null}
+    </div>
+  );
+}
+
+function MetricCoachRobot({ tone, message }: { tone: "good" | "alert"; message: string }) {
+  const toneClass = tone === "good" ? "metric-coach-good" : "metric-coach-alert";
+
+  return (
+    <div className={`metric-coach ${toneClass}`} aria-live="polite">
+      <div className="metric-coach-bubble">{message}</div>
+      <div className="metric-coach-body" aria-hidden="true">
+        <div className="metric-coach-antenna" />
+        <div className="metric-coach-head">
+          <span className="metric-coach-eye" />
+          <span className="metric-coach-eye" />
+        </div>
+        <div className="metric-coach-arm metric-coach-arm-left" />
+        <div className="metric-coach-arm metric-coach-arm-right" />
+        <div className="metric-coach-torso" />
+      </div>
     </div>
   );
 }
