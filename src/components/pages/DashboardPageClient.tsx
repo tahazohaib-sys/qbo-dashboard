@@ -957,6 +957,11 @@ export default function DashboardPage() {
     await runActiveTabLoad(tab, nextFilters);
   }
 
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
+
   useEffect(() => {
     applyFiltersRef.current = applyFilters;
   });
@@ -1429,6 +1434,13 @@ export default function DashboardPage() {
               disabled={loading}
             >
               {loading ? "Refreshing..." : "Refresh"}
+            </button>
+
+            <button
+              onClick={logout}
+              className="rounded-2xl border border-white/10 bg-white/[0.07] px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-rose-300/25 hover:bg-rose-400/10 hover:text-white active:scale-[0.99]"
+            >
+              Logout
             </button>
           </div>
         </div>

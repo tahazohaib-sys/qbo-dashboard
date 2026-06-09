@@ -16,6 +16,27 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Dashboard Login Approval
+
+The dashboard is protected by an email/password login flow:
+
+- A user requests access with email and password at `/login`.
+- The user verifies their email.
+- An approval email is sent to `taha.zohaib@rtcleague.com` with Approve and Reject buttons.
+- Approved users can log in. Rejected users are blocked.
+
+Required production environment variables:
+
+```bash
+AUTH_SECRET="replace-with-a-long-random-secret"
+NEXT_PUBLIC_APP_URL="https://your-dashboard-domain.com"
+RESEND_API_KEY="your-resend-api-key"
+AUTH_EMAIL_FROM="QBO Dashboard <your-verified-sender@your-domain.com>"
+AUTH_APPROVER_EMAIL="taha.zohaib@rtcleague.com"
+```
+
+In local development, if `RESEND_API_KEY` is not configured, verification and approval links are returned/logged for testing instead of sending real emails.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
