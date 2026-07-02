@@ -34,12 +34,29 @@ Required production environment variables:
 AUTH_SECRET="replace-with-a-long-random-secret"
 NEXT_PUBLIC_APP_URL="https://your-dashboard-domain.com"
 DATABASE_URL="postgresql://..."
-RESEND_API_KEY="your-resend-api-key"
-AUTH_EMAIL_FROM="QBO Dashboard <your-verified-sender@your-domain.com>"
 AUTH_APPROVER_EMAIL="taha.zohaib@rtcleague.com"
 ```
 
-If `RESEND_API_KEY` is not configured, verification codes and approval links are returned/logged for testing instead of sending real emails. Configure email delivery before production use so real users receive verification and approval emails securely.
+Configure one email sender before production use. If no sender is configured, verification codes and approval links are returned/logged for testing, which is why the login page shows the development verification code.
+
+Option 1: SMTP with Gmail, no custom domain required:
+
+```bash
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT="465"
+SMTP_USER="your-gmail-address@gmail.com"
+SMTP_PASS="your-google-app-password"
+AUTH_EMAIL_FROM="QBO Dashboard <your-gmail-address@gmail.com>"
+```
+
+For Gmail, enable 2-Step Verification on the Google account, create an app password, and use that app password as `SMTP_PASS`. Do not use your normal Gmail password.
+
+Option 2: Resend, best when you have a verified sending domain:
+
+```bash
+RESEND_API_KEY="your-resend-api-key"
+AUTH_EMAIL_FROM="QBO Dashboard <your-verified-sender@your-domain.com>"
+```
 
 ### Free domain / URL option
 
@@ -50,7 +67,7 @@ You do not need to buy a custom domain to deploy this dashboard. The simplest fr
 3. Vercel gives a free URL like `https://your-project-name.vercel.app`.
 4. Set `NEXT_PUBLIC_APP_URL` to that exact Vercel URL so approval links open the correct deployed dashboard.
 
-A free Vercel subdomain is enough for the dashboard URL. For sending email from this code as written, Resend requires a sending domain that you own and verify. If you do not want to buy a domain yet, keep Resend disabled for local testing, or switch the `sendAuthEmail` function to a provider/account that supports your preferred no-domain sender.
+A free Vercel subdomain is enough for the dashboard URL. If you do not want to buy a domain yet, use the Gmail SMTP settings above for verification and approval emails.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
