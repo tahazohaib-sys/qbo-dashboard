@@ -89,7 +89,7 @@ export async function upsertPendingUser(email: string, passwordHash: string) {
   return rows[0];
 }
 
-type AuthTokenType = "email_verify" | "approval";
+type AuthTokenType = "email_verify" | "approval" | "login_code";
 
 export async function createAuthToken(userId: string, tokenType: AuthTokenType, expiresInHours: number) {
   await ensureAuthTables();
@@ -109,25 +109,33 @@ export async function createAuthToken(userId: string, tokenType: AuthTokenType, 
   return rawToken;
 }
 
-export async function createEmailVerificationCode(userId: string) {
+async function createSixDigitCode(userId: string, tokenType: "email_verify" | "login_code") {
   await ensureAuthTables();
   await query(
-    `update dashboard_auth_tokens set consumed_at = now() where user_id = $1 and token_type = 'email_verify' and consumed_at is null`,
-    [userId]
+    `update dashboard_auth_tokens set consumed_at = now() where user_id = $1 and token_type = $2 and consumed_at is null`,
+    [userId, tokenType]
   );
 
   const code = String(crypto.randomInt(100000, 1000000));
   await query(
     `
       insert into dashboard_auth_tokens (token_hash, user_id, token_type, expires_at)
-      values ($1, $2, 'email_verify', now() + interval '15 minutes')
+      values ($1, $2, $3, now() + interval '15 minutes')
     `,
-    [hashToken(code), userId]
+    [hashToken(code), userId, tokenType]
   );
   return code;
 }
 
-export async function consumeEmailVerificationCode(email: string, code: string) {
+export async function createEmailVerificationCode(userId: string) {
+  return createSixDigitCode(userId, "email_verify");
+}
+
+export async function createLoginVerificationCode(userId: string) {
+  return createSixDigitCode(userId, "login_code");
+}
+
+async function consumeSixDigitCode(email: string, code: string, tokenType: "email_verify" | "login_code") {
   await ensureAuthTables();
   const normalizedCode = code.replace(/\D/g, "");
   if (normalizedCode.length !== 6) return null;
@@ -141,14 +149,27 @@ export async function consumeEmailVerificationCode(email: string, code: string) 
       set consumed_at = now()
       where token_hash = $1
         and user_id = $2
-        and token_type = 'email_verify'
+        and token_type = $3
         and consumed_at is null
         and expires_at > now()
       returning user_id
     `,
-    [hashToken(normalizedCode), user.id]
+    [hashToken(normalizedCode), user.id, tokenType]
   );
   return rows[0]?.user_id ?? null;
+}
+
+export async function consumeEmailVerificationCode(email: string, code: string) {
+  return consumeSixDigitCode(email, code, "email_verify");
+}
+
+export async function consumeLoginVerificationCode(email: string, code: string) {
+  const userId = await consumeSixDigitCode(email, code, "login_code");
+  if (!userId) return null;
+
+  const user = await findUserById(userId);
+  if (!user || user.status !== "approved") return null;
+  return user;
 }
 
 export async function consumeAuthToken(rawToken: string, tokenType: AuthTokenType) {
