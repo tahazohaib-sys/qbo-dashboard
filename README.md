@@ -50,7 +50,7 @@ You do not need to buy a custom domain to deploy this dashboard. The simplest fr
 3. Vercel gives a free URL like `https://your-project-name.vercel.app`.
 4. Set `NEXT_PUBLIC_APP_URL` to that exact Vercel URL so approval links open the correct deployed dashboard.
 
-A free Vercel subdomain is enough for the dashboard URL. For sending email from a branded address, most providers require a verified sending domain. If you do not want to buy a domain yet, use a trusted sender option such as a Gmail account with SMTP/app password, or keep Resend only for testing until you have a verified sender domain.
+A free Vercel subdomain is enough for the dashboard URL. For sending email from this code as written, Resend requires a sending domain that you own and verify. If you do not want to buy a domain yet, keep Resend disabled for local testing, or switch the `sendAuthEmail` function to a provider/account that supports your preferred no-domain sender.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
