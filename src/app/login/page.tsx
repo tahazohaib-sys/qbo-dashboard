@@ -40,17 +40,12 @@ function LoginForm() {
     setError("");
 
     try {
-      const endpoint = awaitingCode
-        ? mode === "login"
-          ? "/api/auth/verify-login"
-          : "/api/auth/verify-code"
-        : mode === "login"
-        ? "/api/auth/login"
-        : "/api/auth/register";
+      const endpoint = awaitingCode ? "/api/auth/verify-login" : mode === "login" ? "/api/auth/login" : "/api/auth/register";
+      const payload = awaitingCode ? { email, code: verificationCode } : mode === "login" ? { email, password } : { email };
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(awaitingCode ? { email, code: verificationCode } : { email, password }),
+        body: JSON.stringify(payload),
       });
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Request failed.");
@@ -65,9 +60,7 @@ function LoginForm() {
         json.message ||
           (mode === "login"
             ? "Verification code sent. Enter the code below to finish logging in."
-            : awaitingCode
-            ? "Your request has been forwarded for approval."
-            : "Verification code sent.")
+            : "Your request has been sent for approval.")
       );
       if (json.needsCode) setAwaitingCode(true);
       if (json.devVerificationCode) {
@@ -82,15 +75,13 @@ function LoginForm() {
     }
   }
 
-  const heading = mode === "login" ? (awaitingCode ? "Enter login code" : "Sign in") : awaitingCode ? "Verify your email" : "Request dashboard access";
+  const heading = mode === "login" ? (awaitingCode ? "Enter login code" : "Sign in") : "Request dashboard access";
   const description =
     mode === "login"
       ? awaitingCode
         ? "Enter the six-digit code sent to your approved email address."
-        : "Use an approved email and password. A six-digit login code will be sent to that email."
-      : awaitingCode
-      ? "Enter the verification code sent to your email. After verification, your request will be forwarded for approval."
-      : "Set your email and password. A verification code will be sent to your email before approval is requested.";
+        : "Use an approved email and password. If this is your first approved login, the password you enter will be saved."
+      : "Enter your email to request access. Taha will receive an approval email before your login can start.";
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(900px_620px_at_12%_0%,rgba(37,99,235,0.28),transparent_58%),radial-gradient(900px_680px_at_86%_8%,rgba(14,165,233,0.16),transparent_55%),linear-gradient(180deg,#061429_0%,#050915_44%,#030610_100%)] px-4 py-8 text-slate-100">
@@ -105,7 +96,7 @@ function LoginForm() {
             <div>
               <h1 className="text-4xl font-semibold tracking-tight text-white">Finance Dashboard</h1>
               <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
-                Access is restricted. New users must verify their email and be approved before they can view financial data.
+                Access is restricted. New users must be approved before they can create a login and view financial data.
               </p>
             </div>
           </div>
@@ -158,19 +149,21 @@ function LoginForm() {
                 className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-400/10 disabled:opacity-70"
               />
             </div>
-            <div>
-              <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Password</label>
-              <input
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                type="password"
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
-                required
-                minLength={8}
-                disabled={awaitingCode}
-                className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-400/10 disabled:opacity-70"
-              />
-            </div>
+            {mode === "login" ? (
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Password</label>
+                <input
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  minLength={8}
+                  disabled={awaitingCode}
+                  className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-400/10 disabled:opacity-70"
+                />
+              </div>
+            ) : null}
             {awaitingCode ? (
               <div>
                 <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Verification Code</label>
@@ -192,7 +185,7 @@ function LoginForm() {
             {message ? <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{message}</div> : null}
             {devCode ? (
               <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-sm font-semibold text-cyan-100">
-                Development verification code: <span className="tracking-[0.28em]">{devCode}</span>
+                Development login code: <span className="tracking-[0.28em]">{devCode}</span>
               </div>
             ) : null}
             {devApproval ? (
@@ -208,7 +201,7 @@ function LoginForm() {
               disabled={loading}
               className="h-12 w-full rounded-2xl border border-cyan-300/20 bg-cyan-400/16 px-5 text-sm font-semibold text-cyan-50 shadow-[0_14px_34px_rgba(8,145,178,0.18)] transition hover:bg-cyan-400/22 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Working..." : mode === "login" ? (awaitingCode ? "Verify and Login" : "Send Login Code") : awaitingCode ? "Verify Email" : "Send Verification Code"}
+              {loading ? "Working..." : mode === "login" ? (awaitingCode ? "Verify and Login" : "Send Login Code") : "Request Access"}
             </button>
           </form>
         </div>
