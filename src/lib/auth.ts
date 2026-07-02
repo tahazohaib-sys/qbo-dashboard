@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import tls from "tls";
 import { cookies } from "next/headers";
 
 export const AUTH_COOKIE = "qbo_dashboard_session";
@@ -96,6 +97,109 @@ export function getBaseUrl(request: Request) {
   return process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
 }
 
+function getEmailAddress(value: string) {
+  const match = value.match(/<([^>]+)>/);
+  return (match?.[1] || value).trim();
+}
+
+function normalizeSmtpData(value: string) {
+  return value.replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..");
+}
+
+async function sendSmtpEmail({
+  host,
+  port,
+  user,
+  pass,
+  from,
+  to,
+  subject,
+  html,
+}: {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+}) {
+  await new Promise<void>((resolve, reject) => {
+    const socket = tls.connect({ host, port, servername: host });
+    let buffer = "";
+    let pendingResponse: (() => void) | null = null;
+
+    const fail = (error: Error) => {
+      socket.destroy();
+      reject(error);
+    };
+
+    const readResponse = (expected: number[]) =>
+      new Promise<string>((responseResolve, responseReject) => {
+        pendingResponse = () => {
+          const lines = buffer.split(/\r?\n/);
+          const completeIndex = lines.findIndex((line) => /^\d{3} /.test(line));
+          if (completeIndex === -1) return;
+
+          const responseLines = lines.splice(0, completeIndex + 1);
+          buffer = lines.join("\r\n");
+          pendingResponse = null;
+          const code = Number(responseLines[responseLines.length - 1].slice(0, 3));
+          const response = responseLines.join("\n");
+          if (!expected.includes(code)) {
+            responseReject(new Error(`SMTP email send failed: ${response}`));
+            return;
+          }
+          responseResolve(response);
+        };
+        pendingResponse();
+      });
+
+    const sendCommand = async (command: string, expected: number[]) => {
+      socket.write(`${command}\r\n`);
+      return readResponse(expected);
+    };
+
+    socket.setTimeout(20_000, () => fail(new Error("SMTP email send timed out.")));
+    socket.on("error", fail);
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      pendingResponse?.();
+    });
+
+    socket.once("secureConnect", async () => {
+      try {
+        await readResponse([220]);
+        await sendCommand("EHLO qbo-dashboard", [250]);
+        await sendCommand(`AUTH PLAIN ${Buffer.from(`\0${user}\0${pass}`).toString("base64")}`, [235]);
+        await sendCommand(`MAIL FROM:<${getEmailAddress(from)}>`, [250]);
+        await sendCommand(`RCPT TO:<${getEmailAddress(to)}>`, [250, 251]);
+        await sendCommand("DATA", [354]);
+        socket.write(
+          normalizeSmtpData(
+            [
+              `From: ${from}`,
+              `To: ${to}`,
+              `Subject: ${subject}`,
+              "MIME-Version: 1.0",
+              "Content-Type: text/html; charset=UTF-8",
+              "",
+              html,
+            ].join("\r\n")
+          ) + "\r\n.\r\n"
+        );
+        await readResponse([250]);
+        await sendCommand("QUIT", [221]);
+        socket.end();
+        resolve();
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error("SMTP email send failed."));
+      }
+    });
+  });
+}
+
 export async function sendAuthEmail({
   to,
   subject,
@@ -106,26 +210,45 @@ export async function sendAuthEmail({
   html: string;
 }) {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.AUTH_EMAIL_FROM || "QBO Dashboard <onboarding@resend.dev>";
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const smtpPort = Number(process.env.SMTP_PORT || 465);
+  const from = process.env.AUTH_EMAIL_FROM || smtpUser || "QBO Dashboard <onboarding@resend.dev>";
 
-  if (!apiKey) {
-    console.log(`[auth-email-fallback] To: ${to}\nSubject: ${subject}\n${html}`);
-    return { sent: false, reason: "Email delivery is not configured yet." };
+  if (apiKey) {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, to, subject, html }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Email send failed: ${res.status} ${detail}`);
+    }
+
+    return { sent: true };
   }
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ from, to, subject, html }),
-  });
+  if (smtpHost && smtpUser && smtpPass) {
+    await sendSmtpEmail({
+      host: smtpHost,
+      port: smtpPort,
+      user: smtpUser,
+      pass: smtpPass,
+      from,
+      to,
+      subject,
+      html,
+    });
 
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Email send failed: ${res.status} ${detail}`);
+    return { sent: true };
   }
 
-  return { sent: true };
+  console.log(`[auth-email-fallback] To: ${to}\nSubject: ${subject}\n${html}`);
+  return { sent: false, reason: "Email delivery is not configured yet." };
 }
