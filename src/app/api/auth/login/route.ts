@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { AUTH_COOKIE, createSessionToken, SESSION_MAX_AGE_SECONDS, verifyPassword } from "@/lib/auth";
-import { findUserByEmail } from "@/lib/auth-db";
+import { sendAuthEmail, verifyPassword } from "@/lib/auth";
+import { createLoginVerificationCode, findUserByEmail } from "@/lib/auth-db";
 
 export async function POST(req: Request) {
   try {
@@ -26,15 +26,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "This account is not approved." }, { status: 403 });
     }
 
-    const res = NextResponse.json({ ok: true });
-    res.cookies.set(AUTH_COOKIE, createSessionToken({ sub: user.id, email: user.email }), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: SESSION_MAX_AGE_SECONDS,
+    const verificationCode = await createLoginVerificationCode(user.id);
+    const emailResult = await sendAuthEmail({
+      to: user.email,
+      subject: "Your QBO Dashboard login code",
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
+          <h2>Login verification code</h2>
+          <p>Use this six-digit code to finish signing in to the QBO Dashboard:</p>
+          <div style="display:inline-block;background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;border-radius:12px;padding:12px 18px;font-size:28px;font-weight:800;letter-spacing:6px">${verificationCode}</div>
+          <p>This code expires in 15 minutes. If you did not request it, you can ignore this email.</p>
+        </div>
+      `,
     });
-    return res;
+
+    return NextResponse.json({
+      ok: true,
+      needsCode: true,
+      message: emailResult.sent
+        ? "Verification code sent. Enter the code below to finish logging in."
+        : "Email delivery is not configured yet. Use the development login code below to continue testing this login.",
+      devVerificationCode: emailResult.sent ? undefined : verificationCode,
+    });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Login failed." }, { status: 500 });
   }
