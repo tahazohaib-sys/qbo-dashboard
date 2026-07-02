@@ -18,14 +18,15 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## Dashboard Login Approval
 
-The dashboard is protected by an email/password login flow with approval and a six-digit login code:
+The dashboard is protected by an approval-first login flow:
 
-- A new user requests access with email and password at `/login`.
-- The user verifies their email with a six-digit code sent to that email address.
+- A new user opens `/login`, enters only their email, and clicks Request Access.
 - An approval email is sent to `taha.zohaib@rtcleague.com` with Approve and Reject buttons.
-- Only approved users can start login.
-- During login, the approved user enters email and password, then receives a new six-digit code by email.
-- The dashboard session is created only after the approved user enters the correct login code.
+- Until Taha approves the email, the user cannot log in.
+- After approval, the user opens `/login`, enters the approved email and a password.
+- On the first approved login, that password is saved for the user.
+- A six-digit login code is sent to the approved email.
+- The dashboard session is created only after the user enters the correct login code.
 - Rejected, pending, and unapproved emails are blocked from dashboard access.
 
 Required production environment variables:
@@ -37,7 +38,7 @@ DATABASE_URL="postgresql://..."
 AUTH_APPROVER_EMAIL="taha.zohaib@rtcleague.com"
 ```
 
-Configure one email sender before production use. If no sender is configured, verification codes and approval links are returned/logged for testing, which is why the login page shows the development verification code.
+Configure one email sender before production use. If no sender is configured, approval links and login codes are returned/logged for testing.
 
 Option 1: SMTP with Gmail, no custom domain required:
 
