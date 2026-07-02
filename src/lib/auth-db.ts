@@ -2,12 +2,12 @@ import crypto from "crypto";
 import { query } from "@/lib/db";
 import { createRawToken, hashToken } from "@/lib/auth";
 
-export type DashboardUserStatus = "email_pending" | "approval_pending" | "approved" | "rejected";
+export type DashboardUserStatus = "approval_pending" | "approved" | "rejected";
 
 export type DashboardUser = {
   id: string;
   email: string;
-  password_hash: string;
+  password_hash: string | null;
   status: DashboardUserStatus;
   email_verified_at: Date | null;
 };
@@ -17,8 +17,8 @@ export async function ensureAuthTables() {
     create table if not exists dashboard_users (
       id text primary key,
       email text not null unique,
-      password_hash text not null,
-      status text not null default 'email_pending',
+      password_hash text,
+      status text not null default 'approval_pending',
       email_verified_at timestamptz,
       approved_at timestamptz,
       rejected_at timestamptz,
@@ -26,6 +26,9 @@ export async function ensureAuthTables() {
       updated_at timestamptz not null default now()
     )
   `);
+
+  await query(`alter table dashboard_users alter column password_hash drop not null`);
+  await query(`alter table dashboard_users alter column status set default 'approval_pending'`);
 
   await query(`
     create table if not exists dashboard_auth_tokens (
@@ -59,37 +62,43 @@ export async function findUserById(id: string): Promise<DashboardUser | null> {
   return rows[0] ?? null;
 }
 
-export async function upsertPendingUser(email: string, passwordHash: string) {
+export async function upsertAccessRequest(email: string) {
   await ensureAuthTables();
   const id = crypto.randomUUID();
   const { rows } = await query<DashboardUser>(
     `
       insert into dashboard_users (id, email, password_hash, status, email_verified_at, approved_at, rejected_at, updated_at)
-      values ($1, lower($2), $3, 'email_pending', null, null, null, now())
+      values ($1, lower($2), null, 'approval_pending', null, null, null, now())
       on conflict (email) do update set
-        password_hash = excluded.password_hash,
         status = case
           when dashboard_users.status = 'approved' then dashboard_users.status
-          else 'email_pending'
-        end,
-        email_verified_at = case
-          when dashboard_users.status = 'approved' then dashboard_users.email_verified_at
-          else null
-        end,
-        approved_at = case
-          when dashboard_users.status = 'approved' then dashboard_users.approved_at
-          else null
+          else 'approval_pending'
         end,
         rejected_at = null,
         updated_at = now()
       returning id, email, password_hash, status, email_verified_at
     `,
-    [id, email, passwordHash]
+    [id, email]
   );
   return rows[0];
 }
 
-type AuthTokenType = "email_verify" | "approval" | "login_code";
+export async function setUserPassword(userId: string, passwordHash: string) {
+  await ensureAuthTables();
+  const { rows } = await query<DashboardUser>(
+    `
+      update dashboard_users
+      set password_hash = $2,
+          updated_at = now()
+      where id = $1
+      returning id, email, password_hash, status, email_verified_at
+    `,
+    [userId, passwordHash]
+  );
+  return rows[0] ?? null;
+}
+
+type AuthTokenType = "approval" | "login_code";
 
 export async function createAuthToken(userId: string, tokenType: AuthTokenType, expiresInHours: number) {
   await ensureAuthTables();
@@ -109,39 +118,31 @@ export async function createAuthToken(userId: string, tokenType: AuthTokenType, 
   return rawToken;
 }
 
-async function createSixDigitCode(userId: string, tokenType: "email_verify" | "login_code") {
+export async function createLoginVerificationCode(userId: string) {
   await ensureAuthTables();
   await query(
-    `update dashboard_auth_tokens set consumed_at = now() where user_id = $1 and token_type = $2 and consumed_at is null`,
-    [userId, tokenType]
+    `update dashboard_auth_tokens set consumed_at = now() where user_id = $1 and token_type = 'login_code' and consumed_at is null`,
+    [userId]
   );
 
   const code = String(crypto.randomInt(100000, 1000000));
   await query(
     `
       insert into dashboard_auth_tokens (token_hash, user_id, token_type, expires_at)
-      values ($1, $2, $3, now() + interval '15 minutes')
+      values ($1, $2, 'login_code', now() + interval '15 minutes')
     `,
-    [hashToken(code), userId, tokenType]
+    [hashToken(code), userId]
   );
   return code;
 }
 
-export async function createEmailVerificationCode(userId: string) {
-  return createSixDigitCode(userId, "email_verify");
-}
-
-export async function createLoginVerificationCode(userId: string) {
-  return createSixDigitCode(userId, "login_code");
-}
-
-async function consumeSixDigitCode(email: string, code: string, tokenType: "email_verify" | "login_code") {
+export async function consumeLoginVerificationCode(email: string, code: string) {
   await ensureAuthTables();
   const normalizedCode = code.replace(/\D/g, "");
   if (normalizedCode.length !== 6) return null;
 
   const user = await findUserByEmail(email);
-  if (!user) return null;
+  if (!user || user.status !== "approved") return null;
 
   const { rows } = await query<{ user_id: string }>(
     `
@@ -149,27 +150,14 @@ async function consumeSixDigitCode(email: string, code: string, tokenType: "emai
       set consumed_at = now()
       where token_hash = $1
         and user_id = $2
-        and token_type = $3
+        and token_type = 'login_code'
         and consumed_at is null
         and expires_at > now()
       returning user_id
     `,
-    [hashToken(normalizedCode), user.id, tokenType]
+    [hashToken(normalizedCode), user.id]
   );
-  return rows[0]?.user_id ?? null;
-}
-
-export async function consumeEmailVerificationCode(email: string, code: string) {
-  return consumeSixDigitCode(email, code, "email_verify");
-}
-
-export async function consumeLoginVerificationCode(email: string, code: string) {
-  const userId = await consumeSixDigitCode(email, code, "login_code");
-  if (!userId) return null;
-
-  const user = await findUserById(userId);
-  if (!user || user.status !== "approved") return null;
-  return user;
+  return rows[0]?.user_id ? user : null;
 }
 
 export async function consumeAuthToken(rawToken: string, tokenType: AuthTokenType) {
@@ -188,23 +176,6 @@ export async function consumeAuthToken(rawToken: string, tokenType: AuthTokenTyp
     [hashed, tokenType]
   );
   return rows[0]?.user_id ?? null;
-}
-
-export async function markEmailVerified(userId: string) {
-  await ensureAuthTables();
-  const { rows } = await query<DashboardUser>(
-    `
-      update dashboard_users
-      set status = case when status = 'approved' then 'approved' else 'approval_pending' end,
-          email_verified_at = coalesce(email_verified_at, now()),
-          rejected_at = null,
-          updated_at = now()
-      where id = $1
-      returning id, email, password_hash, status, email_verified_at
-    `,
-    [userId]
-  );
-  return rows[0] ?? null;
 }
 
 export async function decideUserApproval(userId: string, decision: "approve" | "reject") {
