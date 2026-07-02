@@ -21,6 +21,16 @@ function LoginForm() {
   const [devApproval, setDevApproval] = useState<{ approveUrl: string; rejectUrl: string } | null>(null);
   const [error, setError] = useState("");
 
+  function resetFlow(nextMode: Mode) {
+    setMode(nextMode);
+    setAwaitingCode(false);
+    setVerificationCode("");
+    setMessage("");
+    setDevCode("");
+    setDevApproval(null);
+    setError("");
+  }
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
@@ -30,7 +40,13 @@ function LoginForm() {
     setError("");
 
     try {
-      const endpoint = mode === "login" ? "/api/auth/login" : awaitingCode ? "/api/auth/verify-code" : "/api/auth/register";
+      const endpoint = awaitingCode
+        ? mode === "login"
+          ? "/api/auth/verify-login"
+          : "/api/auth/verify-code"
+        : mode === "login"
+        ? "/api/auth/login"
+        : "/api/auth/register";
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -39,13 +55,20 @@ function LoginForm() {
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Request failed.");
 
-      if (mode === "login") {
+      if (mode === "login" && awaitingCode) {
         router.push(next);
         router.refresh();
         return;
       }
 
-      setMessage(json.message || (awaitingCode ? "Your request has been forwarded for approval." : "Verification code sent."));
+      setMessage(
+        json.message ||
+          (mode === "login"
+            ? "Verification code sent. Enter the code below to finish logging in."
+            : awaitingCode
+            ? "Your request has been forwarded for approval."
+            : "Verification code sent.")
+      );
       if (json.needsCode) setAwaitingCode(true);
       if (json.devVerificationCode) {
         setVerificationCode(json.devVerificationCode);
@@ -58,6 +81,16 @@ function LoginForm() {
       setLoading(false);
     }
   }
+
+  const heading = mode === "login" ? (awaitingCode ? "Enter login code" : "Sign in") : awaitingCode ? "Verify your email" : "Request dashboard access";
+  const description =
+    mode === "login"
+      ? awaitingCode
+        ? "Enter the six-digit code sent to your approved email address."
+        : "Use an approved email and password. A six-digit login code will be sent to that email."
+      : awaitingCode
+      ? "Enter the verification code sent to your email. After verification, your request will be forwarded for approval."
+      : "Set your email and password. A verification code will be sent to your email before approval is requested.";
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(900px_620px_at_12%_0%,rgba(37,99,235,0.28),transparent_58%),radial-gradient(900px_680px_at_86%_8%,rgba(14,165,233,0.16),transparent_55%),linear-gradient(180deg,#061429_0%,#050915_44%,#030610_100%)] px-4 py-8 text-slate-100">
@@ -90,10 +123,7 @@ function LoginForm() {
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
-                onClick={() => {
-                  setMode("login");
-                  setAwaitingCode(false);
-                }}
+                onClick={() => resetFlow("login")}
                 className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
                   mode === "login" ? "bg-cyan-400/18 text-cyan-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]" : "text-slate-400 hover:text-white"
                 }`}
@@ -102,10 +132,7 @@ function LoginForm() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setMode("request");
-                  setAwaitingCode(false);
-                }}
+                onClick={() => resetFlow("request")}
                 className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
                   mode === "request" ? "bg-cyan-400/18 text-cyan-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]" : "text-slate-400 hover:text-white"
                 }`}
@@ -115,16 +142,8 @@ function LoginForm() {
             </div>
           </div>
 
-          <h2 className="text-2xl font-semibold tracking-tight text-white">
-            {mode === "login" ? "Sign in" : awaitingCode ? "Verify your email" : "Request dashboard access"}
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            {mode === "login"
-              ? "Use an approved email and password to continue."
-              : awaitingCode
-              ? "Enter the verification code sent to your email. After verification, your request will be forwarded for approval."
-              : "Set your email and password. A verification code will be sent to your email before approval is requested."}
-          </p>
+          <h2 className="text-2xl font-semibold tracking-tight text-white">{heading}</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-400">{description}</p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div>
@@ -135,7 +154,8 @@ function LoginForm() {
                 type="email"
                 autoComplete="email"
                 required
-                className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-400/10"
+                disabled={awaitingCode}
+                className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-400/10 disabled:opacity-70"
               />
             </div>
             <div>
@@ -148,10 +168,10 @@ function LoginForm() {
                 required
                 minLength={8}
                 disabled={awaitingCode}
-                className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-400/10"
+                className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-white outline-none transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-400/10 disabled:opacity-70"
               />
             </div>
-            {mode === "request" && awaitingCode ? (
+            {awaitingCode ? (
               <div>
                 <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Verification Code</label>
                 <input
@@ -188,7 +208,7 @@ function LoginForm() {
               disabled={loading}
               className="h-12 w-full rounded-2xl border border-cyan-300/20 bg-cyan-400/16 px-5 text-sm font-semibold text-cyan-50 shadow-[0_14px_34px_rgba(8,145,178,0.18)] transition hover:bg-cyan-400/22 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Working..." : mode === "login" ? "Login" : awaitingCode ? "Verify Email" : "Send Verification Code"}
+              {loading ? "Working..." : mode === "login" ? (awaitingCode ? "Verify and Login" : "Send Login Code") : awaitingCode ? "Verify Email" : "Send Verification Code"}
             </button>
           </form>
         </div>
