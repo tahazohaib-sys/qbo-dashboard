@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { sendAuthEmail, verifyPassword } from "@/lib/auth";
-import { createLoginVerificationCode, findUserByEmail } from "@/lib/auth-db";
+import { hashPassword, sendAuthEmail, verifyPassword } from "@/lib/auth";
+import { createLoginVerificationCode, findUserByEmail, setUserPassword } from "@/lib/auth-db";
 
 export async function POST(req: Request) {
   try {
@@ -8,14 +8,15 @@ export async function POST(req: Request) {
     const email = String(body?.email ?? "").trim().toLowerCase();
     const password = String(body?.password ?? "");
 
-    const user = await findUserByEmail(email);
-    if (!user || !verifyPassword(password, user.password_hash)) {
-      return NextResponse.json({ ok: false, error: "Invalid email or password." }, { status: 401 });
+    if (password.length < 8) {
+      return NextResponse.json({ ok: false, error: "Password must be at least 8 characters." }, { status: 400 });
     }
 
-    if (user.status === "email_pending") {
-      return NextResponse.json({ ok: false, error: "Please verify your email before logging in." }, { status: 403 });
+    let user = await findUserByEmail(email);
+    if (!user) {
+      return NextResponse.json({ ok: false, error: "This email is not approved for dashboard access." }, { status: 401 });
     }
+
     if (user.status === "approval_pending") {
       return NextResponse.json({ ok: false, error: "Your access request is waiting for approval." }, { status: 403 });
     }
@@ -24,6 +25,15 @@ export async function POST(req: Request) {
     }
     if (user.status !== "approved") {
       return NextResponse.json({ ok: false, error: "This account is not approved." }, { status: 403 });
+    }
+
+    if (user.password_hash) {
+      if (!verifyPassword(password, user.password_hash)) {
+        return NextResponse.json({ ok: false, error: "Invalid email or password." }, { status: 401 });
+      }
+    } else {
+      user = await setUserPassword(user.id, hashPassword(password));
+      if (!user) return NextResponse.json({ ok: false, error: "Could not set password for this account." }, { status: 500 });
     }
 
     const verificationCode = await createLoginVerificationCode(user.id);
