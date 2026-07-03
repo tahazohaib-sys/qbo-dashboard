@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 
 function AccessShell({ children }: { children: React.ReactNode }) {
   return (
@@ -55,6 +56,7 @@ function AccessShell({ children }: { children: React.ReactNode }) {
 }
 
 export default function RequestAccessPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -77,6 +79,13 @@ export default function RequestAccessPage() {
       });
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Request failed.");
+
+      if (json.alreadyApproved && json.loginUrl) {
+        setMessage(json.message || "This email is approved. Redirecting to login.");
+        router.push(json.loginUrl);
+        return;
+      }
+
       setSubmitted(true);
       setMessage(json.message || "Wait for Approval. Your request has been sent to Taha.");
       if (json.devApproval) setDevApproval(json.devApproval);
@@ -121,6 +130,7 @@ export default function RequestAccessPage() {
                 />
               </div>
               {error ? <div className="rounded-2xl border border-rose-300/30 bg-rose-500/12 p-3 text-sm font-medium text-rose-100">{error}</div> : null}
+              {message ? <div className="rounded-2xl border border-emerald-300/30 bg-emerald-500/12 p-3 text-sm font-medium text-emerald-100">{message}</div> : null}
               <button
                 type="submit"
                 disabled={loading}
