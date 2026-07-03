@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { hashPassword, sendAuthEmail, verifyPassword } from "@/lib/auth";
-import { createLoginVerificationCode, findUserByEmail, setUserPassword } from "@/lib/auth-db";
+import { hashPassword, isAdminEmail, sendAuthEmail, verifyPassword } from "@/lib/auth";
+import { createLoginVerificationCode, ensureAdminUser, findUserByEmail, setUserPassword } from "@/lib/auth-db";
 
 export async function POST(req: Request) {
   try {
@@ -12,19 +12,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Password must be at least 8 characters." }, { status: 400 });
     }
 
-    let user = await findUserByEmail(email);
+    let user = isAdminEmail(email) ? await ensureAdminUser(email) : await findUserByEmail(email);
     if (!user) {
       return NextResponse.json({ ok: false, error: "This email is not approved for dashboard access." }, { status: 401 });
     }
 
-    if (user.status === "approval_pending") {
-      return NextResponse.json({ ok: false, error: "Your access request is waiting for approval." }, { status: 403 });
-    }
-    if (user.status === "rejected") {
-      return NextResponse.json({ ok: false, error: "Your access request was rejected." }, { status: 403 });
-    }
-    if (user.status !== "approved") {
-      return NextResponse.json({ ok: false, error: "This account is not approved." }, { status: 403 });
+    if (!isAdminEmail(email)) {
+      if (user.status === "approval_pending") {
+        return NextResponse.json({ ok: false, error: "Your access request is waiting for approval." }, { status: 403 });
+      }
+      if (user.status === "rejected") {
+        return NextResponse.json({ ok: false, error: "Your access request was rejected." }, { status: 403 });
+      }
+      if (user.status !== "approved") {
+        return NextResponse.json({ ok: false, error: "This account is not approved." }, { status: 403 });
+      }
     }
 
     if (user.password_hash) {
@@ -53,6 +55,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       needsCode: true,
+      isAdmin: isAdminEmail(user.email),
       message: emailResult.sent
         ? "Verification code sent. Enter the code below to finish logging in."
         : "Email delivery is not configured yet. Use the development login code below to continue testing this login.",
