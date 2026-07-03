@@ -47,21 +47,6 @@ function AccessShell({ children }: { children: React.ReactNode }) {
               <h1 className="mt-2 max-w-xl text-5xl font-black leading-[0.95] tracking-tight text-white">Finance Dashboard</h1>
             </div>
           </div>
-          <p className="mt-7 max-w-2xl text-lg leading-8 text-slate-300">
-            Access is controlled through approval first. Submit your email, then wait for Taha to approve your request before login begins.
-          </p>
-          <div className="mt-8 grid max-w-2xl grid-cols-3 gap-3">
-            {[
-              ["01", "Request"],
-              ["02", "Approval"],
-              ["03", "Secure login"],
-            ].map(([step, label]) => (
-              <div key={step} className="rounded-2xl border border-white/10 bg-white/[0.045] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
-                <div className="text-xs font-black tracking-[0.24em] text-cyan-200/80">{step}</div>
-                <div className="mt-2 text-sm font-semibold text-white">{label}</div>
-              </div>
-            ))}
-          </div>
         </div>
         {children}
       </section>
@@ -120,7 +105,6 @@ export default function RequestAccessPage() {
             <div className="rounded-[24px] border border-white/10 bg-white/[0.045] p-4">
               <p className="text-xs font-bold uppercase tracking-[0.28em] text-cyan-200/80">Access Gateway</p>
               <h2 className="mt-3 text-3xl font-black tracking-tight text-white">Request access</h2>
-              <p className="mt-3 text-sm leading-6 text-slate-300">Enter your work email. Taha will receive an approval email before login is available.</p>
             </div>
 
             <form onSubmit={submit} className="mt-6 space-y-5">
