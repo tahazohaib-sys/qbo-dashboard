@@ -15,14 +15,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Enter a valid email address." }, { status: 400 });
     }
 
+    const baseUrl = getBaseUrl(req);
+    const loginUrl = `${baseUrl}/login?approved=1&email=${encodeURIComponent(email)}`;
     const existing = await findUserByEmail(email);
     if (existing?.status === "approved") {
-      return NextResponse.json({ ok: false, error: "This email is already approved. Please log in." }, { status: 409 });
+      return NextResponse.json({
+        ok: true,
+        alreadyApproved: true,
+        loginUrl,
+        message: "This email is already approved. Redirecting to login.",
+      });
     }
 
     const user = await upsertAccessRequest(email);
     const approvalToken = await createAuthToken(user.id, "approval", 72);
-    const baseUrl = getBaseUrl(req);
     const approveUrl = `${baseUrl}/api/auth/decision?token=${encodeURIComponent(approvalToken)}&decision=approve`;
     const rejectUrl = `${baseUrl}/api/auth/decision?token=${encodeURIComponent(approvalToken)}&decision=reject`;
 
