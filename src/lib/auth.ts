@@ -9,8 +9,17 @@ export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 type SessionPayload = {
   sub: string;
   email: string;
+  isAdmin?: boolean;
   exp: number;
 };
+
+export function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+export function isAdminEmail(email: string) {
+  return normalizeEmail(email) === normalizeEmail(ADMIN_APPROVER_EMAIL);
+}
 
 function getAuthSecret() {
   const secret = process.env.AUTH_SECRET;
@@ -36,6 +45,7 @@ function sign(value: string) {
 export function createSessionToken(payload: Omit<SessionPayload, "exp">) {
   const body = base64UrlJson({
     ...payload,
+    isAdmin: payload.isAdmin ?? isAdminEmail(payload.email),
     exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS,
   });
   return `${body}.${sign(body)}`;
@@ -55,7 +65,7 @@ export function verifySessionToken(token: string | undefined): SessionPayload | 
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as SessionPayload;
     if (!payload?.sub || !payload?.email || !payload?.exp) return null;
     if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
-    return payload;
+    return { ...payload, isAdmin: payload.isAdmin ?? isAdminEmail(payload.email) };
   } catch {
     return null;
   }
