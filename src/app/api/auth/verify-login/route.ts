@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AUTH_COOKIE, createSessionToken, SESSION_MAX_AGE_SECONDS } from "@/lib/auth";
+import { AUTH_COOKIE, createSessionToken, isAdminEmail, SESSION_MAX_AGE_SECONDS } from "@/lib/auth";
 import { consumeLoginVerificationCode } from "@/lib/auth-db";
 
 export async function POST(req: Request) {
@@ -13,8 +13,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Invalid or expired login code." }, { status: 400 });
     }
 
-    const res = NextResponse.json({ ok: true });
-    res.cookies.set(AUTH_COOKIE, createSessionToken({ sub: user.id, email: user.email }), {
+    const isAdmin = isAdminEmail(user.email);
+    const res = NextResponse.json({ ok: true, isAdmin });
+    res.cookies.set(AUTH_COOKIE, createSessionToken({ sub: user.id, email: user.email, isAdmin }), {
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
