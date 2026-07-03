@@ -9,7 +9,8 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const next = searchParams.get("next") || "/dashboard";
   const approved = searchParams.get("approved") === "1";
-  const [email, setEmail] = useState("");
+  const initialEmail = searchParams.get("email") || "";
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
   const [awaitingCode, setAwaitingCode] = useState(false);
