@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { ADMIN_APPROVER_EMAIL, getBaseUrl, sendAuthEmail } from "@/lib/auth";
-import { createAuthToken, findUserByEmail, upsertAccessRequest } from "@/lib/auth-db";
+import { ADMIN_APPROVER_EMAIL, getBaseUrl, isAdminEmail, sendAuthEmail } from "@/lib/auth";
+import { createAuthToken, ensureAdminUser, findUserByEmail, upsertAccessRequest } from "@/lib/auth-db";
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -17,6 +17,18 @@ export async function POST(req: Request) {
 
     const baseUrl = getBaseUrl(req);
     const loginUrl = `${baseUrl}/login?approved=1&email=${encodeURIComponent(email)}`;
+
+    if (isAdminEmail(email)) {
+      await ensureAdminUser(email);
+      return NextResponse.json({
+        ok: true,
+        alreadyApproved: true,
+        isAdmin: true,
+        loginUrl,
+        message: "Admin email is approved. Redirecting to login.",
+      });
+    }
+
     const existing = await findUserByEmail(email);
     if (existing?.status === "approved") {
       return NextResponse.json({
