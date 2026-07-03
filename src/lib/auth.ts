@@ -94,7 +94,14 @@ export function hashToken(rawToken: string) {
 }
 
 export function getBaseUrl(request: Request) {
-  return process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const forwardedProto = request.headers.get("x-forwarded-proto") || "https";
+  if (forwardedHost) return `${forwardedProto}://${forwardedHost}`;
+
+  const requestOrigin = new URL(request.url).origin;
+  if (requestOrigin) return requestOrigin;
+
+  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 }
 
 function getEmailAddress(value: string) {
