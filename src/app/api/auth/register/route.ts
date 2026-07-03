@@ -40,6 +40,10 @@ export async function POST(req: Request) {
     }
 
     const user = await upsertAccessRequest(email);
+    if (!user) {
+      return NextResponse.json({ ok: false, error: "Could not create this access request." }, { status: 500 });
+    }
+
     const approvalToken = await createAuthToken(user.id, "approval", 72);
     const approveUrl = `${baseUrl}/api/auth/decision?token=${encodeURIComponent(approvalToken)}&decision=approve`;
     const rejectUrl = `${baseUrl}/api/auth/decision?token=${encodeURIComponent(approvalToken)}&decision=reject`;
