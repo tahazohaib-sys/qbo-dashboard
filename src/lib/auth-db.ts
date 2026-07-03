@@ -12,6 +12,13 @@ export type DashboardUser = {
   email_verified_at: Date | null;
 };
 
+export type DashboardAccessUser = DashboardUser & {
+  approved_at: Date | null;
+  rejected_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+};
+
 export async function ensureAuthTables() {
   await query(`
     create table if not exists dashboard_users (
@@ -80,6 +87,37 @@ export async function findUserById(id: string): Promise<DashboardUser | null> {
   const { rows } = await query<DashboardUser>(
     `select id, email, password_hash, status, email_verified_at from dashboard_users where id = $1 limit 1`,
     [id]
+  );
+  return rows[0] ?? null;
+}
+
+export async function listDashboardAccessUsers() {
+  await ensureAuthTables();
+  const { rows } = await query<DashboardAccessUser>(
+    `
+      select id, email, password_hash, status, email_verified_at, approved_at, rejected_at, created_at, updated_at
+      from dashboard_users
+      order by
+        case status when 'approval_pending' then 0 when 'approved' then 1 else 2 end,
+        updated_at desc
+    `
+  );
+  return rows;
+}
+
+export async function setDashboardUserStatus(userId: string, status: DashboardUserStatus) {
+  await ensureAuthTables();
+  const { rows } = await query<DashboardAccessUser>(
+    `
+      update dashboard_users
+      set status = $2,
+          approved_at = case when $2 = 'approved' then now() else approved_at end,
+          rejected_at = case when $2 = 'rejected' then now() else null end,
+          updated_at = now()
+      where id = $1
+      returning id, email, password_hash, status, email_verified_at, approved_at, rejected_at, created_at, updated_at
+    `,
+    [userId, status]
   );
   return rows[0] ?? null;
 }
