@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { query } from "@/lib/db";
-import { createRawToken, hashToken } from "@/lib/auth";
+import { createRawToken, hashToken, isAdminEmail } from "@/lib/auth";
 
 export type DashboardUserStatus = "approval_pending" | "approved" | "rejected";
 
@@ -44,6 +44,28 @@ export async function ensureAuthTables() {
   await query(`create index if not exists dashboard_auth_tokens_user_idx on dashboard_auth_tokens(user_id)`);
 }
 
+export async function ensureAdminUser(email: string) {
+  await ensureAuthTables();
+  if (!isAdminEmail(email)) return null;
+
+  const id = crypto.randomUUID();
+  const { rows } = await query<DashboardUser>(
+    `
+      insert into dashboard_users (id, email, password_hash, status, email_verified_at, approved_at, rejected_at, updated_at)
+      values ($1, lower($2), null, 'approved', now(), now(), null, now())
+      on conflict (email) do update set
+        status = 'approved',
+        email_verified_at = coalesce(dashboard_users.email_verified_at, now()),
+        approved_at = coalesce(dashboard_users.approved_at, now()),
+        rejected_at = null,
+        updated_at = now()
+      returning id, email, password_hash, status, email_verified_at
+    `,
+    [id, email]
+  );
+  return rows[0] ?? null;
+}
+
 export async function findUserByEmail(email: string): Promise<DashboardUser | null> {
   await ensureAuthTables();
   const { rows } = await query<DashboardUser>(
@@ -64,6 +86,8 @@ export async function findUserById(id: string): Promise<DashboardUser | null> {
 
 export async function upsertAccessRequest(email: string) {
   await ensureAuthTables();
+  if (isAdminEmail(email)) return ensureAdminUser(email);
+
   const id = crypto.randomUUID();
   const { rows } = await query<DashboardUser>(
     `
