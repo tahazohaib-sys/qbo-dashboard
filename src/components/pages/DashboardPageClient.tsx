@@ -1383,8 +1383,8 @@ export default function DashboardPage() {
       <div className="relative z-10 mx-auto w-full max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8">
         <div className="premium-topbar flex flex-col gap-4 rounded-[28px] border border-white/10 bg-[#070d1c]/78 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
-            <div className="relative h-14 w-14 shrink-0 rounded-2xl border border-white/10 bg-white/5 p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
-              <Image src="/logo.png" alt="RTC League Logo" fill className="object-contain" priority />
+            <div className="relative flex h-14 shrink-0 items-center rounded-2xl border border-white/10 bg-white/5 px-3 shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
+              <Image src="/logo.png" alt="RTC League Logo" width={264} height={100} priority className="h-auto w-[120px] select-none" />
             </div>
 
             <div>
