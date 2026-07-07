@@ -570,9 +570,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
   const [err, setErr] = useState<string>("");
   const [lastUpdated, setLastUpdated] = useState("--:--:--");
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const applyFiltersRef = useRef<() => Promise<void>>(async () => {});
   const requestIdRef = useRef(0);
   const moduleCacheRef = useRef<Map<string, any>>(new Map());
   const hasInitializedRef = useRef(false);
@@ -963,10 +960,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
   }
 
   useEffect(() => {
-    applyFiltersRef.current = applyFilters;
-  });
-
-  useEffect(() => {
     applyFilters();
     hasInitializedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -994,39 +987,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
     runActiveTabLoad("forecast", appliedFilters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forecastHorizon]);
-
-  useEffect(() => {
-    if (!autoRefresh) {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-      return;
-    }
-
-    const runRefresh = () => {
-      if (document.visibilityState === "visible") {
-        applyFiltersRef.current();
-      }
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        runRefresh();
-      }
-    };
-
-    refreshTimerRef.current = setInterval(runRefresh, 30_000);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [autoRefresh]);
 
   const series = data?.series ?? [];
   const kpi = data?.kpis?.ytd ?? { revenue: 0, expenses: 0, profit: 0 };
@@ -1100,11 +1060,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
     ? series.reduce((best, s) => s.profit > best.profit ? s : best, series[0])
     : { month: "—", profit: 0 };
   const expenseRatio: number | null = kpi.revenue > 0 ? kpi.expenses / kpi.revenue : null;
-
-  const headerAsOf = useMemo(() => {
-    if (!data?.asOf) return "";
-    return new Date(data.asOf).toLocaleString();
-  }, [data?.asOf]);
 
   const currencyTotals = useMemo(() => {
     const t = cashBanks?.totalsByCurrency ?? {};
@@ -1392,42 +1347,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-2xl border border-emerald-300/20 bg-emerald-400/10 px-3.5 py-2.5 text-xs text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-              <span className="relative inline-flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300/60 motion-reduce:animate-none" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300" />
-              </span>
-              <span className="font-semibold uppercase tracking-[0.14em]">Live</span>
-              <span className="text-emerald-100/80">Last updated: {lastUpdated}</span>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-white/[0.07] px-3.5 py-2.5 text-xs text-slate-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
-              <div className="font-medium text-slate-200">
-                Company: {data?.companyName ?? "—"} ({data?.currency ?? "PKR"})
-              </div>
-              <div className="opacity-80">As of: {headerAsOf || "—"}</div>
-            </div>
-
-            <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.07] px-3.5 py-2.5 text-xs text-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
-              <span className="uppercase tracking-[0.12em]">Auto refresh</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoRefresh}
-                onClick={() => setAutoRefresh((prev) => !prev)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
-                  autoRefresh ? "border-cyan-300/50 bg-cyan-400/30" : "border-white/15 bg-white/10"
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
-                    autoRefresh ? "translate-x-5" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </label>
-
+          <div className="flex flex-nowrap items-center gap-2">
             <button
               onClick={applyFilters}
               className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-50 shadow-[0_12px_28px_rgba(8,145,178,0.12)] transition hover:bg-cyan-400/15 active:scale-[0.99]"
