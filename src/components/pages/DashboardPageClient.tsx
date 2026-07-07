@@ -510,7 +510,7 @@ function WorldMapVideoBackground(): React.JSX.Element {
   );
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const years = useMemo(() => ymOptions(6), []);
   const now = new Date();
 
@@ -1435,6 +1435,15 @@ export default function DashboardPage() {
             >
               {loading ? "Refreshing..." : "Refresh"}
             </button>
+
+            {isAdmin ? (
+              <Link
+                href="/admin/access"
+                className="rounded-2xl border border-emerald-300/25 bg-emerald-400/15 px-4 py-2.5 text-sm font-bold text-emerald-50 shadow-[0_12px_28px_rgba(16,185,129,0.15)] transition hover:bg-emerald-400/22 active:scale-[0.99]"
+              >
+                Manage Access
+              </Link>
+            ) : null}
 
             <button
               onClick={logout}
