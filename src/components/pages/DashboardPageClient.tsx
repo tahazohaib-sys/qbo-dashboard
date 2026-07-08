@@ -1354,7 +1354,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
       <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-blue-500/10 to-transparent" />
       <WorldMapVideoBackground />
 
-      <div className="relative z-10 mx-auto flex w-full max-w-[1620px] items-start gap-5 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="relative z-10 mx-auto flex w-full max-w-[1620px] items-stretch gap-5 px-4 py-6 sm:px-6 lg:px-8">
         <Sidebar
           tab={tab}
           onSelect={switchTab}
@@ -4041,10 +4041,12 @@ function Sidebar({
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }) {
+  const barDelays = [0, 0.18, 0.36, 0.54, 0.72, 0.9, 1.08];
+
   return (
     <aside
       className={[
-        "relative z-10 hidden shrink-0 flex-col self-start rounded-[28px] border border-white/10 bg-[#070d1c]/78 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl transition-[width] duration-300 ease-in-out md:flex",
+        "relative z-10 hidden shrink-0 flex-col rounded-[28px] border border-white/10 bg-[#070d1c]/78 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl transition-[width] duration-300 ease-in-out md:flex",
         collapsed ? "w-[84px]" : "w-[268px]",
       ].join(" ")}
     >
@@ -4072,6 +4074,71 @@ function Sidebar({
           <SidebarNavItem key={item.key} item={item} active={tab === item.key} collapsed={collapsed} onSelect={() => onSelect(item.key)} />
         ))}
       </nav>
+
+      <div className="mt-2 flex flex-1 flex-col justify-end overflow-hidden border-t border-white/5 px-3 pb-5 pt-4">
+        {!collapsed ? (
+          <div className="mb-3 text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">Market Pulse</div>
+        ) : null}
+
+        <div className={`sidebar-eq flex items-end gap-1.5 ${collapsed ? "h-14 justify-center" : "h-20"}`}>
+          {barDelays.map((delay, i) => (
+            <span
+              key={i}
+              className="sidebar-eq-bar w-1.5 rounded-full bg-gradient-to-t from-cyan-400/60 to-emerald-300/60"
+              style={{ height: collapsed ? "36px" : "52px", animationDelay: `${delay}s` }}
+            />
+          ))}
+        </div>
+
+        {!collapsed ? (
+          <svg className="sidebar-spark mt-5 h-12 w-full overflow-visible text-cyan-300/45" viewBox="0 0 200 48" fill="none" preserveAspectRatio="none">
+            <path d="M0 38 L28 30 L56 34 L84 18 L112 24 L140 10 L168 16 L200 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <circle className="sidebar-spark-dot" cx="200" cy="4" r="3.5" fill="currentColor" />
+          </svg>
+        ) : null}
+      </div>
+
+      <style jsx>{`
+        @keyframes sidebar-eq-bounce {
+          0%,
+          100% {
+            transform: scaleY(0.32);
+          }
+          25% {
+            transform: scaleY(0.95);
+          }
+          50% {
+            transform: scaleY(0.55);
+          }
+          75% {
+            transform: scaleY(0.78);
+          }
+        }
+        .sidebar-eq-bar {
+          transform-origin: bottom;
+          animation: sidebar-eq-bounce 2.6s ease-in-out infinite;
+        }
+        @keyframes sidebar-spark-pulse {
+          0%,
+          100% {
+            opacity: 0.5;
+            r: 3.5;
+          }
+          50% {
+            opacity: 1;
+            r: 5;
+          }
+        }
+        .sidebar-spark-dot {
+          animation: sidebar-spark-pulse 2.2s ease-in-out infinite;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .sidebar-eq-bar,
+          .sidebar-spark-dot {
+            animation: none;
+          }
+        }
+      `}</style>
     </aside>
   );
 }
