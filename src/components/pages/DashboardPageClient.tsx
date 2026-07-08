@@ -1,7 +1,6 @@
 // src/app/dashboard/page.tsx
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -357,8 +356,6 @@ const DONUT_COLOR_CLASSES = [
 
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
 
-const SIDEBAR_COLLAPSED_KEY = "qbo-dashboard-sidebar-collapsed";
-
 const NAV_ITEMS: Array<{ key: TabKey; label: string; icon: string; href?: string }> = [
   { key: "pnl", label: "Profit & Loss", icon: "chart-bar" },
   { key: "cash", label: "Bank & Cash Balances", icon: "bank" },
@@ -527,14 +524,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
   const [tab, setTab] = useState<TabKey>("pnl");
   const [tabSlideDirection, setTabSlideDirection] = useState<"forward" | "backward">("forward");
-
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  useEffect(() => {
-    if (window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1") setSidebarCollapsed(true);
-  }, []);
-  useEffect(() => {
-    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0");
-  }, [sidebarCollapsed]);
 
   const [fromYear, setFromYear] = useState<number>(now.getFullYear());
   const [fromMonth, setFromMonth] = useState<number>(1);
@@ -1355,12 +1344,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
       <WorldMapVideoBackground />
 
       <div className="relative z-10 mx-auto flex w-full max-w-[1620px] items-stretch gap-5 px-4 py-6 sm:px-6 lg:px-8">
-        <Sidebar
-          tab={tab}
-          onSelect={switchTab}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
-        />
+        <Sidebar tab={tab} onSelect={switchTab} />
 
         <div className="min-w-0 flex-1">
         <div className="premium-topbar flex flex-col gap-4 rounded-[28px] border border-white/10 bg-[#070d1c]/78 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl md:flex-row md:items-center md:justify-between">
@@ -3992,90 +3976,70 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
 function SidebarNavItem({
   item,
   active,
-  collapsed,
   onSelect,
 }: {
   item: { key: TabKey; label: string; icon: string; href?: string };
   active: boolean;
-  collapsed: boolean;
   onSelect: () => void;
 }) {
   const classes = [
-    "group flex items-center gap-3 rounded-2xl border px-3.5 py-2.5 text-sm font-semibold tracking-tight transition duration-200",
-    collapsed ? "justify-center" : "",
-    active
-      ? "border-cyan-300/45 bg-gradient-to-r from-cyan-400/22 to-blue-500/18 text-cyan-50 shadow-[0_12px_32px_rgba(8,145,178,0.24),inset_0_1px_0_rgba(255,255,255,0.16)]"
-      : "border-transparent text-slate-300 hover:border-cyan-200/20 hover:bg-white/[0.06] hover:text-white",
+    "nav-orb group relative flex h-12 w-12 items-center justify-center rounded-2xl transition-colors duration-300",
+    active ? "is-active text-cyan-100" : "text-slate-400 hover:text-cyan-100",
   ].join(" ");
 
   const content = (
     <>
-      <NavIcon name={item.icon} className="h-5 w-5 shrink-0" />
-      {!collapsed ? <span className="leading-tight">{item.label}</span> : null}
+      <span
+        className={`absolute inset-0 rounded-2xl transition-all duration-300 ${
+          active
+            ? "bg-cyan-400/12 shadow-[0_0_26px_rgba(34,211,238,0.35)] ring-1 ring-cyan-300/35"
+            : "bg-transparent ring-1 ring-transparent group-hover:bg-white/[0.05] group-hover:ring-white/10"
+        }`}
+      />
+      <span className="nav-sparkle nav-sparkle-1" aria-hidden />
+      <span className="nav-sparkle nav-sparkle-2" aria-hidden />
+      <span className="nav-sparkle nav-sparkle-3" aria-hidden />
+      <NavIcon name={item.icon} className="relative z-10 h-5 w-5 shrink-0" />
+
+      <span className="nav-label pointer-events-none absolute left-full top-1/2 z-20 ml-3 -translate-y-1/2 whitespace-nowrap rounded-xl border border-white/10 bg-[#0b1424]/95 py-2 text-sm font-semibold text-white opacity-0 shadow-[0_16px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
+        {item.label}
+      </span>
     </>
   );
 
   if (item.href) {
     return (
-      <Link href={item.href} onClick={onSelect} prefetch={false} className={classes} title={collapsed ? item.label : undefined}>
+      <Link href={item.href} onClick={onSelect} prefetch={false} className={classes}>
         {content}
       </Link>
     );
   }
 
   return (
-    <button type="button" onClick={onSelect} className={classes} title={collapsed ? item.label : undefined}>
+    <button type="button" onClick={onSelect} className={classes}>
       {content}
     </button>
   );
 }
 
-function Sidebar({
-  tab,
-  onSelect,
-  collapsed,
-  onToggleCollapsed,
-}: {
-  tab: TabKey;
-  onSelect: (key: TabKey) => void;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
-}) {
+function Sidebar({ tab, onSelect }: { tab: TabKey; onSelect: (key: TabKey) => void }) {
   const flowDelays = [0, 1.4, 2.8, 4.2, 5.6];
 
   return (
-    <aside
-      className={[
-        "relative z-10 hidden shrink-0 flex-col rounded-[28px] border border-white/10 bg-[#070d1c]/78 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl transition-[width] duration-300 ease-in-out md:flex",
-        collapsed ? "w-[84px]" : "w-[268px]",
-      ].join(" ")}
-    >
-      <button
-        type="button"
-        onClick={onToggleCollapsed}
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        className="absolute -right-3 top-8 z-20 grid h-7 w-7 place-items-center rounded-full border border-white/15 bg-[#0b1424] text-slate-300 shadow-[0_8px_20px_rgba(0,0,0,0.4)] transition hover:border-cyan-300/40 hover:text-cyan-200"
-      >
-        <svg className={`h-3.5 w-3.5 transition-transform duration-300 ${collapsed ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-        </svg>
-      </button>
-
-      <div className={`flex items-center border-b border-white/10 p-4 ${collapsed ? "justify-center" : ""}`}>
-        {!collapsed ? (
-          <Image src="/logo.png" alt="RTC League" width={264} height={100} priority className="h-auto w-[150px] select-none" />
-        ) : (
-          <span className="grid h-9 w-9 place-items-center rounded-xl border border-cyan-200/20 bg-cyan-400/10 text-sm font-black text-cyan-100">R</span>
-        )}
+    <aside className="relative z-10 hidden w-[76px] shrink-0 flex-col items-center md:flex">
+      <div className="flex items-center justify-center py-5">
+        <span className="grid h-9 w-9 place-items-center rounded-xl border border-cyan-200/20 bg-cyan-400/10 text-sm font-black text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.18)]">
+          R
+        </span>
       </div>
 
-      <nav className="flex flex-col gap-1.5 p-3">
+      <nav className="flex flex-col gap-2.5">
         {NAV_ITEMS.map((item) => (
-          <SidebarNavItem key={item.key} item={item} active={tab === item.key} collapsed={collapsed} onSelect={() => onSelect(item.key)} />
+          <SidebarNavItem key={item.key} item={item} active={tab === item.key} onSelect={() => onSelect(item.key)} />
         ))}
       </nav>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden border-t border-white/5">
+      <div className="relative min-h-0 w-full flex-1 overflow-hidden">
         <div className="sidebar-flow-rail absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-gradient-to-b from-cyan-300/0 via-cyan-300/20 to-emerald-300/0" />
         {flowDelays.map((delay, i) => (
           <span
@@ -4086,7 +4050,7 @@ function Sidebar({
         ))}
       </div>
 
-      <style jsx>{`
+      <style jsx global>{`
         @keyframes sidebar-flow {
           0% {
             top: -4%;
@@ -4106,10 +4070,78 @@ function Sidebar({
         .sidebar-flow-dot {
           animation: sidebar-flow 7s linear infinite;
         }
+
+        .nav-label {
+          max-width: 0;
+          padding-left: 0;
+          padding-right: 0;
+          overflow: hidden;
+          transform-origin: left center;
+          transition: max-width 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease, padding 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+            transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+          transform: translateY(-50%) translateX(-6px) scale(0.96);
+        }
+        .nav-orb:hover .nav-label {
+          max-width: 240px;
+          padding-left: 16px;
+          padding-right: 16px;
+          opacity: 1;
+          transform: translateY(-50%) translateX(0) scale(1);
+        }
+
+        .nav-sparkle {
+          position: absolute;
+          width: 4px;
+          height: 4px;
+          border-radius: 9999px;
+          background: radial-gradient(circle, rgba(216, 250, 254, 0.95), rgba(34, 211, 238, 0));
+          opacity: 0;
+          z-index: 5;
+        }
+        .nav-sparkle-1 {
+          top: -1px;
+          right: 4px;
+        }
+        .nav-sparkle-2 {
+          bottom: 3px;
+          left: -2px;
+        }
+        .nav-sparkle-3 {
+          top: 50%;
+          right: -3px;
+        }
+        @keyframes nav-sparkle-twinkle {
+          0%,
+          100% {
+            opacity: 0;
+            transform: scale(0.4);
+          }
+          50% {
+            opacity: 1;
+            transform: scale(1.15);
+          }
+        }
+        .nav-orb:hover .nav-sparkle,
+        .nav-orb.is-active .nav-sparkle {
+          animation: nav-sparkle-twinkle 1.8s ease-in-out infinite;
+        }
+        .nav-orb:hover .nav-sparkle-2,
+        .nav-orb.is-active .nav-sparkle-2 {
+          animation-delay: 0.3s;
+        }
+        .nav-orb:hover .nav-sparkle-3,
+        .nav-orb.is-active .nav-sparkle-3 {
+          animation-delay: 0.6s;
+        }
+
         @media (prefers-reduced-motion: reduce) {
-          .sidebar-flow-dot {
-            animation: none;
+          .sidebar-flow-dot,
+          .nav-sparkle {
+            animation: none !important;
             display: none;
+          }
+          .nav-label {
+            transition: none;
           }
         }
       `}</style>
