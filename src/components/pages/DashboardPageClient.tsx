@@ -4041,7 +4041,7 @@ function Sidebar({
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }) {
-  const barDelays = [0, 0.18, 0.36, 0.54, 0.72, 0.9, 1.08];
+  const flowDelays = [0, 1.4, 2.8, 4.2, 5.6];
 
   return (
     <aside
@@ -4075,67 +4075,41 @@ function Sidebar({
         ))}
       </nav>
 
-      <div className="mt-2 flex flex-1 flex-col justify-end overflow-hidden border-t border-white/5 px-3 pb-5 pt-4">
-        {!collapsed ? (
-          <div className="mb-3 text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">Market Pulse</div>
-        ) : null}
-
-        <div className={`sidebar-eq flex items-end gap-1.5 ${collapsed ? "h-14 justify-center" : "h-20"}`}>
-          {barDelays.map((delay, i) => (
-            <span
-              key={i}
-              className="sidebar-eq-bar w-1.5 rounded-full bg-gradient-to-t from-cyan-400/60 to-emerald-300/60"
-              style={{ height: collapsed ? "36px" : "52px", animationDelay: `${delay}s` }}
-            />
-          ))}
-        </div>
-
-        {!collapsed ? (
-          <svg className="sidebar-spark mt-5 h-12 w-full overflow-visible text-cyan-300/45" viewBox="0 0 200 48" fill="none" preserveAspectRatio="none">
-            <path d="M0 38 L28 30 L56 34 L84 18 L112 24 L140 10 L168 16 L200 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            <circle className="sidebar-spark-dot" cx="200" cy="4" r="3.5" fill="currentColor" />
-          </svg>
-        ) : null}
+      <div className="relative min-h-0 flex-1 overflow-hidden border-t border-white/5">
+        <div className="sidebar-flow-rail absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-gradient-to-b from-cyan-300/0 via-cyan-300/20 to-emerald-300/0" />
+        {flowDelays.map((delay, i) => (
+          <span
+            key={i}
+            className="sidebar-flow-dot absolute left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-cyan-200/80 shadow-[0_0_10px_2px_rgba(34,211,238,0.45)]"
+            style={{ animationDelay: `${delay}s` }}
+          />
+        ))}
       </div>
 
       <style jsx>{`
-        @keyframes sidebar-eq-bounce {
-          0%,
-          100% {
-            transform: scaleY(0.32);
+        @keyframes sidebar-flow {
+          0% {
+            top: -4%;
+            opacity: 0;
           }
-          25% {
-            transform: scaleY(0.95);
-          }
-          50% {
-            transform: scaleY(0.55);
-          }
-          75% {
-            transform: scaleY(0.78);
-          }
-        }
-        .sidebar-eq-bar {
-          transform-origin: bottom;
-          animation: sidebar-eq-bounce 2.6s ease-in-out infinite;
-        }
-        @keyframes sidebar-spark-pulse {
-          0%,
-          100% {
-            opacity: 0.5;
-            r: 3.5;
-          }
-          50% {
+          10% {
             opacity: 1;
-            r: 5;
+          }
+          85% {
+            opacity: 1;
+          }
+          100% {
+            top: 104%;
+            opacity: 0;
           }
         }
-        .sidebar-spark-dot {
-          animation: sidebar-spark-pulse 2.2s ease-in-out infinite;
+        .sidebar-flow-dot {
+          animation: sidebar-flow 7s linear infinite;
         }
         @media (prefers-reduced-motion: reduce) {
-          .sidebar-eq-bar,
-          .sidebar-spark-dot {
+          .sidebar-flow-dot {
             animation: none;
+            display: none;
           }
         }
       `}</style>
