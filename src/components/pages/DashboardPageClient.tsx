@@ -356,6 +356,17 @@ const DONUT_COLOR_CLASSES = [
 ];
 
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
+
+const SIDEBAR_COLLAPSED_KEY = "qbo-dashboard-sidebar-collapsed";
+
+const NAV_ITEMS: Array<{ key: TabKey; label: string; icon: string; href?: string }> = [
+  { key: "pnl", label: "Profit & Loss", icon: "chart-bar" },
+  { key: "cash", label: "Bank & Cash Balances", icon: "bank" },
+  { key: "arAp", label: "AR/AP", icon: "users" },
+  { key: "retained", label: "Retained Earning", icon: "banknotes" },
+  { key: "forecast", label: "Financial Forecast", icon: "trending-up" },
+  { key: "revenue", label: "Revenue Analytics", icon: "chart-pie", href: "/dashboard/revenue-analytics" },
+];
 type AppliedFilter = {
   fromYear: number;
   fromMonth: number;
@@ -516,6 +527,14 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
   const [tab, setTab] = useState<TabKey>("pnl");
   const [tabSlideDirection, setTabSlideDirection] = useState<"forward" | "backward">("forward");
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  useEffect(() => {
+    if (window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1") setSidebarCollapsed(true);
+  }, []);
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
 
   const [fromYear, setFromYear] = useState<number>(now.getFullYear());
   const [fromMonth, setFromMonth] = useState<number>(1);
@@ -1335,13 +1354,17 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
       <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-blue-500/10 to-transparent" />
       <WorldMapVideoBackground />
 
-      <div className="relative z-10 mx-auto w-full max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8">
+      <div className="relative z-10 mx-auto flex w-full max-w-[1620px] items-start gap-5 px-4 py-6 sm:px-6 lg:px-8">
+        <Sidebar
+          tab={tab}
+          onSelect={switchTab}
+          collapsed={sidebarCollapsed}
+          onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+        />
+
+        <div className="min-w-0 flex-1">
         <div className="premium-topbar flex flex-col gap-4 rounded-[28px] border border-white/10 bg-[#070d1c]/78 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
-            <div className="relative flex h-14 shrink-0 items-center rounded-2xl border border-white/10 bg-white/5 px-3 shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
-              <Image src="/logo.png" alt="RTC League Logo" width={264} height={100} priority className="h-auto w-[120px] select-none" />
-            </div>
-
             <div>
               <h1 className="text-[28px] font-semibold tracking-tight text-white md:text-[32px]">Finance Dashboard</h1>
             </div>
@@ -1374,8 +1397,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="mt-5 flex gap-2 overflow-x-auto rounded-[22px] border border-white/10 bg-black/20 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
+        {/* Tabs (mobile only — desktop uses the sidebar) */}
+        <div className="mt-5 flex gap-2 overflow-x-auto rounded-[22px] border border-white/10 bg-black/20 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl md:hidden">
           <TabButton active={tab === "pnl"} onClick={() => switchTab("pnl")}>
             Profit & Loss
           </TabButton>
@@ -3481,6 +3504,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
           </>
         ) : null}
         </div>
+        </div>
       </div>
 
       <style jsx global>{`
@@ -3943,6 +3967,112 @@ function TabLinkButton({
     >
       {children}
     </Link>
+  );
+}
+
+const NAV_ICON_PATHS: Record<string, string> = {
+  "chart-bar": "M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z",
+  bank: "M3 21h18M4.5 21V10.5M19.5 21V10.5M2.25 10.5l9.75-6 9.75 6M8.25 21v-6h7.5v6",
+  users: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z",
+  banknotes: "M2.25 8.25h19.5M2.25 15.75h19.5M4.5 4.5h15A2.25 2.25 0 0121.75 6.75v10.5A2.25 2.25 0 0119.5 19.5h-15A2.25 2.25 0 012.25 17.25V6.75A2.25 2.25 0 014.5 4.5zM15 12a3 3 0 11-6 0 3 3 0 016 0z",
+  "trending-up": "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6",
+  "chart-pie": "M10.5 6a7.5 7.5 0 107.5 7.5h-7.5V6z M13.5 10.5H21A7.5 7.5 0 0013.5 3v7.5z",
+};
+
+function NavIcon({ name, className }: { name: string; className?: string }) {
+  const d = NAV_ICON_PATHS[name];
+  if (!d) return null;
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
+}
+
+function SidebarNavItem({
+  item,
+  active,
+  collapsed,
+  onSelect,
+}: {
+  item: { key: TabKey; label: string; icon: string; href?: string };
+  active: boolean;
+  collapsed: boolean;
+  onSelect: () => void;
+}) {
+  const classes = [
+    "group flex items-center gap-3 rounded-2xl border px-3.5 py-2.5 text-sm font-semibold tracking-tight transition duration-200",
+    collapsed ? "justify-center" : "",
+    active
+      ? "border-cyan-300/45 bg-gradient-to-r from-cyan-400/22 to-blue-500/18 text-cyan-50 shadow-[0_12px_32px_rgba(8,145,178,0.24),inset_0_1px_0_rgba(255,255,255,0.16)]"
+      : "border-transparent text-slate-300 hover:border-cyan-200/20 hover:bg-white/[0.06] hover:text-white",
+  ].join(" ");
+
+  const content = (
+    <>
+      <NavIcon name={item.icon} className="h-5 w-5 shrink-0" />
+      {!collapsed ? <span className="leading-tight">{item.label}</span> : null}
+    </>
+  );
+
+  if (item.href) {
+    return (
+      <Link href={item.href} onClick={onSelect} prefetch={false} className={classes} title={collapsed ? item.label : undefined}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" onClick={onSelect} className={classes} title={collapsed ? item.label : undefined}>
+      {content}
+    </button>
+  );
+}
+
+function Sidebar({
+  tab,
+  onSelect,
+  collapsed,
+  onToggleCollapsed,
+}: {
+  tab: TabKey;
+  onSelect: (key: TabKey) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+}) {
+  return (
+    <aside
+      className={[
+        "relative z-10 hidden shrink-0 flex-col self-start rounded-[28px] border border-white/10 bg-[#070d1c]/78 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl transition-[width] duration-300 ease-in-out md:flex",
+        collapsed ? "w-[84px]" : "w-[268px]",
+      ].join(" ")}
+    >
+      <button
+        type="button"
+        onClick={onToggleCollapsed}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className="absolute -right-3 top-8 z-20 grid h-7 w-7 place-items-center rounded-full border border-white/15 bg-[#0b1424] text-slate-300 shadow-[0_8px_20px_rgba(0,0,0,0.4)] transition hover:border-cyan-300/40 hover:text-cyan-200"
+      >
+        <svg className={`h-3.5 w-3.5 transition-transform duration-300 ${collapsed ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+        </svg>
+      </button>
+
+      <div className={`flex items-center border-b border-white/10 p-4 ${collapsed ? "justify-center" : ""}`}>
+        {!collapsed ? (
+          <Image src="/logo.png" alt="RTC League" width={264} height={100} priority className="h-auto w-[150px] select-none" />
+        ) : (
+          <span className="grid h-9 w-9 place-items-center rounded-xl border border-cyan-200/20 bg-cyan-400/10 text-sm font-black text-cyan-100">R</span>
+        )}
+      </div>
+
+      <nav className="flex flex-col gap-1.5 p-3">
+        {NAV_ITEMS.map((item) => (
+          <SidebarNavItem key={item.key} item={item} active={tab === item.key} collapsed={collapsed} onSelect={() => onSelect(item.key)} />
+        ))}
+      </nav>
+    </aside>
   );
 }
 
