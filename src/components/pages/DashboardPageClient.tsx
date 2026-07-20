@@ -4298,7 +4298,7 @@ function ExpenseDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[60] overflow-y-auto p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`${group.label} details`}
@@ -4306,14 +4306,14 @@ function ExpenseDetailModal({
       {/* Backdrop */}
       <div
         onClick={onClose}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
         style={reduceMotion ? undefined : { animation: "expenseOverlayIn 0.22s ease-out" }}
         aria-hidden="true"
       />
 
       {/* Panel */}
       <div
-        className="premium-surface relative z-[1] w-full max-w-lg overflow-hidden rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.94),rgba(3,7,18,0.88))] p-6 shadow-[0_28px_90px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
+        className="premium-surface relative z-[1] mx-auto my-[5vh] max-h-[90vh] w-full max-w-lg overflow-y-auto overflow-x-hidden rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.94),rgba(3,7,18,0.88))] p-6 shadow-[0_28px_90px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
         style={reduceMotion ? undefined : { animation: "expenseModalIn 0.32s cubic-bezier(0.22,1,0.36,1)" }}
       >
         {/* Header */}
