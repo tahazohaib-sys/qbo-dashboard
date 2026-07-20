@@ -4,6 +4,7 @@
 import Link from "next/link";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   groupExpenses,
   type ExpenseGroup,
@@ -4296,7 +4297,13 @@ function ExpenseDetailModal({
   const prev = trend.length >= 2 ? trend[trend.length - 2].value : 0;
   const momDelta = prev !== 0 ? ((latest - prev) / prev) * 100 : null;
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  // Render into <body> via a portal so the fixed overlay escapes the dashboard's
+  // transformed/blurred ancestors (premium-surface, glass-breathe, module slide) —
+  // otherwise `position: fixed` resolves against a transformed ancestor instead of
+  // the viewport, leaving only the backdrop visible.
+  return createPortal(
     <div
       className="fixed inset-0 z-[60] overflow-y-auto p-4"
       role="dialog"
@@ -4405,7 +4412,8 @@ function ExpenseDetailModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
