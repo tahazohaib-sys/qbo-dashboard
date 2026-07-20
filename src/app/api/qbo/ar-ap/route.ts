@@ -566,24 +566,32 @@ function detectInstallmentVendors(
     }
     if (lastIdx < 0) continue;
 
-    // extend backward over CONSECUTIVE months whose amount ~matches the latest (strict: within 2%)
+    // Extend backward from the latest paid month, matching amount strictly (within 2%).
+    // Real-world payments can shift across a calendar-month boundary, so a single
+    // isolated skipped month is tolerated; two skipped months in a row (or an
+    // amount that doesn't match) ends the run.
     const ref = series[lastIdx];
-    let runStart = lastIdx;
+    const tol = Math.max(2, ref * 0.02);
+    const matchedIdx: number[] = [lastIdx];
+    let consecZero = 0;
     for (let i = lastIdx - 1; i >= 0; i--) {
       const a = series[i];
-      if (a <= 0) break; // must be consecutive (no gaps)
-      const tol = Math.max(2, ref * 0.02);
-      if (Math.abs(a - ref) > tol) break;
-      runStart = i;
+      if (a <= 0) {
+        consecZero += 1;
+        if (consecZero > 1) break; // two skipped months in a row -> plan likely paused/ended
+        continue;
+      }
+      if (Math.abs(a - ref) > tol) break; // amount changed -> different pattern
+      matchedIdx.push(i);
+      consecZero = 0;
     }
 
-    const runLen = lastIdx - runStart + 1;
-    if (runLen >= 3) {
-      const runVals = series.slice(runStart, lastIdx + 1).sort((a, b) => a - b);
+    if (matchedIdx.length >= 3) {
+      const runVals = matchedIdx.map((i) => series[i]).sort((a, b) => a - b);
       const mid = Math.floor(runVals.length / 2);
       const monthly =
         runVals.length % 2 ? runVals[mid] : Math.round((runVals[mid - 1] + runVals[mid]) / 2);
-      result.set(vl, { monthly, months: runLen });
+      result.set(vl, { monthly, months: matchedIdx.length });
     }
   }
 
