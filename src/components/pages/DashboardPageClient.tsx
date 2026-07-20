@@ -3,6 +3,7 @@
 
 import Link from "next/link";
 
+import Image from "next/image";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -1389,6 +1390,16 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
         <div className="min-w-0 flex-1">
         <div className="premium-topbar flex flex-col gap-4 rounded-[28px] border border-white/10 bg-[#070d1c]/78 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
+            <div className="flex flex-shrink-0 items-center justify-center rounded-2xl border border-cyan-300/20 bg-[#070d1c]/70 px-3.5 py-2.5 shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_10px_28px_rgba(8,145,178,0.16)]">
+              <Image
+                src="/logo.png"
+                alt="RTC League"
+                width={348}
+                height={132}
+                priority
+                className="h-8 w-auto select-none object-contain drop-shadow-[0_6px_18px_rgba(34,211,238,0.22)] md:h-9"
+              />
+            </div>
             <div>
               <h1 className="text-[28px] font-semibold tracking-tight text-white md:text-[32px]">Finance Dashboard</h1>
             </div>
