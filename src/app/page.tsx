@@ -1,24 +1,5 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  return (
-    <main className="min-h-screen flex items-center justify-center bg-[#0b1220] text-white">
-      <div className="text-center space-y-6">
-        <h1 className="text-3xl font-bold">
-          Financial Dashboard
-        </h1>
-
-        <p className="text-slate-400">
-          Connect QuickBooks to view real-time financial insights
-        </p>
-
-        <Link
-          href="/connect"
-          className="inline-block px-6 py-3 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-black font-semibold"
-        >
-          Connect QuickBooks
-        </Link>
-      </div>
-    </main>
-  );
+  redirect("/request-access");
 }

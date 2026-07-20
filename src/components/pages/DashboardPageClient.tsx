@@ -1,7 +1,6 @@
 // src/app/dashboard/page.tsx
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -356,6 +355,15 @@ const DONUT_COLOR_CLASSES = [
 ];
 
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
+
+const NAV_ITEMS: Array<{ key: TabKey; label: string; icon: string; href?: string }> = [
+  { key: "pnl", label: "Profit & Loss", icon: "chart-bar" },
+  { key: "cash", label: "Bank & Cash Balances", icon: "bank" },
+  { key: "arAp", label: "AR/AP", icon: "users" },
+  { key: "retained", label: "Retained Earning", icon: "banknotes" },
+  { key: "forecast", label: "Financial Forecast", icon: "trending-up" },
+  { key: "revenue", label: "Revenue Analytics", icon: "chart-pie", href: "/dashboard/revenue-analytics" },
+];
 type AppliedFilter = {
   fromYear: number;
   fromMonth: number;
@@ -393,6 +401,8 @@ const CHART_COLORS = {
   negative: "#f87171",
   profit: "#34d399",
 } as const;
+
+const TAB_ORDER: TabKey[] = ["pnl", "cash", "arAp", "retained", "forecast", "revenue"];
 
 function trendLabelFromMoM(mom: number): "Increasing" | "Decreasing" | "Stable" {
   if (!Number.isFinite(mom)) return "Stable";
@@ -508,11 +518,12 @@ function WorldMapVideoBackground(): React.JSX.Element {
   );
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const years = useMemo(() => ymOptions(6), []);
   const now = new Date();
 
   const [tab, setTab] = useState<TabKey>("pnl");
+  const [tabSlideDirection, setTabSlideDirection] = useState<"forward" | "backward">("forward");
 
   const [fromYear, setFromYear] = useState<number>(now.getFullYear());
   const [fromMonth, setFromMonth] = useState<number>(1);
@@ -567,13 +578,19 @@ export default function DashboardPage() {
 
   const [err, setErr] = useState<string>("");
   const [lastUpdated, setLastUpdated] = useState("--:--:--");
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const applyFiltersRef = useRef<() => Promise<void>>(async () => {});
   const requestIdRef = useRef(0);
   const moduleCacheRef = useRef<Map<string, any>>(new Map());
   const hasInitializedRef = useRef(false);
   const hasHandledInitialTabEffectRef = useRef(false);
+
+  function switchTab(nextTab: TabKey) {
+    if (nextTab === tab) return;
+
+    const currentIndex = TAB_ORDER.indexOf(tab);
+    const nextIndex = TAB_ORDER.indexOf(nextTab);
+    setTabSlideDirection(nextIndex >= currentIndex ? "forward" : "backward");
+    setTab(nextTab);
+  }
 
   function buildStartEnd(fy: number, fm: number, ty: number, tm: number) {
     const start = `${fy}-${String(fm).padStart(2, "0")}-01`;
@@ -945,9 +962,10 @@ export default function DashboardPage() {
     await runActiveTabLoad(tab, nextFilters);
   }
 
-  useEffect(() => {
-    applyFiltersRef.current = applyFilters;
-  });
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
 
   useEffect(() => {
     applyFilters();
@@ -978,39 +996,6 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forecastHorizon]);
 
-  useEffect(() => {
-    if (!autoRefresh) {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-      return;
-    }
-
-    const runRefresh = () => {
-      if (document.visibilityState === "visible") {
-        applyFiltersRef.current();
-      }
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        runRefresh();
-      }
-    };
-
-    refreshTimerRef.current = setInterval(runRefresh, 30_000);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [autoRefresh]);
-
   const series = data?.series ?? [];
   const kpi = data?.kpis?.ytd ?? { revenue: 0, expenses: 0, profit: 0 };
   const netMargin = kpi.revenue !== 0 ? kpi.profit / kpi.revenue : 0;
@@ -1020,6 +1005,31 @@ export default function DashboardPage() {
   const marginGlow = isProfit
     ? "shadow-[0_0_50px_rgba(16,185,129,0.35)]"
     : "shadow-[0_0_50px_rgba(244,63,94,0.35)]";
+  const robotCoach =
+    kpi.revenue > 0 || kpi.expenses > 0
+      ? kpi.expenses > kpi.revenue
+        ? ({
+            target: "expense",
+            message: "hey, it needs your attention",
+          } as const)
+        : ({
+            target: "revenue",
+            message: "hey, keep it up",
+          } as const)
+      : null;
+  const robotCoachReplayKey = robotCoach
+    ? [
+        tab,
+        appliedFilters.fromYear,
+        appliedFilters.fromMonth,
+        appliedFilters.toYear,
+        appliedFilters.toMonth,
+        appliedFilters.method,
+        robotCoach.target,
+        Math.round(kpi.revenue),
+        Math.round(kpi.expenses),
+      ].join("|")
+    : "";
 
   const financialSummary = isProfit
     ? `The selected period delivered a net profit of ${formatPKRMillions(
@@ -1058,11 +1068,6 @@ export default function DashboardPage() {
     ? series.reduce((best, s) => s.profit > best.profit ? s : best, series[0])
     : { month: "—", profit: 0 };
   const expenseRatio: number | null = kpi.revenue > 0 ? kpi.expenses / kpi.revenue : null;
-
-  const headerAsOf = useMemo(() => {
-    if (!data?.asOf) return "";
-    return new Date(data.asOf).toLocaleString();
-  }, [data?.asOf]);
 
   const currencyTotals = useMemo(() => {
     const t = cashBanks?.totalsByCurrency ?? {};
@@ -1333,99 +1338,78 @@ export default function DashboardPage() {
   }, [fromYear, fromMonth, toYear, toMonth]);
 
   return (
-    <div className='relative min-h-screen overflow-hidden bg-[radial-gradient(1200px_900px_at_15%_10%,rgba(34,211,238,0.12),transparent_55%),radial-gradient(1200px_900px_at_85%_20%,rgba(99,102,241,0.14),transparent_55%),radial-gradient(1000px_700px_at_55%_95%,rgba(244,63,94,0.08),transparent_55%),linear-gradient(180deg,#030711_0%,#050b19_45%,#040714_100%)] text-slate-100 [font-family:ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Inter,Roboto,Arial]'>
-      <div className="pointer-events-none absolute inset-0 opacity-[0.03] [background-image:radial-gradient(rgba(255,255,255,0.7)_0.7px,transparent_0.7px)] [background-size:4px_4px]" />
-      <div className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/20 blur-3xl" />
+    <div className='premium-dashboard relative min-h-screen overflow-hidden bg-[radial-gradient(1000px_720px_at_9%_0%,rgba(37,99,235,0.30),transparent_58%),radial-gradient(900px_680px_at_86%_8%,rgba(14,165,233,0.16),transparent_55%),radial-gradient(900px_650px_at_62%_100%,rgba(15,118,110,0.11),transparent_60%),linear-gradient(180deg,#061429_0%,#050915_44%,#030610_100%)] text-slate-100 [font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Roboto,Arial]'>
+      <div className="pointer-events-none absolute inset-0 opacity-[0.045] [background-image:linear-gradient(rgba(255,255,255,0.6)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.6)_1px,transparent_1px)] [background-size:42px_42px]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-blue-500/10 to-transparent" />
       <WorldMapVideoBackground />
-      <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
 
-      <div className="relative z-10 mx-auto max-w-7xl px-5 py-8">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+      <div className="relative z-10 mx-auto flex w-full max-w-[1620px] items-stretch gap-5 px-4 py-6 sm:px-6 lg:px-8">
+        <Sidebar tab={tab} onSelect={switchTab} />
+
+        <div className="min-w-0 flex-1">
+        <div className="premium-topbar flex flex-col gap-4 rounded-[28px] border border-white/10 bg-[#070d1c]/78 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
-            <div className="relative h-12 w-12 shrink-0">
-              <Image src="/logo.png" alt="RTC League Logo" fill className="object-contain" priority />
-            </div>
-
             <div>
-              <h1 className="text-[26px] font-semibold tracking-tight text-white">Finance Dashboard</h1>
+              <h1 className="text-[28px] font-semibold tracking-tight text-white md:text-[32px]">Finance Dashboard</h1>
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
-              <span className="relative inline-flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300/60 motion-reduce:animate-none" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300" />
-              </span>
-              <span className="font-semibold uppercase tracking-[0.14em]">Live</span>
-              <span className="text-emerald-100/80">Last updated: {lastUpdated}</span>
-            </div>
-
-            <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
-              <div className="font-medium text-slate-200">
-                Company: {data?.companyName ?? "—"} ({data?.currency ?? "PKR"})
-              </div>
-              <div className="opacity-80">As of: {headerAsOf || "—"}</div>
-            </div>
-
-            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200">
-              <span className="uppercase tracking-[0.12em]">Auto refresh</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoRefresh}
-                onClick={() => setAutoRefresh((prev) => !prev)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
-                  autoRefresh ? "border-cyan-300/50 bg-cyan-400/30" : "border-white/15 bg-white/10"
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
-                    autoRefresh ? "translate-x-5" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </label>
-
+          <div className="flex flex-nowrap items-center gap-2">
             <button
               onClick={applyFilters}
-              className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 active:scale-[0.99]"
+              className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-50 shadow-[0_12px_28px_rgba(8,145,178,0.12)] transition hover:bg-cyan-400/15 active:scale-[0.99]"
               disabled={loading}
             >
               {loading ? "Refreshing..." : "Refresh"}
             </button>
+
+            {isAdmin ? (
+              <Link
+                href="/admin/access"
+                className="rounded-2xl border border-emerald-300/25 bg-emerald-400/15 px-4 py-2.5 text-sm font-bold text-emerald-50 shadow-[0_12px_28px_rgba(16,185,129,0.15)] transition hover:bg-emerald-400/22 active:scale-[0.99]"
+              >
+                Manage Access
+              </Link>
+            ) : null}
+
+            <button
+              onClick={logout}
+              className="rounded-2xl border border-white/10 bg-white/[0.07] px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-rose-300/25 hover:bg-rose-400/10 hover:text-white active:scale-[0.99]"
+            >
+              Logout
+            </button>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="mt-6 flex gap-2 flex-wrap">
-          <TabButton active={tab === "pnl"} onClick={() => setTab("pnl")}>
+        {/* Tabs (mobile only — desktop uses the sidebar) */}
+        <div className="mt-5 flex gap-2 overflow-x-auto rounded-[22px] border border-white/10 bg-black/20 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl md:hidden">
+          <TabButton active={tab === "pnl"} onClick={() => switchTab("pnl")}>
             Profit & Loss
           </TabButton>
-          <TabButton active={tab === "cash"} onClick={() => setTab("cash")}>
+          <TabButton active={tab === "cash"} onClick={() => switchTab("cash")}>
             Bank & Cash Balances
           </TabButton>
-          <TabButton active={tab === "arAp"} onClick={() => setTab("arAp")}>
+          <TabButton active={tab === "arAp"} onClick={() => switchTab("arAp")}>
             AR/AP
           </TabButton>
-          <TabButton active={tab === "retained"} onClick={() => setTab("retained")}>
+          <TabButton active={tab === "retained"} onClick={() => switchTab("retained")}>
             Retained Earning
           </TabButton>
-          <TabButton active={tab === "forecast"} onClick={() => setTab("forecast")}>
+          <TabButton active={tab === "forecast"} onClick={() => switchTab("forecast")}>
             Financial Forecast
           </TabButton>
 
-          <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" prefetch={false} onActivate={() => setTab("revenue")}>
+          <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" prefetch={false} onActivate={() => switchTab("revenue")}>
             Revenue Analytics
           </TabLinkButton>
         </div>
 
         {/* Filters */}
-        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5 shadow-[0_24px_60px_rgba(2,6,23,0.35)] backdrop-blur-xl">
+        <div className="premium-filter mt-5 rounded-[24px] border border-white/10 bg-[#071020]/72 p-5 shadow-[0_22px_70px_rgba(0,0,0,0.34)] backdrop-blur-2xl">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">From Year</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">From Year</label>
                 <select
                   value={fromYear}
                   onChange={(e) => setFromYear(Number(e.target.value))}
@@ -1440,7 +1424,7 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">From Month</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">From Month</label>
                 <select
                   value={fromMonth}
                   onChange={(e) => setFromMonth(Number(e.target.value))}
@@ -1455,7 +1439,7 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">To Year</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">To Year</label>
                 <select
                   value={toYear}
                   onChange={(e) => setToYear(Number(e.target.value))}
@@ -1470,7 +1454,7 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">To Month</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">To Month</label>
                 <select
                   value={toMonth}
                   onChange={(e) => setToMonth(Number(e.target.value))}
@@ -1485,7 +1469,7 @@ export default function DashboardPage() {
               </div>
 
               <div>
-                <label className="text-[12px] uppercase tracking-[0.14em] text-slate-300">Accounting Method</label>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Accounting Method</label>
                 <select
                   value={method}
                   onChange={(e) => setMethod(e.target.value as any)}
@@ -1499,7 +1483,7 @@ export default function DashboardPage() {
 
             <button
               onClick={applyFilters}
-              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
+              className="rounded-2xl border border-emerald-300/20 bg-emerald-400/15 px-5 py-2.5 text-sm font-semibold text-emerald-50 shadow-[0_14px_34px_rgba(16,185,129,0.12)] transition hover:bg-emerald-400/20 active:scale-[0.99]"
               disabled={loading}
             >
               Apply
@@ -1511,8 +1495,9 @@ export default function DashboardPage() {
           ) : null}
         </div>
 
-        {/* Revenue route helper */}
-        {tab === "revenue" ? (
+        <div key={tab} className={`module-slide module-slide-${tabSlideDirection}`}>
+          {/* Revenue route helper */}
+          {tab === "revenue" ? (
           <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5">
             <div className="text-sm font-semibold">Revenue Analytics</div>
             <div className="mt-4 flex flex-wrap gap-2">
@@ -1525,7 +1510,7 @@ export default function DashboardPage() {
               </Link>
 
               <button
-                onClick={() => setTab("pnl")}
+                onClick={() => switchTab("pnl")}
                 className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold hover:bg-white/10"
               >
                 Back
@@ -2258,7 +2243,18 @@ export default function DashboardPage() {
                   </svg>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Income</span>
                 </div>
-                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.revenue)}</div>
+                <div className="relative mt-3 inline-flex items-center text-[26px] font-semibold tracking-tight text-white">
+                  {robotCoach?.target === "revenue" ? (
+                    <span key={`revenue-value-${robotCoachReplayKey}`} className="robot-value-target robot-value-target-good">
+                      {formatPKRCompact(kpi.revenue)}
+                    </span>
+                  ) : (
+                    <span>{formatPKRCompact(kpi.revenue)}</span>
+                  )}
+                  {robotCoach?.target === "revenue" ? (
+                    <MetricCoachRobot key={`revenue-robot-${robotCoachReplayKey}`} tone="good" message={robotCoach.message} />
+                  ) : null}
+                </div>
                 <div className="mt-2 flex items-center gap-1.5">
                   {momRevenue === null
                     ? <span className="text-[11px] text-slate-500">No prior data</span>
@@ -2278,7 +2274,18 @@ export default function DashboardPage() {
                   </svg>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Expenses</span>
                 </div>
-                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.expenses)}</div>
+                <div className="relative mt-3 inline-flex items-center text-[26px] font-semibold tracking-tight text-white">
+                  {robotCoach?.target === "expense" ? (
+                    <span key={`expense-value-${robotCoachReplayKey}`} className="robot-value-target robot-value-target-alert">
+                      {formatPKRCompact(kpi.expenses)}
+                    </span>
+                  ) : (
+                    <span>{formatPKRCompact(kpi.expenses)}</span>
+                  )}
+                  {robotCoach?.target === "expense" ? (
+                    <MetricCoachRobot key={`expense-robot-${robotCoachReplayKey}`} tone="alert" message={robotCoach.message} />
+                  ) : null}
+                </div>
                 <div className="mt-2 flex items-center gap-1.5">
                   {momExpenses === null
                     ? <span className="text-[11px] text-slate-500">No prior data</span>
@@ -3480,9 +3487,363 @@ export default function DashboardPage() {
             )}
           </>
         ) : null}
+        </div>
+        </div>
       </div>
 
       <style jsx global>{`
+        .module-slide {
+          animation: moduleSlideIn 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+          transform-origin: center top;
+          will-change: transform, opacity;
+        }
+
+        .module-slide-forward {
+          --module-slide-x: 34px;
+        }
+
+        .module-slide-backward {
+          --module-slide-x: -34px;
+        }
+
+        @keyframes moduleSlideIn {
+          from {
+            opacity: 0;
+            transform: translate3d(var(--module-slide-x), 0, 0);
+          }
+          to {
+            opacity: 1;
+            transform: translate3d(0, 0, 0);
+          }
+        }
+
+        .robot-value-target {
+          position: relative;
+          display: inline-block;
+          border-radius: 12px;
+          animation: robotValuePulse 5200ms ease-out 700ms both;
+        }
+
+        .robot-value-target-good {
+          --robot-target-glow: rgba(34, 211, 238, 0.32);
+        }
+
+        .robot-value-target-alert {
+          --robot-target-glow: rgba(251, 113, 133, 0.34);
+        }
+
+        .metric-coach {
+          position: absolute;
+          left: min(100% + 12px, calc(100vw - 280px));
+          top: -78px;
+          z-index: 20;
+          display: flex;
+          align-items: flex-end;
+          gap: 8px;
+          width: max-content;
+          pointer-events: none;
+          animation: robotCoachEnter 5200ms cubic-bezier(0.22, 1, 0.36, 1) 450ms both;
+        }
+
+        .metric-coach-bubble {
+          max-width: 176px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          border-radius: 16px 16px 6px 16px;
+          background: rgba(3, 7, 18, 0.92);
+          padding: 8px 10px;
+          color: #f8fafc;
+          font-size: 12px;
+          font-weight: 700;
+          line-height: 1.2;
+          text-transform: none;
+          box-shadow: 0 18px 38px rgba(0, 0, 0, 0.42);
+          backdrop-filter: blur(18px);
+        }
+
+        .metric-coach-good .metric-coach-bubble {
+          border-color: rgba(34, 211, 238, 0.28);
+          box-shadow: 0 18px 38px rgba(8, 145, 178, 0.24);
+        }
+
+        .metric-coach-alert .metric-coach-bubble {
+          border-color: rgba(251, 113, 133, 0.3);
+          box-shadow: 0 18px 38px rgba(244, 63, 94, 0.22);
+        }
+
+        .metric-coach-body {
+          position: relative;
+          height: 54px;
+          width: 42px;
+          animation: robotCoachHit 900ms ease-in-out 1450ms 3;
+        }
+
+        .metric-coach-head {
+          position: absolute;
+          left: 6px;
+          top: 8px;
+          height: 26px;
+          width: 30px;
+          border: 1px solid rgba(255, 255, 255, 0.24);
+          border-radius: 10px;
+          background: linear-gradient(180deg, #dff9ff, #81e6ff);
+          box-shadow: 0 10px 22px rgba(8, 145, 178, 0.22);
+        }
+
+        .metric-coach-eye {
+          position: absolute;
+          top: 9px;
+          height: 5px;
+          width: 5px;
+          border-radius: 999px;
+          background: #07111f;
+        }
+
+        .metric-coach-eye:first-child {
+          left: 8px;
+        }
+
+        .metric-coach-eye:nth-child(2) {
+          right: 8px;
+        }
+
+        .metric-coach-mouth {
+          position: absolute;
+          left: 50%;
+          top: 15px;
+          height: 7px;
+          width: 13px;
+          border: 2px solid #07111f;
+          border-left-color: transparent;
+          border-right-color: transparent;
+          border-top-color: transparent;
+          border-radius: 0 0 999px 999px;
+          transform: translateX(-50%);
+        }
+
+        .metric-coach-alert .metric-coach-mouth {
+          top: 17px;
+          border-top-color: #07111f;
+          border-bottom-color: transparent;
+          border-radius: 999px 999px 0 0;
+        }
+
+        .metric-coach-antenna {
+          position: absolute;
+          left: 20px;
+          top: 0;
+          height: 9px;
+          width: 2px;
+          border-radius: 999px;
+          background: #67e8f9;
+        }
+
+        .metric-coach-antenna::before {
+          content: "";
+          position: absolute;
+          left: -3px;
+          top: -4px;
+          height: 8px;
+          width: 8px;
+          border-radius: 999px;
+          background: #22d3ee;
+          box-shadow: 0 0 14px rgba(34, 211, 238, 0.85);
+        }
+
+        .metric-coach-torso {
+          position: absolute;
+          left: 10px;
+          top: 34px;
+          height: 18px;
+          width: 22px;
+          border-radius: 8px 8px 10px 10px;
+          background: linear-gradient(180deg, #1e40af, #0f172a);
+          border: 1px solid rgba(255, 255, 255, 0.14);
+        }
+
+        .metric-coach-arm {
+          position: absolute;
+          top: 35px;
+          height: 5px;
+          width: 18px;
+          border-radius: 999px;
+          background: #67e8f9;
+          transform-origin: center right;
+        }
+
+        .metric-coach-arm-left {
+          left: -2px;
+          transform: rotate(-24deg);
+        }
+
+        .metric-coach-arm-right {
+          right: -3px;
+          transform: rotate(28deg);
+          animation: robotCoachArmHit 900ms ease-in-out 1450ms 3;
+        }
+
+        .metric-coach-alert .metric-coach-head {
+          background: linear-gradient(180deg, #ffe4e6, #fb7185);
+          box-shadow: 0 10px 22px rgba(244, 63, 94, 0.24);
+        }
+
+        .metric-coach-alert .metric-coach-arm,
+        .metric-coach-alert .metric-coach-antenna,
+        .metric-coach-alert .metric-coach-antenna::before {
+          background: #fb7185;
+          box-shadow: 0 0 14px rgba(251, 113, 133, 0.62);
+        }
+
+        @keyframes robotCoachEnter {
+          0% {
+            opacity: 0;
+            transform: translate3d(42px, 12px, 0) scale(0.9);
+          }
+          16%,
+          78% {
+            opacity: 1;
+            transform: translate3d(0, 0, 0) scale(1);
+          }
+          100% {
+            opacity: 0;
+            transform: translate3d(12px, -8px, 0) scale(0.96);
+          }
+        }
+
+        @keyframes robotCoachHit {
+          0%,
+          100% {
+            transform: translate3d(0, 0, 0) rotate(0deg);
+          }
+          45% {
+            transform: translate3d(-10px, 8px, 0) rotate(-8deg);
+          }
+          62% {
+            transform: translate3d(-18px, 10px, 0) rotate(-12deg);
+          }
+        }
+
+        @keyframes robotCoachArmHit {
+          0%,
+          100% {
+            transform: rotate(28deg);
+          }
+          54% {
+            transform: rotate(104deg);
+          }
+        }
+
+        @keyframes robotValuePulse {
+          0%,
+          20%,
+          44%,
+          68%,
+          100% {
+            box-shadow: none;
+            transform: translateX(0);
+          }
+          30%,
+          54% {
+            box-shadow: 0 0 0 8px var(--robot-target-glow);
+            transform: translateX(-2px);
+          }
+        }
+
+        .premium-dashboard {
+          color-scheme: dark;
+        }
+
+        .premium-dashboard::selection {
+          background: rgba(34, 211, 238, 0.28);
+          color: white;
+        }
+
+        .premium-dashboard select,
+        .premium-dashboard input,
+        .premium-dashboard textarea {
+          min-height: 42px;
+          border-radius: 16px;
+          border-color: rgba(255, 255, 255, 0.1) !important;
+          background: rgba(2, 6, 23, 0.46) !important;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        }
+
+        .premium-dashboard select:focus,
+        .premium-dashboard input:focus,
+        .premium-dashboard textarea:focus {
+          border-color: rgba(103, 232, 249, 0.5) !important;
+          box-shadow:
+            0 0 0 3px rgba(34, 211, 238, 0.1),
+            inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        }
+
+        .premium-dashboard table {
+          border-collapse: separate;
+          border-spacing: 0;
+        }
+
+        .premium-dashboard thead tr {
+          background: rgba(15, 23, 42, 0.42);
+        }
+
+        .premium-dashboard th:first-child {
+          border-top-left-radius: 14px;
+        }
+
+        .premium-dashboard th:last-child {
+          border-top-right-radius: 14px;
+        }
+
+        .premium-dashboard tbody tr {
+          transition: background-color 180ms ease, transform 180ms ease;
+        }
+
+        .premium-dashboard tbody tr:hover {
+          background: rgba(14, 165, 233, 0.075) !important;
+        }
+
+        .premium-dashboard .recharts-cartesian-grid line {
+          stroke: rgba(148, 163, 184, 0.13);
+        }
+
+        .premium-dashboard .recharts-tooltip-cursor {
+          fill: rgba(14, 165, 233, 0.08);
+        }
+
+        .premium-surface {
+          position: relative;
+          overflow: hidden;
+        }
+
+        .premium-surface::before,
+        .premium-kpi::before,
+        .premium-topbar::before,
+        .premium-filter::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          border-radius: inherit;
+          background:
+            linear-gradient(135deg, rgba(255, 255, 255, 0.12), transparent 32%),
+            radial-gradient(circle at 90% 10%, rgba(34, 211, 238, 0.12), transparent 32%);
+          opacity: 0.72;
+        }
+
+        .premium-topbar,
+        .premium-filter,
+        .premium-kpi {
+          position: relative;
+          overflow: hidden;
+        }
+
+        .premium-topbar > *,
+        .premium-filter > *,
+        .premium-surface > *,
+        .premium-kpi > * {
+          position: relative;
+          z-index: 1;
+        }
+
         .glass-breathe {
           position: relative;
           isolation: isolate;
@@ -3514,6 +3875,17 @@ export default function DashboardPage() {
           }
         }
         @media (prefers-reduced-motion: reduce) {
+          .module-slide {
+            animation: none;
+          }
+
+          .metric-coach,
+          .metric-coach-body,
+          .metric-coach-arm-right,
+          .robot-value-target {
+            animation: none;
+          }
+
           .glass-breathe::after {
             animation: none;
           }
@@ -3541,10 +3913,10 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
     <button
       onClick={onClick}
       className={[
-        "rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200 backdrop-blur-md",
+        "shrink-0 rounded-2xl border px-4 py-2.5 text-sm font-semibold tracking-tight transition duration-200 backdrop-blur-md",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "border-cyan-300/45 bg-gradient-to-r from-cyan-400/22 to-blue-500/18 text-cyan-50 shadow-[0_12px_32px_rgba(8,145,178,0.24),inset_0_1px_0_rgba(255,255,255,0.16)]"
+          : "border-white/10 bg-white/[0.045] text-slate-300 hover:border-cyan-200/20 hover:bg-white/[0.08] hover:text-white",
       ].join(" ")}
     >
       {children}
@@ -3571,10 +3943,10 @@ function TabLinkButton({
       onClick={() => onActivate?.()}
       prefetch={prefetch}
       className={[
-        "inline-flex items-center rounded-xl border px-4 py-2 text-sm font-semibold transition duration-200",
+        "inline-flex shrink-0 items-center rounded-2xl border px-4 py-2.5 text-sm font-semibold tracking-tight transition duration-200",
         active
-          ? "border-cyan-300/40 bg-cyan-400/15 text-cyan-100 shadow-[0_8px_24px_rgba(6,182,212,0.22)]"
-          : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10",
+          ? "border-cyan-300/45 bg-gradient-to-r from-cyan-400/22 to-blue-500/18 text-cyan-50 shadow-[0_12px_32px_rgba(8,145,178,0.24),inset_0_1px_0_rgba(255,255,255,0.16)]"
+          : "border-white/10 bg-white/[0.045] text-slate-300 hover:border-cyan-200/20 hover:bg-white/[0.08] hover:text-white",
       ].join(" ")}
     >
       {children}
@@ -3582,11 +3954,207 @@ function TabLinkButton({
   );
 }
 
+const NAV_ICON_PATHS: Record<string, string> = {
+  "chart-bar": "M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z",
+  bank: "M3 21h18M4.5 21V10.5M19.5 21V10.5M2.25 10.5l9.75-6 9.75 6M8.25 21v-6h7.5v6",
+  users: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z",
+  banknotes: "M2.25 8.25h19.5M2.25 15.75h19.5M4.5 4.5h15A2.25 2.25 0 0121.75 6.75v10.5A2.25 2.25 0 0119.5 19.5h-15A2.25 2.25 0 012.25 17.25V6.75A2.25 2.25 0 014.5 4.5zM15 12a3 3 0 11-6 0 3 3 0 016 0z",
+  "trending-up": "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6",
+  "chart-pie": "M10.5 6a7.5 7.5 0 107.5 7.5h-7.5V6z M13.5 10.5H21A7.5 7.5 0 0013.5 3v7.5z",
+};
+
+function NavIcon({ name, className }: { name: string; className?: string }) {
+  const d = NAV_ICON_PATHS[name];
+  if (!d) return null;
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
+}
+
+function SidebarNavItem({
+  item,
+  active,
+  onSelect,
+}: {
+  item: { key: TabKey; label: string; icon: string; href?: string };
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const classes = [
+    "nav-orb group relative flex h-12 w-12 items-center justify-center rounded-2xl transition-colors duration-300",
+    active ? "is-active text-cyan-100" : "text-slate-400 hover:text-cyan-100",
+  ].join(" ");
+
+  const content = (
+    <>
+      <span
+        className={`absolute inset-0 rounded-2xl transition-all duration-300 ${
+          active
+            ? "bg-cyan-400/12 shadow-[0_0_26px_rgba(34,211,238,0.35)] ring-1 ring-cyan-300/35"
+            : "bg-transparent ring-1 ring-transparent group-hover:bg-white/[0.05] group-hover:ring-white/10"
+        }`}
+      />
+      <span className="nav-sparkle nav-sparkle-1" aria-hidden />
+      <span className="nav-sparkle nav-sparkle-2" aria-hidden />
+      <span className="nav-sparkle nav-sparkle-3" aria-hidden />
+      <NavIcon name={item.icon} className="relative z-10 h-5 w-5 shrink-0" />
+
+      <span className="nav-label pointer-events-none absolute left-full top-1/2 z-20 ml-3 -translate-y-1/2 whitespace-nowrap rounded-xl border border-white/10 bg-[#0b1424]/95 py-2 text-sm font-semibold text-white opacity-0 shadow-[0_16px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
+        {item.label}
+      </span>
+    </>
+  );
+
+  if (item.href) {
+    return (
+      <Link href={item.href} onClick={onSelect} prefetch={false} className={classes}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" onClick={onSelect} className={classes}>
+      {content}
+    </button>
+  );
+}
+
+function Sidebar({ tab, onSelect }: { tab: TabKey; onSelect: (key: TabKey) => void }) {
+  const flowDelays = [0, 1.4, 2.8, 4.2, 5.6];
+
+  return (
+    <aside className="relative z-10 hidden w-[76px] shrink-0 flex-col items-center md:flex">
+      <div className="flex items-center justify-center py-5">
+        <span className="grid h-9 w-9 place-items-center rounded-xl border border-cyan-200/20 bg-cyan-400/10 text-sm font-black text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.18)]">
+          R
+        </span>
+      </div>
+
+      <nav className="flex flex-col gap-2.5">
+        {NAV_ITEMS.map((item) => (
+          <SidebarNavItem key={item.key} item={item} active={tab === item.key} onSelect={() => onSelect(item.key)} />
+        ))}
+      </nav>
+
+      <div className="relative min-h-0 w-full flex-1 overflow-hidden">
+        <div className="sidebar-flow-rail absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-gradient-to-b from-cyan-300/0 via-cyan-300/20 to-emerald-300/0" />
+        {flowDelays.map((delay, i) => (
+          <span
+            key={i}
+            className="sidebar-flow-dot absolute left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-cyan-200/80 shadow-[0_0_10px_2px_rgba(34,211,238,0.45)]"
+            style={{ animationDelay: `${delay}s` }}
+          />
+        ))}
+      </div>
+
+      <style jsx global>{`
+        @keyframes sidebar-flow {
+          0% {
+            top: -4%;
+            opacity: 0;
+          }
+          10% {
+            opacity: 1;
+          }
+          85% {
+            opacity: 1;
+          }
+          100% {
+            top: 104%;
+            opacity: 0;
+          }
+        }
+        .sidebar-flow-dot {
+          animation: sidebar-flow 7s linear infinite;
+        }
+
+        .nav-label {
+          max-width: 0;
+          padding-left: 0;
+          padding-right: 0;
+          overflow: hidden;
+          transform-origin: left center;
+          transition: max-width 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease, padding 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+            transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+          transform: translateY(-50%) translateX(-6px) scale(0.96);
+        }
+        .nav-orb:hover .nav-label {
+          max-width: 240px;
+          padding-left: 16px;
+          padding-right: 16px;
+          opacity: 1;
+          transform: translateY(-50%) translateX(0) scale(1);
+        }
+
+        .nav-sparkle {
+          position: absolute;
+          width: 4px;
+          height: 4px;
+          border-radius: 9999px;
+          background: radial-gradient(circle, rgba(216, 250, 254, 0.95), rgba(34, 211, 238, 0));
+          opacity: 0;
+          z-index: 5;
+        }
+        .nav-sparkle-1 {
+          top: -1px;
+          right: 4px;
+        }
+        .nav-sparkle-2 {
+          bottom: 3px;
+          left: -2px;
+        }
+        .nav-sparkle-3 {
+          top: 50%;
+          right: -3px;
+        }
+        @keyframes nav-sparkle-twinkle {
+          0%,
+          100% {
+            opacity: 0;
+            transform: scale(0.4);
+          }
+          50% {
+            opacity: 1;
+            transform: scale(1.15);
+          }
+        }
+        .nav-orb:hover .nav-sparkle,
+        .nav-orb.is-active .nav-sparkle {
+          animation: nav-sparkle-twinkle 1.8s ease-in-out infinite;
+        }
+        .nav-orb:hover .nav-sparkle-2,
+        .nav-orb.is-active .nav-sparkle-2 {
+          animation-delay: 0.3s;
+        }
+        .nav-orb:hover .nav-sparkle-3,
+        .nav-orb.is-active .nav-sparkle-3 {
+          animation-delay: 0.6s;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .sidebar-flow-dot,
+          .nav-sparkle {
+            animation: none !important;
+            display: none;
+          }
+          .nav-label {
+            transition: none;
+          }
+        }
+      `}</style>
+    </aside>
+  );
+}
+
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-      <div className="mb-3">
-        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
+    <div className="premium-surface glass-breathe rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.86),rgba(3,7,18,0.76))] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-2xl">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-100">{title}</div>
+        <span className="h-1.5 w-10 rounded-full bg-gradient-to-r from-cyan-300 to-blue-500 opacity-70" />
       </div>
       {children}
     </div>
@@ -3603,13 +4171,13 @@ function ChartCard({
   legend: Array<{ label: string; color: string }>;
 }) {
   return (
-    <div className="glass-breathe rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-100">{title}</div>
+    <div className="premium-surface glass-breathe rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.86),rgba(3,7,18,0.76))] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-2xl">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-100">{title}</div>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           {legend.map((item, index) => (
-            <div key={`${item.label}-${index}`} className="flex items-center gap-1.5 text-[11px] text-slate-300">
-              <span className={`h-2.5 w-2.5 rounded-full ${item.color}`} />
+            <div key={`${item.label}-${index}`} className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-slate-300">
+              <span className={`h-2 w-2 rounded-full ${item.color} shadow-[0_0_12px_currentColor]`} />
               {item.label}
             </div>
           ))}
@@ -3643,27 +4211,48 @@ function KpiCard({
         : `${Math.round(animatedValue)}`
       : value ?? "—";
 
-  const ring = highlight === "good" ? "border-emerald-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
+  const ring = highlight === "good" ? "border-cyan-300/30" : highlight === "bad" ? "border-rose-300/30" : "border-white/10";
 
   const glow =
     highlight === "good"
-      ? "shadow-[0_16px_45px_rgba(6,182,212,0.18)]"
+      ? "shadow-[0_18px_48px_rgba(8,145,178,0.20)]"
       : highlight === "bad"
       ? "shadow-[0_16px_45px_rgba(244,63,94,0.18)]"
-      : "shadow-[0_20px_80px_rgba(0,0,0,0.35)]";
+      : "shadow-[0_22px_70px_rgba(0,0,0,0.38)]";
 
   const dot = highlight === "good" ? "bg-cyan-300" : highlight === "bad" ? "bg-rose-300" : "bg-slate-300";
 
   return (
     <div
-      className={`glass-breathe group rounded-2xl border ${ring} ${glow} bg-gradient-to-b from-white/10 to-white/5 p-5 backdrop-blur-xl transition hover:shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_16px_45px_rgba(6,182,212,0.15)]`}
+      className={`premium-kpi glass-breathe group rounded-[24px] border ${ring} ${glow} bg-[radial-gradient(circle_at_86%_20%,rgba(14,165,233,0.16),transparent_30%),linear-gradient(180deg,rgba(15,23,42,0.90),rgba(3,7,18,0.80))] p-5 backdrop-blur-2xl transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.10),0_20px_52px_rgba(8,145,178,0.18)]`}
     >
-      <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.14em] text-slate-300">
-        <span className={`h-2 w-2 rounded-full ${dot}`} />
+      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+        <span className={`h-2 w-2 rounded-full ${dot} shadow-[0_0_14px_currentColor]`} />
         {title}
       </div>
-      <div className="mt-3 text-[24px] font-semibold tracking-tight text-white">{resolvedValue}</div>
-      {subtext ? <div className="mt-1 text-xs text-slate-400">{subtext}</div> : null}
+      <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{resolvedValue}</div>
+      {subtext ? <div className="mt-1 text-xs font-medium text-slate-400">{subtext}</div> : null}
+    </div>
+  );
+}
+
+function MetricCoachRobot({ tone, message }: { tone: "good" | "alert"; message: string }) {
+  const toneClass = tone === "good" ? "metric-coach-good" : "metric-coach-alert";
+
+  return (
+    <div className={`metric-coach ${toneClass}`} aria-live="polite">
+      <div className="metric-coach-bubble">{message}</div>
+      <div className="metric-coach-body" aria-hidden="true">
+        <div className="metric-coach-antenna" />
+        <div className="metric-coach-head">
+          <span className="metric-coach-eye" />
+          <span className="metric-coach-eye" />
+          <span className="metric-coach-mouth" />
+        </div>
+        <div className="metric-coach-arm metric-coach-arm-left" />
+        <div className="metric-coach-arm metric-coach-arm-right" />
+        <div className="metric-coach-torso" />
+      </div>
     </div>
   );
 }
