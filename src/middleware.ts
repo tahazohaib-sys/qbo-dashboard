@@ -58,6 +58,7 @@ function isProtectedApi(pathname: string) {
     pathname.startsWith("/api/ai/") ||
     pathname.startsWith("/api/custom-fields/") ||
     pathname === "/api/qbo/pnl-table" ||
+    pathname === "/api/qbo/pnl-monthly" ||
     pathname === "/api/qbo/ar-ap" ||
     pathname === "/api/qbo/cash-banks" ||
     pathname === "/api/qbo/account-transactions" ||
