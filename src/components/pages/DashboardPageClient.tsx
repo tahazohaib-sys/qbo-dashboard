@@ -3,7 +3,15 @@
 
 import Link from "next/link";
 
+import Image from "next/image";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import {
+  groupExpenses,
+  type ExpenseGroup,
+  type MonthCol,
+  type MonthlyRow,
+} from "@/lib/expenseGroups";
 import {
   ResponsiveContainer,
   LineChart,
@@ -48,6 +56,16 @@ type PnlTableResp = {
   end_date: string;
   currency: string;
   rows: PnlRow[];
+  error?: string;
+};
+
+type PnlMonthlyResp = {
+  ok: boolean;
+  start_date: string;
+  end_date: string;
+  currency: string;
+  months: MonthCol[];
+  rows: MonthlyRow[];
   error?: string;
 };
 
@@ -229,6 +247,9 @@ type ArApResp = {
       "61_90": number;
       "91_plus": number;
       total: number;
+      scheduled?: number;
+      isInstallment?: boolean;
+      monthlyPayment?: number;
     }>;
     source: string;
   };
@@ -541,6 +562,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<DashboardResp | null>(null);
   const [pnlBreakdown, setPnlBreakdown] = useState<{ name: string; value: number }[]>([]);
+  const [pnlMonthly, setPnlMonthly] = useState<{ months: MonthCol[]; rows: MonthlyRow[] }>({ months: [], rows: [] });
+  const [selectedGroup, setSelectedGroup] = useState<ExpenseGroup | null>(null);
   const [cashBanks, setCashBanks] = useState<CashBanksResp | null>(null);
 
   const [selectedAccount, setSelectedAccount] = useState<CashBankAccount | null>(null);
@@ -768,11 +791,12 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
         if (!shouldApplyRequest(requestId)) return;
         setData(cached.dashboard);
         setPnlBreakdown(cached.pnlBreakdown);
+        setPnlMonthly(cached.pnlMonthly ?? { months: [], rows: [] });
         setLastUpdatedNow();
         return;
       }
 
-      const [dashRes, pnlRes] = await Promise.all([
+      const [dashRes, pnlRes, monthlyRes] = await Promise.all([
         fetch(
           `/api/dashboard?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
           { cache: "no-store" }
@@ -781,12 +805,25 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
           `/api/qbo/pnl-table?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(filters.method)}`,
           { cache: "no-store" }
         ),
+        fetch(
+          `/api/qbo/pnl-monthly?end_date=${encodeURIComponent(end)}&months=6&accounting_method=${encodeURIComponent(filters.method)}`,
+          { cache: "no-store" }
+        ),
       ]);
 
       const dashJson: DashboardResp = await dashRes.json();
       const pnlJson: PnlTableResp = await pnlRes.json();
       if (!dashJson.ok) throw new Error(dashJson.error || "Dashboard API failed");
       if (!pnlJson.ok) throw new Error(pnlJson.error || "P&L table API failed");
+
+      // Monthly per-category series is optional — a failure here must not break the tab.
+      let nextMonthly: { months: MonthCol[]; rows: MonthlyRow[] } = { months: [], rows: [] };
+      try {
+        const monthlyJson: PnlMonthlyResp = await monthlyRes.json();
+        if (monthlyJson.ok) nextMonthly = { months: monthlyJson.months ?? [], rows: monthlyJson.rows ?? [] };
+      } catch {
+        // ignore — leaves nextMonthly empty; the modal shows "trend unavailable"
+      }
 
       const expenseRows = pnlJson.rows.filter((r) => {
         if (r.rowType !== "Data") return false;
@@ -802,10 +839,11 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
         .sort((a, b) => b.value - a.value);
       const nextBreakdown = sorted;
 
-      moduleCacheRef.current.set(key, { dashboard: dashJson, pnlBreakdown: nextBreakdown });
+      moduleCacheRef.current.set(key, { dashboard: dashJson, pnlBreakdown: nextBreakdown, pnlMonthly: nextMonthly });
       if (!shouldApplyRequest(requestId)) return;
       setData(dashJson);
       setPnlBreakdown(nextBreakdown);
+      setPnlMonthly(nextMonthly);
       setLastUpdatedNow();
       return;
     }
@@ -1039,12 +1077,18 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
         kpi.profit
       )}, with expenses exceeding revenue. Primary pressure remains in core fixed costs, so immediate focus should be on revenue realization and invoice coverage.`;
 
-  const expenseComposition = useMemo(() => {
-    const sorted = [...pnlBreakdown].sort((a, b) => b.value - a.value);
-    const topSix = sorted.slice(0, 6);
-    const remaining = sorted.slice(6).reduce((sum, item) => sum + item.value, 0);
-    return remaining > 0 ? [...topSix, { name: "Other", value: remaining }] : topSix;
-  }, [pnlBreakdown]);
+  // Keyword-grouped expense categories (e.g. all department salaries -> "Overall
+  // Salary Expense"), each carrying sub-members + a monthly series for the popup.
+  const expenseGroups = useMemo(
+    () => groupExpenses(pnlBreakdown, pnlMonthly.rows, pnlMonthly.months, { topN: 6 }),
+    [pnlBreakdown, pnlMonthly]
+  );
+
+  // Shape kept for the donut/legend/tooltip (name + value per slice).
+  const expenseComposition = useMemo(
+    () => expenseGroups.map((g) => ({ name: g.label, value: g.value })),
+    [expenseGroups]
+  );
 
   const expenseTotal = useMemo(() => expenseComposition.reduce((sum, item) => sum + item.value, 0), [expenseComposition]);
 
@@ -1325,6 +1369,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
       "31_60": v["31_60"],
       "61_90": v["61_90"],
       "91_plus": v["91_plus"],
+      scheduled: v.scheduled ?? 0,
     })) ?? [];
 
   // endYmd for current selected period (used by add/delete)
@@ -1348,7 +1393,16 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
         <div className="min-w-0 flex-1">
         <div className="premium-topbar flex flex-col gap-4 rounded-[28px] border border-white/10 bg-[#070d1c]/78 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3.5">
+            <Image
+              src="/logo.png"
+              alt="RTC League"
+              width={348}
+              height={132}
+              priority
+              className="h-9 w-auto flex-shrink-0 select-none object-contain drop-shadow-[0_4px_16px_rgba(34,211,238,0.25)] md:h-10"
+            />
+            <span className="h-8 w-px flex-shrink-0 bg-white/12" aria-hidden="true" />
             <div>
               <h1 className="text-[28px] font-semibold tracking-tight text-white md:text-[32px]">Finance Dashboard</h1>
             </div>
@@ -1690,7 +1744,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                             <Bar dataKey="1_30" name="1–30 d" stackId="a" fill="#22d3ee" />
                             <Bar dataKey="31_60" name="31–60 d" stackId="a" fill="#f59e0b" />
                             <Bar dataKey="61_90" name="61–90 d" stackId="a" fill="#f97316" />
-                            <Bar dataKey="91_plus" name="91+ d" stackId="a" fill="#ef4444" radius={[0, 3, 3, 0]} />
+                            <Bar dataKey="91_plus" name="91+ d" stackId="a" fill="#ef4444" />
+                            <Bar dataKey="scheduled" name="Scheduled" stackId="a" fill="#a78bfa" radius={[0, 3, 3, 0]} />
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
@@ -2123,6 +2178,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           <th className="py-2 text-right">31–60 d</th>
                           <th className="py-2 text-right">61–90 d</th>
                           <th className="py-2 text-right">91+ d</th>
+                          <th className="py-2 text-right">Scheduled</th>
                           <th className="py-2 text-right">% of AP</th>
                           <th className="py-2 text-right">Total</th>
                         </tr>
@@ -2134,9 +2190,23 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                               .sort((a, b) => b.total - a.total)
                               .map((v, i) => (
                                 <tr key={i} className="border-t border-white/10">
-                                  <td className="py-2 pr-3 font-medium text-slate-200">{v.vendor}</td>
-                                  <td className="py-2 text-right font-semibold text-slate-200">
-                                    {formatPKRCompact(v.current)}
+                                  <td className="py-2 pr-3 font-medium text-slate-200">
+                                    <span className="flex items-center gap-1.5">
+                                      <span>{v.vendor}</span>
+                                      {v.isInstallment ? (
+                                        <span
+                                          title={`Fixed monthly payment detected: ${formatPKRCompact(v.monthlyPayment ?? v.current)}/mo`}
+                                          className="flex-shrink-0 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-emerald-300"
+                                        >
+                                          Installment
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 text-right font-semibold">
+                                    <span className={v.isInstallment ? "rounded-md bg-emerald-400/15 px-1.5 py-0.5 text-emerald-300" : "text-slate-200"}>
+                                      {formatPKRCompact(v.current)}
+                                    </span>
                                   </td>
                                   <td className="py-2 text-right font-semibold">
                                     <span
@@ -2182,6 +2252,17 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                       {formatPKRCompact(v["91_plus"])}
                                     </span>
                                   </td>
+                                  <td className="py-2 text-right font-semibold">
+                                    <span
+                                      className={
+                                        (v.scheduled ?? 0) > 0
+                                          ? "rounded-md bg-violet-400/15 px-1.5 py-0.5 text-violet-300"
+                                          : "text-slate-500"
+                                      }
+                                    >
+                                      {formatPKRCompact(v.scheduled ?? 0)}
+                                    </span>
+                                  </td>
                                   <td className="py-2 text-right text-slate-400">
                                     {arAp.apAging.totalAP > 0
                                       ? ((v.total / arAp.apAging.totalAP) * 100).toFixed(1) + "%"
@@ -2197,7 +2278,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 <td className="py-2 pr-3 text-xs font-bold uppercase tracking-wider text-rose-300">
                                   Overdue Subtotal (61+ d)
                                 </td>
-                                <td colSpan={5}></td>
+                                <td colSpan={6}></td>
                                 <td className="py-2 text-right text-xs text-rose-400">
                                   {overdueAPPct.toFixed(1)}%
                                 </td>
@@ -2208,7 +2289,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                             )}
                             <tr className="border-t-2 border-white/15 bg-white/5">
                               <td className="py-2.5 pr-3 font-bold text-slate-100">Total AP</td>
-                              <td colSpan={6}></td>
+                              <td colSpan={7}></td>
                               <td className="py-2.5 text-right font-bold text-slate-100">
                                 {formatPKRCompact(arAp.apAging.totalAP)}
                               </td>
@@ -2216,7 +2297,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           </>
                         ) : (
                           <tr className="border-t border-white/10">
-                            <td colSpan={8} className="py-4 text-slate-300">
+                            <td colSpan={9} className="py-4 text-slate-300">
                               No vendor aging data found.
                             </td>
                           </tr>
@@ -2522,8 +2603,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                       <PieChart>
                         <Tooltip content={<MoneyTooltip pie />} />
                         <Pie data={expenseComposition} dataKey="value" nameKey="name" innerRadius={72} outerRadius={108} paddingAngle={2} cornerRadius={6}>
-                          {expenseComposition.map((_, i) => (
-                            <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
+                          {expenseGroups.map((g, i) => (
+                            <Cell key={i} fill={g.color} />
                           ))}
                         </Pie>
                         <text x="50%" y="46%" textAnchor="middle" fill="rgba(148,163,184,0.8)" fontSize={10} letterSpacing="0.18em">TOTAL</text>
@@ -2532,30 +2613,52 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                     </ResponsiveContainer>
                   </div>
 
-                  {/* Ranked horizontal bars */}
-                  <div className="flex flex-col justify-center gap-3 py-2">
-                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</div>
-                    {expenseComposition.map((item, idx) => {
-                      const pct = expenseTotal > 0 ? (item.value / expenseTotal) * 100 : 0;
+                  {/* Ranked, clickable category rows */}
+                  <div className="flex flex-col justify-center gap-2 py-2">
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</span>
+                      <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">Click for details</span>
+                    </div>
+                    {expenseGroups.map((group) => {
+                      const pct = expenseTotal > 0 ? (group.value / expenseTotal) * 100 : 0;
                       return (
-                        <div key={item.name}>
-                          <div className="mb-1 flex items-center justify-between">
-                            <span className="flex items-center gap-1.5 text-xs text-slate-300">
-                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
-                              {item.name}
+                        <button
+                          key={group.key}
+                          type="button"
+                          onClick={() => setSelectedGroup(group)}
+                          aria-label={`View details for ${group.label}`}
+                          className="group/row -mx-2 rounded-xl px-2 py-1.5 text-left transition duration-200 hover:-translate-y-0.5 hover:bg-white/[0.05] focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+                        >
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <span className="flex min-w-0 items-center gap-1.5 text-xs text-slate-300">
+                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: group.color }} />
+                              <span className="truncate">{group.label}</span>
+                              {group.members.length > 1 ? (
+                                <span className="flex-shrink-0 rounded-full bg-white/10 px-1.5 py-px text-[9px] font-semibold text-slate-400">{group.members.length}</span>
+                              ) : null}
                             </span>
-                            <span className="text-xs font-semibold text-slate-200">{pct.toFixed(1)}% &middot; {formatPKRCompact(item.value)}</span>
+                            <span className="flex flex-shrink-0 items-center gap-1.5 text-xs font-semibold text-slate-200">
+                              {pct.toFixed(1)}% &middot; {formatPKRCompact(group.value)}
+                              <svg className="h-3 w-3 text-slate-500 transition group-hover/row:translate-x-0.5 group-hover/row:text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
+                            </span>
                           </div>
                           <div className="h-1.5 w-full rounded-full bg-white/8">
-                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
+                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: group.color }} />
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
                 </div>
               </ChartCard>
             </div>
+
+            <ExpenseDetailModal
+              group={selectedGroup}
+              months={pnlMonthly.months}
+              totalExpenses={expenseTotal}
+              onClose={() => setSelectedGroup(null)}
+            />
 
             {/* KEY INSIGHTS STRIP */}
             <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -3517,6 +3620,26 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
           }
         }
 
+        @keyframes expenseOverlayIn {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+
+        @keyframes expenseModalIn {
+          from {
+            opacity: 0;
+            transform: translate3d(0, 18px, 0) scale(0.96);
+          }
+          to {
+            opacity: 1;
+            transform: translate3d(0, 0, 0) scale(1);
+          }
+        }
+
         .robot-value-target {
           position: relative;
           display: inline-block;
@@ -4158,6 +4281,180 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
       </div>
       {children}
     </div>
+  );
+}
+
+function ExpenseDetailModal({
+  group,
+  months,
+  totalExpenses,
+  onClose,
+}: {
+  group: ExpenseGroup | null;
+  months: MonthCol[];
+  totalExpenses: number;
+  onClose: () => void;
+}) {
+  // Esc-to-close + body scroll lock while the modal is open.
+  useEffect(() => {
+    if (!group) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [group, onClose]);
+
+  if (!group) return null;
+
+  const reduceMotion =
+    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const pctOfTotal = totalExpenses > 0 ? (group.value / totalExpenses) * 100 : 0;
+
+  // Monthly trend: align amounts with month labels, then keep only the category's
+  // active range (drop leading/trailing months with no activity — e.g. a category
+  // that started recently, or a current month not yet posted), then the last five.
+  const fullSeries = months.map((m, i) => ({
+    label: (m.label || "").split(" ")[0] || m.label,
+    full: m.label,
+    value: group.monthly[i] ?? 0,
+  }));
+  const firstActive = fullSeries.findIndex((s) => s.value !== 0);
+  const lastActive = (() => {
+    for (let i = fullSeries.length - 1; i >= 0; i--) if (fullSeries[i].value !== 0) return i;
+    return -1;
+  })();
+  const available = firstActive >= 0 ? fullSeries.slice(firstActive, lastActive + 1) : [];
+  const trend = available.slice(-5);
+  const hasTrend = trend.length > 0;
+
+  const latest = hasTrend ? trend[trend.length - 1].value : 0;
+  const prev = trend.length >= 2 ? trend[trend.length - 2].value : 0;
+  const momDelta = prev !== 0 ? ((latest - prev) / prev) * 100 : null;
+
+  if (typeof document === "undefined") return null;
+
+  // Render into <body> via a portal so the fixed overlay escapes the dashboard's
+  // transformed/blurred ancestors (premium-surface, glass-breathe, module slide) —
+  // otherwise `position: fixed` resolves against a transformed ancestor instead of
+  // the viewport, leaving only the backdrop visible.
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[60] overflow-y-auto p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${group.label} details`}
+    >
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+        style={reduceMotion ? undefined : { animation: "expenseOverlayIn 0.22s ease-out" }}
+        aria-hidden="true"
+      />
+
+      {/* Panel */}
+      <div
+        className="premium-surface relative z-[1] mx-auto my-[5vh] max-h-[90vh] w-full max-w-lg overflow-y-auto overflow-x-hidden rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.94),rgba(3,7,18,0.88))] p-6 shadow-[0_28px_90px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
+        style={reduceMotion ? undefined : { animation: "expenseModalIn 0.32s cubic-bezier(0.22,1,0.36,1)" }}
+      >
+        {/* Header */}
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="h-3 w-3 flex-shrink-0 rounded-full shadow-[0_0_14px_currentColor]" style={{ background: group.color, color: group.color }} />
+              <span className="truncate text-base font-semibold text-white">{group.label}</span>
+            </div>
+            <div className="mt-1.5 flex items-baseline gap-2">
+              <span className="text-2xl font-semibold tracking-tight text-white">{formatPKRCompact(group.value)}</span>
+              <span className="text-xs font-medium text-slate-400">{pctOfTotal.toFixed(1)}% of expenses</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        {/* Section A: sub-category breakdown */}
+        <div className="mb-6">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</div>
+          <div className="flex max-h-52 flex-col gap-2.5 overflow-y-auto pr-1">
+            {group.members.map((m) => {
+              const pct = group.value > 0 ? (m.value / group.value) * 100 : 0;
+              return (
+                <div key={m.name}>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-1.5 text-xs text-slate-300">
+                      <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: group.color }} />
+                      <span className="truncate">{m.name}</span>
+                    </span>
+                    <span className="flex-shrink-0 text-xs font-semibold text-slate-200">{pct.toFixed(1)}% &middot; {formatPKRCompact(m.value)}</span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-white/8">
+                    <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: group.color }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Section B: last 5 months */}
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Last {Math.max(trend.length, 1)} Month{trend.length === 1 ? "" : "s"}</span>
+            {momDelta != null ? (
+              <span className={`text-[11px] font-semibold ${momDelta > 0 ? "text-rose-300" : "text-emerald-300"}`}>
+                {momDelta > 0 ? "▲" : "▼"} {Math.abs(momDelta).toFixed(1)}% vs prev
+              </span>
+            ) : null}
+          </div>
+          {hasTrend ? (
+            <div className="h-[170px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={trend} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
+                  <CartesianGrid {...GRID} vertical={false} />
+                  <XAxis dataKey="label" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
+                  <YAxis width={44} tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
+                  <Tooltip
+                    cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                    content={({ active, payload }: any) =>
+                      active && payload && payload.length ? (
+                        <div className="rounded-xl border border-white/10 bg-[#070b1a]/90 px-3 py-2 text-xs text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
+                          <div className="font-semibold">{payload[0]?.payload?.full ?? payload[0]?.payload?.label}</div>
+                          <div>{formatPKRCompact(Number(payload[0]?.value ?? 0))}</div>
+                        </div>
+                      ) : null
+                    }
+                  />
+                  <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={44}>
+                    {trend.map((_, i) => (
+                      <Cell key={i} fill={group.color} fillOpacity={i === trend.length - 1 ? 1 : 0.55} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-6 text-center text-xs text-slate-400">
+              Monthly trend unavailable for this category.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

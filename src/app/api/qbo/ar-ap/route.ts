@@ -472,6 +472,164 @@ async function fetchBillPaymentsWithDates(upToDate: string): Promise<Array<{ dat
 }
 
 /**
+ * ---------- INSTALLMENT (FIXED MONTHLY PAYMENT) DETECTION ----------
+ *
+ * Some vendors are paid a fixed amount every month against a large bill
+ * (an installment plan). For those, only one installment is really "current" —
+ * the rest is scheduled/future, not overdue. We detect the fixed monthly amount
+ * from BillPayment history and reclassify the vendor's aging row accordingly.
+ */
+
+/** Fetch all BillPayments (up to a cutoff) WITH the vendor, for per-vendor monthly analysis. */
+async function fetchBillPaymentsByVendor(
+  upToDate: string
+): Promise<Array<{ vendor: string; date: string; amount: number }>> {
+  const cacheKey = `billPayByVendor:${upToDate}`;
+  const hit = cacheGet<Array<{ vendor: string; date: string; amount: number }>>(cacheKey);
+  if (hit) return hit;
+
+  const q = `SELECT VendorRef, TxnDate, TotalAmt FROM BillPayment WHERE TxnDate <= '${upToDate}'`;
+  let start = 1;
+  const size = 1000;
+  const out: Array<{ vendor: string; date: string; amount: number }> = [];
+
+  while (true) {
+    const path = `query?query=${encodeURIComponent(q)}&startposition=${start}&maxresults=${size}`;
+    const res: any = await qboFetch(path);
+    const rows: any[] = res?.QueryResponse?.BillPayment ?? [];
+    for (const r of rows) {
+      const vendor = String(r?.VendorRef?.name ?? r?.VendorRef?.value ?? "").trim();
+      out.push({ vendor, date: String(r.TxnDate ?? ""), amount: moneyInt(r.TotalAmt) });
+    }
+    if (rows.length < size) break;
+    start += size;
+  }
+
+  cacheSet(cacheKey, out, 5 * 60 * 1000);
+  return out;
+}
+
+/** Build the last `windowMonths` "YYYY-MM" keys ending at the asOf month (oldest → newest). */
+function windowMonthKeysUTC(asOf: string, windowMonths: number): string[] {
+  const end = parseYMD(asOf);
+  if (!end) return [];
+  const ey = end.getUTCFullYear();
+  const em = end.getUTCMonth() + 1; // 1..12
+  const keys: string[] = [];
+  for (let i = windowMonths - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(ey, em - 1 - i, 1));
+    keys.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+  return keys;
+}
+
+/**
+ * Detect vendors paying a (near) identical amount for 3+ CONSECUTIVE recent months.
+ * Returns a map: vendorNameLowercase -> { monthly, months }.
+ */
+function detectInstallmentVendors(
+  payments: Array<{ vendor: string; date: string; amount: number }>,
+  asOf: string,
+  windowMonths = 6
+): Map<string, { monthly: number; months: number }> {
+  const result = new Map<string, { monthly: number; months: number }>();
+  const windowKeys = windowMonthKeysUTC(asOf, windowMonths);
+  if (windowKeys.length === 0) return result;
+  const windowSet = new Set(windowKeys);
+
+  // vendorLower -> (YYYY-MM -> total paid that month)
+  const byVendor = new Map<string, Map<string, number>>();
+  for (const p of payments) {
+    if (!p.vendor || p.amount <= 0) continue;
+    const mk = (p.date || "").slice(0, 7);
+    if (!windowSet.has(mk)) continue;
+    const vl = p.vendor.toLowerCase();
+    let mm = byVendor.get(vl);
+    if (!mm) {
+      mm = new Map();
+      byVendor.set(vl, mm);
+    }
+    mm.set(mk, (mm.get(mk) ?? 0) + p.amount);
+  }
+
+  for (const [vl, mm] of byVendor) {
+    // monthly totals aligned with the window (0 where no payment)
+    const series = windowKeys.map((k) => mm.get(k) ?? 0);
+
+    // last month that has a payment
+    let lastIdx = -1;
+    for (let i = series.length - 1; i >= 0; i--) {
+      if (series[i] > 0) {
+        lastIdx = i;
+        break;
+      }
+    }
+    if (lastIdx < 0) continue;
+
+    // Extend backward from the latest paid month, matching amount strictly (within 2%).
+    // Real-world payments can shift across a calendar-month boundary, so a single
+    // isolated skipped month is tolerated; two skipped months in a row (or an
+    // amount that doesn't match) ends the run.
+    const ref = series[lastIdx];
+    const tol = Math.max(2, ref * 0.02);
+    const matchedIdx: number[] = [lastIdx];
+    let consecZero = 0;
+    for (let i = lastIdx - 1; i >= 0; i--) {
+      const a = series[i];
+      if (a <= 0) {
+        consecZero += 1;
+        if (consecZero > 1) break; // two skipped months in a row -> plan likely paused/ended
+        continue;
+      }
+      if (Math.abs(a - ref) > tol) break; // amount changed -> different pattern
+      matchedIdx.push(i);
+      consecZero = 0;
+    }
+
+    if (matchedIdx.length >= 3) {
+      const runVals = matchedIdx.map((i) => series[i]).sort((a, b) => a - b);
+      const mid = Math.floor(runVals.length / 2);
+      const monthly =
+        runVals.length % 2 ? runVals[mid] : Math.round((runVals[mid - 1] + runVals[mid]) / 2);
+      result.set(vl, { monthly, months: matchedIdx.length });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Reclassify aging rows for installment vendors: Current = one monthly installment,
+ * Scheduled = remaining balance, overdue buckets cleared, Total unchanged.
+ * Non-installment rows get scheduled = 0 and isInstallment = false.
+ */
+function applyInstallmentsToAging(
+  apAging: { totalAP: number; vendors: any[]; source: string },
+  installmentMap: Map<string, { monthly: number; months: number }>
+) {
+  const vendors = apAging.vendors.map((v) => {
+    const inst = installmentMap.get(String(v.vendor).toLowerCase());
+    if (inst && v.total > 0) {
+      const current = Math.min(inst.monthly, v.total);
+      const scheduled = Math.max(0, v.total - current);
+      return {
+        ...v,
+        current,
+        "1_30": 0,
+        "31_60": 0,
+        "61_90": 0,
+        "91_plus": 0,
+        scheduled,
+        isInstallment: true,
+        monthlyPayment: inst.monthly,
+      };
+    }
+    return { ...v, scheduled: 0, isInstallment: false };
+  });
+  return { ...apAging, vendors };
+}
+
+/**
  * Batch monthly series computation.
  * Pre-fetches all Bills/BillPayments once, then computes vendor bills per month-end in-memory.
  * Balance Sheet accounts (Payroll Payable, WHT, Sir Aatif Loan, etc.) are read from BS per month.
@@ -661,7 +819,53 @@ export async function GET(req: Request) {
     const months = Math.max(1, Math.min(24, Number(monthsRaw ?? "1") || 1)); // 1..24
 
     // 1) Detailed current asOf (accurate)
-    const { computed, apAging } = await computeDetailedAsOf(asOf, accountingMethod, realmId);
+    const { computed, apAging: apAgingRaw } = await computeDetailedAsOf(asOf, accountingMethod, realmId);
+
+    // 1b) Reclassify vendors on a fixed monthly installment plan: their "current"
+    //     becomes one monthly payment, the remainder moves to a "scheduled" bucket.
+    let apAging = apAgingRaw;
+    // TEMPORARY diagnostics — shows exactly what monthly payment amounts QBO returned
+    // per vendor and whether the installment detector matched. Remove once verified.
+    let installmentDebug: any = null;
+    try {
+      const vendorPayments = await fetchBillPaymentsByVendor(asOf);
+      const installmentMap = detectInstallmentVendors(vendorPayments, asOf, 6);
+      // Always normalize (adds scheduled:0 / isInstallment:false) so the column renders consistently.
+      apAging = applyInstallmentsToAging(apAgingRaw, installmentMap);
+
+      const windowKeys = windowMonthKeysUTC(asOf, 6);
+      const byVendor = new Map<string, Map<string, number>>();
+      for (const p of vendorPayments) {
+        if (!p.vendor) continue;
+        const vl = p.vendor.toLowerCase();
+        const mk = (p.date || "").slice(0, 7);
+        let mm = byVendor.get(vl);
+        if (!mm) {
+          mm = new Map();
+          byVendor.set(vl, mm);
+        }
+        mm.set(mk, (mm.get(mk) ?? 0) + p.amount);
+      }
+      installmentDebug = {
+        asOf,
+        windowKeys,
+        totalPaymentRecordsFetched: vendorPayments.length,
+        distinctVendorNamesInPayments: Array.from(new Set(vendorPayments.map((p) => p.vendor))).slice(0, 50),
+        vendors: apAgingRaw.vendors.map((v: any) => {
+          const vl = String(v.vendor).toLowerCase();
+          const mm = byVendor.get(vl);
+          return {
+            vendor: v.vendor,
+            monthlyPayments: windowKeys.map((k) => mm?.get(k) ?? 0),
+            detected: installmentMap.has(vl),
+          };
+        }),
+      };
+    } catch (e: any) {
+      // On any failure, fall back to the raw aging (feature is additive, never blocks the tab).
+      apAging = apAgingRaw;
+      installmentDebug = { error: e?.message ?? String(e) };
+    }
 
     // 2) Optional monthly series (FAST totals)
     let monthlySeries: Array<{ month: string; asOf: string; payables: number; receivables: number; error: boolean }> | undefined;
@@ -719,6 +923,8 @@ export async function GET(req: Request) {
       apAging,
 
       monthlySeries,
+
+      installmentDebug,
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
