@@ -247,6 +247,9 @@ type ArApResp = {
       "61_90": number;
       "91_plus": number;
       total: number;
+      scheduled?: number;
+      isInstallment?: boolean;
+      monthlyPayment?: number;
     }>;
     source: string;
   };
@@ -1366,6 +1369,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
       "31_60": v["31_60"],
       "61_90": v["61_90"],
       "91_plus": v["91_plus"],
+      scheduled: v.scheduled ?? 0,
     })) ?? [];
 
   // endYmd for current selected period (used by add/delete)
@@ -1740,7 +1744,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                             <Bar dataKey="1_30" name="1–30 d" stackId="a" fill="#22d3ee" />
                             <Bar dataKey="31_60" name="31–60 d" stackId="a" fill="#f59e0b" />
                             <Bar dataKey="61_90" name="61–90 d" stackId="a" fill="#f97316" />
-                            <Bar dataKey="91_plus" name="91+ d" stackId="a" fill="#ef4444" radius={[0, 3, 3, 0]} />
+                            <Bar dataKey="91_plus" name="91+ d" stackId="a" fill="#ef4444" />
+                            <Bar dataKey="scheduled" name="Scheduled" stackId="a" fill="#a78bfa" radius={[0, 3, 3, 0]} />
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
@@ -2173,6 +2178,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           <th className="py-2 text-right">31–60 d</th>
                           <th className="py-2 text-right">61–90 d</th>
                           <th className="py-2 text-right">91+ d</th>
+                          <th className="py-2 text-right">Scheduled</th>
                           <th className="py-2 text-right">% of AP</th>
                           <th className="py-2 text-right">Total</th>
                         </tr>
@@ -2184,9 +2190,23 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                               .sort((a, b) => b.total - a.total)
                               .map((v, i) => (
                                 <tr key={i} className="border-t border-white/10">
-                                  <td className="py-2 pr-3 font-medium text-slate-200">{v.vendor}</td>
-                                  <td className="py-2 text-right font-semibold text-slate-200">
-                                    {formatPKRCompact(v.current)}
+                                  <td className="py-2 pr-3 font-medium text-slate-200">
+                                    <span className="flex items-center gap-1.5">
+                                      <span>{v.vendor}</span>
+                                      {v.isInstallment ? (
+                                        <span
+                                          title={`Fixed monthly payment detected: ${formatPKRCompact(v.monthlyPayment ?? v.current)}/mo`}
+                                          className="flex-shrink-0 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-emerald-300"
+                                        >
+                                          Installment
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 text-right font-semibold">
+                                    <span className={v.isInstallment ? "rounded-md bg-emerald-400/15 px-1.5 py-0.5 text-emerald-300" : "text-slate-200"}>
+                                      {formatPKRCompact(v.current)}
+                                    </span>
                                   </td>
                                   <td className="py-2 text-right font-semibold">
                                     <span
@@ -2232,6 +2252,17 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                       {formatPKRCompact(v["91_plus"])}
                                     </span>
                                   </td>
+                                  <td className="py-2 text-right font-semibold">
+                                    <span
+                                      className={
+                                        (v.scheduled ?? 0) > 0
+                                          ? "rounded-md bg-violet-400/15 px-1.5 py-0.5 text-violet-300"
+                                          : "text-slate-500"
+                                      }
+                                    >
+                                      {formatPKRCompact(v.scheduled ?? 0)}
+                                    </span>
+                                  </td>
                                   <td className="py-2 text-right text-slate-400">
                                     {arAp.apAging.totalAP > 0
                                       ? ((v.total / arAp.apAging.totalAP) * 100).toFixed(1) + "%"
@@ -2247,7 +2278,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 <td className="py-2 pr-3 text-xs font-bold uppercase tracking-wider text-rose-300">
                                   Overdue Subtotal (61+ d)
                                 </td>
-                                <td colSpan={5}></td>
+                                <td colSpan={6}></td>
                                 <td className="py-2 text-right text-xs text-rose-400">
                                   {overdueAPPct.toFixed(1)}%
                                 </td>
@@ -2258,7 +2289,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                             )}
                             <tr className="border-t-2 border-white/15 bg-white/5">
                               <td className="py-2.5 pr-3 font-bold text-slate-100">Total AP</td>
-                              <td colSpan={6}></td>
+                              <td colSpan={7}></td>
                               <td className="py-2.5 text-right font-bold text-slate-100">
                                 {formatPKRCompact(arAp.apAging.totalAP)}
                               </td>
@@ -2266,7 +2297,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           </>
                         ) : (
                           <tr className="border-t border-white/10">
-                            <td colSpan={8} className="py-4 text-slate-300">
+                            <td colSpan={9} className="py-4 text-slate-300">
                               No vendor aging data found.
                             </td>
                           </tr>
