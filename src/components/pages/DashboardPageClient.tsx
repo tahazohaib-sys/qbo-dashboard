@@ -1,7 +1,6 @@
 // src/app/dashboard/page.tsx
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -356,6 +355,15 @@ const DONUT_COLOR_CLASSES = [
 ];
 
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
+
+const NAV_ITEMS: Array<{ key: TabKey; label: string; icon: string; href?: string }> = [
+  { key: "pnl", label: "Profit & Loss", icon: "chart-bar" },
+  { key: "cash", label: "Bank & Cash Balances", icon: "bank" },
+  { key: "arAp", label: "AR/AP", icon: "users" },
+  { key: "retained", label: "Retained Earning", icon: "banknotes" },
+  { key: "forecast", label: "Financial Forecast", icon: "trending-up" },
+  { key: "revenue", label: "Revenue Analytics", icon: "chart-pie", href: "/dashboard/revenue-analytics" },
+];
 type AppliedFilter = {
   fromYear: number;
   fromMonth: number;
@@ -510,7 +518,7 @@ function WorldMapVideoBackground(): React.JSX.Element {
   );
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const years = useMemo(() => ymOptions(6), []);
   const now = new Date();
 
@@ -570,9 +578,6 @@ export default function DashboardPage() {
 
   const [err, setErr] = useState<string>("");
   const [lastUpdated, setLastUpdated] = useState("--:--:--");
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const applyFiltersRef = useRef<() => Promise<void>>(async () => {});
   const requestIdRef = useRef(0);
   const moduleCacheRef = useRef<Map<string, any>>(new Map());
   const hasInitializedRef = useRef(false);
@@ -963,10 +968,6 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    applyFiltersRef.current = applyFilters;
-  });
-
-  useEffect(() => {
     applyFilters();
     hasInitializedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -994,39 +995,6 @@ export default function DashboardPage() {
     runActiveTabLoad("forecast", appliedFilters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forecastHorizon]);
-
-  useEffect(() => {
-    if (!autoRefresh) {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-      return;
-    }
-
-    const runRefresh = () => {
-      if (document.visibilityState === "visible") {
-        applyFiltersRef.current();
-      }
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        runRefresh();
-      }
-    };
-
-    refreshTimerRef.current = setInterval(runRefresh, 30_000);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [autoRefresh]);
 
   const series = data?.series ?? [];
   const kpi = data?.kpis?.ytd ?? { revenue: 0, expenses: 0, profit: 0 };
@@ -1100,11 +1068,6 @@ export default function DashboardPage() {
     ? series.reduce((best, s) => s.profit > best.profit ? s : best, series[0])
     : { month: "—", profit: 0 };
   const expenseRatio: number | null = kpi.revenue > 0 ? kpi.expenses / kpi.revenue : null;
-
-  const headerAsOf = useMemo(() => {
-    if (!data?.asOf) return "";
-    return new Date(data.asOf).toLocaleString();
-  }, [data?.asOf]);
 
   const currencyTotals = useMemo(() => {
     const t = cashBanks?.totalsByCurrency ?? {};
@@ -1380,54 +1343,18 @@ export default function DashboardPage() {
       <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-blue-500/10 to-transparent" />
       <WorldMapVideoBackground />
 
-      <div className="relative z-10 mx-auto w-full max-w-[1480px] px-4 py-6 sm:px-6 lg:px-8">
+      <div className="relative z-10 mx-auto flex w-full max-w-[1620px] items-stretch gap-5 px-4 py-6 sm:px-6 lg:px-8">
+        <Sidebar tab={tab} onSelect={switchTab} />
+
+        <div className="min-w-0 flex-1">
         <div className="premium-topbar flex flex-col gap-4 rounded-[28px] border border-white/10 bg-[#070d1c]/78 p-4 shadow-[0_24px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
-            <div className="relative h-14 w-14 shrink-0 rounded-2xl border border-white/10 bg-white/5 p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.35)]">
-              <Image src="/logo.png" alt="RTC League Logo" fill className="object-contain" priority />
-            </div>
-
             <div>
               <h1 className="text-[28px] font-semibold tracking-tight text-white md:text-[32px]">Finance Dashboard</h1>
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-2xl border border-emerald-300/20 bg-emerald-400/10 px-3.5 py-2.5 text-xs text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-              <span className="relative inline-flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300/60 motion-reduce:animate-none" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300" />
-              </span>
-              <span className="font-semibold uppercase tracking-[0.14em]">Live</span>
-              <span className="text-emerald-100/80">Last updated: {lastUpdated}</span>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-white/[0.07] px-3.5 py-2.5 text-xs text-slate-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
-              <div className="font-medium text-slate-200">
-                Company: {data?.companyName ?? "—"} ({data?.currency ?? "PKR"})
-              </div>
-              <div className="opacity-80">As of: {headerAsOf || "—"}</div>
-            </div>
-
-            <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.07] px-3.5 py-2.5 text-xs text-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
-              <span className="uppercase tracking-[0.12em]">Auto refresh</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoRefresh}
-                onClick={() => setAutoRefresh((prev) => !prev)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
-                  autoRefresh ? "border-cyan-300/50 bg-cyan-400/30" : "border-white/15 bg-white/10"
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
-                    autoRefresh ? "translate-x-5" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </label>
-
+          <div className="flex flex-nowrap items-center gap-2">
             <button
               onClick={applyFilters}
               className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-50 shadow-[0_12px_28px_rgba(8,145,178,0.12)] transition hover:bg-cyan-400/15 active:scale-[0.99]"
@@ -1435,6 +1362,15 @@ export default function DashboardPage() {
             >
               {loading ? "Refreshing..." : "Refresh"}
             </button>
+
+            {isAdmin ? (
+              <Link
+                href="/admin/access"
+                className="rounded-2xl border border-emerald-300/25 bg-emerald-400/15 px-4 py-2.5 text-sm font-bold text-emerald-50 shadow-[0_12px_28px_rgba(16,185,129,0.15)] transition hover:bg-emerald-400/22 active:scale-[0.99]"
+              >
+                Manage Access
+              </Link>
+            ) : null}
 
             <button
               onClick={logout}
@@ -1445,8 +1381,8 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="mt-5 flex gap-2 overflow-x-auto rounded-[22px] border border-white/10 bg-black/20 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
+        {/* Tabs (mobile only — desktop uses the sidebar) */}
+        <div className="mt-5 flex gap-2 overflow-x-auto rounded-[22px] border border-white/10 bg-black/20 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl md:hidden">
           <TabButton active={tab === "pnl"} onClick={() => switchTab("pnl")}>
             Profit & Loss
           </TabButton>
@@ -3552,6 +3488,7 @@ export default function DashboardPage() {
           </>
         ) : null}
         </div>
+        </div>
       </div>
 
       <style jsx global>{`
@@ -4014,6 +3951,201 @@ function TabLinkButton({
     >
       {children}
     </Link>
+  );
+}
+
+const NAV_ICON_PATHS: Record<string, string> = {
+  "chart-bar": "M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z",
+  bank: "M3 21h18M4.5 21V10.5M19.5 21V10.5M2.25 10.5l9.75-6 9.75 6M8.25 21v-6h7.5v6",
+  users: "M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z",
+  banknotes: "M2.25 8.25h19.5M2.25 15.75h19.5M4.5 4.5h15A2.25 2.25 0 0121.75 6.75v10.5A2.25 2.25 0 0119.5 19.5h-15A2.25 2.25 0 012.25 17.25V6.75A2.25 2.25 0 014.5 4.5zM15 12a3 3 0 11-6 0 3 3 0 016 0z",
+  "trending-up": "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6",
+  "chart-pie": "M10.5 6a7.5 7.5 0 107.5 7.5h-7.5V6z M13.5 10.5H21A7.5 7.5 0 0013.5 3v7.5z",
+};
+
+function NavIcon({ name, className }: { name: string; className?: string }) {
+  const d = NAV_ICON_PATHS[name];
+  if (!d) return null;
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
+}
+
+function SidebarNavItem({
+  item,
+  active,
+  onSelect,
+}: {
+  item: { key: TabKey; label: string; icon: string; href?: string };
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const classes = [
+    "nav-orb group relative flex h-12 w-12 items-center justify-center rounded-2xl transition-colors duration-300",
+    active ? "is-active text-cyan-100" : "text-slate-400 hover:text-cyan-100",
+  ].join(" ");
+
+  const content = (
+    <>
+      <span
+        className={`absolute inset-0 rounded-2xl transition-all duration-300 ${
+          active
+            ? "bg-cyan-400/12 shadow-[0_0_26px_rgba(34,211,238,0.35)] ring-1 ring-cyan-300/35"
+            : "bg-transparent ring-1 ring-transparent group-hover:bg-white/[0.05] group-hover:ring-white/10"
+        }`}
+      />
+      <span className="nav-sparkle nav-sparkle-1" aria-hidden />
+      <span className="nav-sparkle nav-sparkle-2" aria-hidden />
+      <span className="nav-sparkle nav-sparkle-3" aria-hidden />
+      <NavIcon name={item.icon} className="relative z-10 h-5 w-5 shrink-0" />
+
+      <span className="nav-label pointer-events-none absolute left-full top-1/2 z-20 ml-3 -translate-y-1/2 whitespace-nowrap rounded-xl border border-white/10 bg-[#0b1424]/95 py-2 text-sm font-semibold text-white opacity-0 shadow-[0_16px_36px_rgba(0,0,0,0.45)] backdrop-blur-md">
+        {item.label}
+      </span>
+    </>
+  );
+
+  if (item.href) {
+    return (
+      <Link href={item.href} onClick={onSelect} prefetch={false} className={classes}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" onClick={onSelect} className={classes}>
+      {content}
+    </button>
+  );
+}
+
+function Sidebar({ tab, onSelect }: { tab: TabKey; onSelect: (key: TabKey) => void }) {
+  const flowDelays = [0, 1.4, 2.8, 4.2, 5.6];
+
+  return (
+    <aside className="relative z-10 hidden w-[76px] shrink-0 flex-col items-center md:flex">
+      <div className="flex items-center justify-center py-5">
+        <span className="grid h-9 w-9 place-items-center rounded-xl border border-cyan-200/20 bg-cyan-400/10 text-sm font-black text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.18)]">
+          R
+        </span>
+      </div>
+
+      <nav className="flex flex-col gap-2.5">
+        {NAV_ITEMS.map((item) => (
+          <SidebarNavItem key={item.key} item={item} active={tab === item.key} onSelect={() => onSelect(item.key)} />
+        ))}
+      </nav>
+
+      <div className="relative min-h-0 w-full flex-1 overflow-hidden">
+        <div className="sidebar-flow-rail absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-gradient-to-b from-cyan-300/0 via-cyan-300/20 to-emerald-300/0" />
+        {flowDelays.map((delay, i) => (
+          <span
+            key={i}
+            className="sidebar-flow-dot absolute left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-cyan-200/80 shadow-[0_0_10px_2px_rgba(34,211,238,0.45)]"
+            style={{ animationDelay: `${delay}s` }}
+          />
+        ))}
+      </div>
+
+      <style jsx global>{`
+        @keyframes sidebar-flow {
+          0% {
+            top: -4%;
+            opacity: 0;
+          }
+          10% {
+            opacity: 1;
+          }
+          85% {
+            opacity: 1;
+          }
+          100% {
+            top: 104%;
+            opacity: 0;
+          }
+        }
+        .sidebar-flow-dot {
+          animation: sidebar-flow 7s linear infinite;
+        }
+
+        .nav-label {
+          max-width: 0;
+          padding-left: 0;
+          padding-right: 0;
+          overflow: hidden;
+          transform-origin: left center;
+          transition: max-width 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease, padding 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+            transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+          transform: translateY(-50%) translateX(-6px) scale(0.96);
+        }
+        .nav-orb:hover .nav-label {
+          max-width: 240px;
+          padding-left: 16px;
+          padding-right: 16px;
+          opacity: 1;
+          transform: translateY(-50%) translateX(0) scale(1);
+        }
+
+        .nav-sparkle {
+          position: absolute;
+          width: 4px;
+          height: 4px;
+          border-radius: 9999px;
+          background: radial-gradient(circle, rgba(216, 250, 254, 0.95), rgba(34, 211, 238, 0));
+          opacity: 0;
+          z-index: 5;
+        }
+        .nav-sparkle-1 {
+          top: -1px;
+          right: 4px;
+        }
+        .nav-sparkle-2 {
+          bottom: 3px;
+          left: -2px;
+        }
+        .nav-sparkle-3 {
+          top: 50%;
+          right: -3px;
+        }
+        @keyframes nav-sparkle-twinkle {
+          0%,
+          100% {
+            opacity: 0;
+            transform: scale(0.4);
+          }
+          50% {
+            opacity: 1;
+            transform: scale(1.15);
+          }
+        }
+        .nav-orb:hover .nav-sparkle,
+        .nav-orb.is-active .nav-sparkle {
+          animation: nav-sparkle-twinkle 1.8s ease-in-out infinite;
+        }
+        .nav-orb:hover .nav-sparkle-2,
+        .nav-orb.is-active .nav-sparkle-2 {
+          animation-delay: 0.3s;
+        }
+        .nav-orb:hover .nav-sparkle-3,
+        .nav-orb.is-active .nav-sparkle-3 {
+          animation-delay: 0.6s;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .sidebar-flow-dot,
+          .nav-sparkle {
+            animation: none !important;
+            display: none;
+          }
+          .nav-label {
+            transition: none;
+          }
+        }
+      `}</style>
+    </aside>
   );
 }
 

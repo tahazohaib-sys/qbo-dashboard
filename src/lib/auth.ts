@@ -123,6 +123,24 @@ function normalizeSmtpData(value: string) {
   return value.replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..");
 }
 
+function htmlToPlainText(html: string) {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6]|li)>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 async function sendSmtpEmail({
   host,
   port,
@@ -132,6 +150,7 @@ async function sendSmtpEmail({
   to,
   subject,
   html,
+  text,
 }: {
   host: string;
   port: number;
@@ -141,6 +160,7 @@ async function sendSmtpEmail({
   to: string;
   subject: string;
   html: string;
+  text: string;
 }) {
   await new Promise<void>((resolve, reject) => {
     const socket = tls.connect({ host, port, servername: host });
@@ -193,16 +213,31 @@ async function sendSmtpEmail({
         await sendCommand(`MAIL FROM:<${getEmailAddress(from)}>`, [250]);
         await sendCommand(`RCPT TO:<${getEmailAddress(to)}>`, [250, 251]);
         await sendCommand("DATA", [354]);
+        const fromAddress = getEmailAddress(from);
+        const messageId = `<${crypto.randomUUID()}@${fromAddress.split("@")[1] || "qbo-dashboard.local"}>`;
+        const boundary = `----=_Part_${crypto.randomBytes(12).toString("hex")}`;
         socket.write(
           normalizeSmtpData(
             [
               `From: ${from}`,
               `To: ${to}`,
               `Subject: ${subject}`,
+              `Date: ${new Date().toUTCString()}`,
+              `Message-Id: ${messageId}`,
               "MIME-Version: 1.0",
+              `Content-Type: multipart/alternative; boundary="${boundary}"`,
+              "",
+              `--${boundary}`,
+              "Content-Type: text/plain; charset=UTF-8",
+              "",
+              text,
+              "",
+              `--${boundary}`,
               "Content-Type: text/html; charset=UTF-8",
               "",
               html,
+              "",
+              `--${boundary}--`,
             ].join("\r\n")
           ) + "\r\n.\r\n"
         );
@@ -232,6 +267,7 @@ export async function sendAuthEmail({
   const smtpPass = process.env.SMTP_PASS;
   const smtpPort = Number(process.env.SMTP_PORT || 465);
   const from = process.env.AUTH_EMAIL_FROM || smtpUser || "QBO Dashboard <onboarding@resend.dev>";
+  const text = htmlToPlainText(html);
 
   if (apiKey) {
     const res = await fetch("https://api.resend.com/emails", {
@@ -240,7 +276,7 @@ export async function sendAuthEmail({
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ from, to, subject, html }),
+      body: JSON.stringify({ from, to, subject, html, text }),
     });
 
     if (!res.ok) {
@@ -261,6 +297,7 @@ export async function sendAuthEmail({
       to,
       subject,
       html,
+      text,
     });
 
     return { sent: true };

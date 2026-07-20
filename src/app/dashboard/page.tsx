@@ -1,5 +1,4 @@
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { getCurrentSession, isAdminEmail } from "@/lib/auth";
 import { findUserById } from "@/lib/auth-db";
 
@@ -24,17 +23,5 @@ export default async function DashboardPage() {
   const user = session ? await findUserById(session.sub) : null;
   const isAdmin = Boolean(user?.status === "approved" && isAdminEmail(user.email));
 
-  return (
-    <>
-      {isAdmin ? (
-        <Link
-          href="/admin/access"
-          className="fixed right-5 top-5 z-50 rounded-2xl border border-emerald-300/25 bg-emerald-400/15 px-4 py-2.5 text-sm font-bold text-emerald-50 shadow-[0_18px_42px_rgba(16,185,129,0.22)] backdrop-blur-xl transition hover:bg-emerald-400/22 active:scale-[0.99]"
-        >
-          Manage Access
-        </Link>
-      ) : null}
-      <DashboardPageClient />
-    </>
-  );
+  return <DashboardPageClient isAdmin={isAdmin} />;
 }
