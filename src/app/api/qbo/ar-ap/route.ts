@@ -816,14 +816,47 @@ export async function GET(req: Request) {
     // 1b) Reclassify vendors on a fixed monthly installment plan: their "current"
     //     becomes one monthly payment, the remainder moves to a "scheduled" bucket.
     let apAging = apAgingRaw;
+    // TEMPORARY diagnostics — shows exactly what monthly payment amounts QBO returned
+    // per vendor and whether the installment detector matched. Remove once verified.
+    let installmentDebug: any = null;
     try {
       const vendorPayments = await fetchBillPaymentsByVendor(asOf);
       const installmentMap = detectInstallmentVendors(vendorPayments, asOf, 6);
       // Always normalize (adds scheduled:0 / isInstallment:false) so the column renders consistently.
       apAging = applyInstallmentsToAging(apAgingRaw, installmentMap);
-    } catch {
+
+      const windowKeys = windowMonthKeysUTC(asOf, 6);
+      const byVendor = new Map<string, Map<string, number>>();
+      for (const p of vendorPayments) {
+        if (!p.vendor) continue;
+        const vl = p.vendor.toLowerCase();
+        const mk = (p.date || "").slice(0, 7);
+        let mm = byVendor.get(vl);
+        if (!mm) {
+          mm = new Map();
+          byVendor.set(vl, mm);
+        }
+        mm.set(mk, (mm.get(mk) ?? 0) + p.amount);
+      }
+      installmentDebug = {
+        asOf,
+        windowKeys,
+        totalPaymentRecordsFetched: vendorPayments.length,
+        distinctVendorNamesInPayments: Array.from(new Set(vendorPayments.map((p) => p.vendor))).slice(0, 50),
+        vendors: apAgingRaw.vendors.map((v: any) => {
+          const vl = String(v.vendor).toLowerCase();
+          const mm = byVendor.get(vl);
+          return {
+            vendor: v.vendor,
+            monthlyPayments: windowKeys.map((k) => mm?.get(k) ?? 0),
+            detected: installmentMap.has(vl),
+          };
+        }),
+      };
+    } catch (e: any) {
       // On any failure, fall back to the raw aging (feature is additive, never blocks the tab).
       apAging = apAgingRaw;
+      installmentDebug = { error: e?.message ?? String(e) };
     }
 
     // 2) Optional monthly series (FAST totals)
@@ -882,6 +915,8 @@ export async function GET(req: Request) {
       apAging,
 
       monthlySeries,
+
+      installmentDebug,
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
