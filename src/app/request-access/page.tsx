@@ -143,8 +143,11 @@ export default function RequestAccessPage() {
 
     const checkStatus = async () => {
       try {
-        const res = await fetch(`/api/auth/status?token=${encodeURIComponent(statusToken)}`, {
+        const res = await fetch("/api/auth/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           cache: "no-store",
+          body: JSON.stringify({ token: statusToken }),
         });
         const json = await res.json();
 
