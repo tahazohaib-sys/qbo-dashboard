@@ -45,6 +45,7 @@ export async function POST(req: Request) {
     }
 
     const approvalToken = await createAuthToken(user.id, "approval", 72);
+    const statusToken = await createAuthToken(user.id, "access_status", 72);
     const approveUrl = `${baseUrl}/api/auth/decision?token=${encodeURIComponent(approvalToken)}&decision=approve`;
     const rejectUrl = `${baseUrl}/api/auth/decision?token=${encodeURIComponent(approvalToken)}&decision=reject`;
 
@@ -71,6 +72,7 @@ export async function POST(req: Request) {
       message: emailResult.sent
         ? `Your request has been sent to ${ADMIN_APPROVER_EMAIL} for approval.`
         : "Email delivery is not configured yet. Use the development approval links below to continue testing this request.",
+      statusToken,
       devApproval: emailResult.sent ? undefined : { approveUrl, rejectUrl },
     });
   } catch (e: any) {
