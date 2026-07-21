@@ -481,6 +481,62 @@ function useAnimatedNumber(target: number, durationMs = 800) {
   return reduceMotion ? target : value;
 }
 
+function WorldMapVideoBackground(): React.JSX.Element {
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduceMotion(media.matches);
+    update();
+
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+
+    if (reduceMotion) {
+      el.pause();
+      return;
+    }
+
+    el.playbackRate = 0.8;
+    const playPromise = el.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+  }, [reduceMotion]);
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+      <video
+        ref={videoRef}
+        autoPlay={!reduceMotion}
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        poster="/bg/world-map-poster.jpg"
+        className="absolute inset-0 h-full w-full object-cover opacity-[0.14] blur-[0.4px] mix-blend-screen [mask-image:radial-gradient(circle_at_center,black_0%,black_45%,transparent_80%)]"
+      >
+        <source src="/bg/2611-865412751_medium.mp4" type="video/mp4" />
+      </video>
+
+      <div className="absolute inset-0 bg-black/35 [mask-image:radial-gradient(circle_at_center,black_0%,black_45%,transparent_80%)]" />
+    </div>
+  );
+}
+
 export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const years = useMemo(() => ymOptions(6), []);
   const now = new Date();
@@ -1327,6 +1383,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
   return (
     <div className='premium-dashboard relative min-h-screen overflow-hidden bg-[radial-gradient(1000px_720px_at_9%_0%,rgba(37,99,235,0.30),transparent_58%),radial-gradient(900px_680px_at_86%_8%,rgba(14,165,233,0.16),transparent_55%),radial-gradient(900px_650px_at_62%_100%,rgba(15,118,110,0.11),transparent_60%),linear-gradient(180deg,#061429_0%,#050915_44%,#030610_100%)] text-slate-100 [font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Roboto,Arial]'>
       <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-blue-500/10 to-transparent" />
+      <WorldMapVideoBackground />
 
       <div className="relative z-10 mx-auto flex w-full max-w-[1620px] items-stretch gap-5 px-4 py-6 sm:px-6 lg:px-8">
         <Sidebar tab={tab} onSelect={switchTab} />
@@ -4073,8 +4130,6 @@ function SidebarNavItem({
 }
 
 function Sidebar({ tab, onSelect }: { tab: TabKey; onSelect: (key: TabKey) => void }) {
-  const flowDelays = [0, 1.4, 2.8, 4.2, 5.6];
-
   return (
     <aside className="relative z-10 hidden w-[76px] shrink-0 flex-col items-center md:flex">
       <div className="flex items-center justify-center py-5">
@@ -4091,36 +4146,9 @@ function Sidebar({ tab, onSelect }: { tab: TabKey; onSelect: (key: TabKey) => vo
 
       <div className="relative min-h-0 w-full flex-1 overflow-hidden">
         <div className="sidebar-flow-rail absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-gradient-to-b from-cyan-300/0 via-cyan-300/20 to-emerald-300/0" />
-        {flowDelays.map((delay, i) => (
-          <span
-            key={i}
-            className="sidebar-flow-dot absolute left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-cyan-200/80 shadow-[0_0_10px_2px_rgba(34,211,238,0.45)]"
-            style={{ animationDelay: `${delay}s` }}
-          />
-        ))}
       </div>
 
       <style jsx global>{`
-        @keyframes sidebar-flow {
-          0% {
-            top: -4%;
-            opacity: 0;
-          }
-          10% {
-            opacity: 1;
-          }
-          85% {
-            opacity: 1;
-          }
-          100% {
-            top: 104%;
-            opacity: 0;
-          }
-        }
-        .sidebar-flow-dot {
-          animation: sidebar-flow 7s linear infinite;
-        }
-
         .nav-label {
           max-width: 0;
           padding-left: 0;
@@ -4185,7 +4213,6 @@ function Sidebar({ tab, onSelect }: { tab: TabKey; onSelect: (key: TabKey) => vo
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .sidebar-flow-dot,
           .nav-sparkle {
             animation: none !important;
             display: none;
