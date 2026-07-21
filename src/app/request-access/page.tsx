@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 
@@ -129,9 +129,52 @@ export default function RequestAccessPage() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [approvalStatus, setApprovalStatus] = useState<"pending" | "approved" | "rejected">("pending");
+  const [statusToken, setStatusToken] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [devApproval, setDevApproval] = useState<{ approveUrl: string; rejectUrl: string } | null>(null);
+
+  useEffect(() => {
+    if (!submitted || !statusToken) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(`/api/auth/status?token=${encodeURIComponent(statusToken)}`, {
+          cache: "no-store",
+        });
+        const json = await res.json();
+
+        if (!cancelled && res.ok && json?.status === "approved") {
+          setApprovalStatus("approved");
+          setMessage("Your email has been approved. Redirecting you to the next step...");
+          timer = setTimeout(() => {
+            router.push(`/login?approved=1&email=${encodeURIComponent(email)}`);
+          }, 1800);
+          return;
+        }
+
+        if (!cancelled && res.ok && json?.status === "rejected") {
+          setApprovalStatus("rejected");
+          setMessage("Your access request was not approved.");
+          return;
+        }
+      } catch {
+        // A temporary network error should not stop subsequent status checks.
+      }
+
+      if (!cancelled) timer = setTimeout(checkStatus, 3000);
+    };
+
+    timer = setTimeout(checkStatus, 1200);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [email, router, statusToken, submitted]);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -139,6 +182,8 @@ export default function RequestAccessPage() {
     setError("");
     setMessage("");
     setDevApproval(null);
+    setApprovalStatus("pending");
+    setStatusToken("");
 
     try {
       const res = await fetch("/api/auth/register", {
@@ -156,6 +201,7 @@ export default function RequestAccessPage() {
       }
 
       setSubmitted(true);
+      setStatusToken(String(json.statusToken || ""));
       setMessage(json.message || "Wait for Approval. Your request has been sent to Taha.");
       if (json.devApproval) setDevApproval(json.devApproval);
     } catch (err: any) {
@@ -216,10 +262,30 @@ export default function RequestAccessPage() {
           </>
         ) : (
           <div className="text-center">
-            <div className="mx-auto grid h-20 w-20 place-items-center rounded-[26px] border border-emerald-200/22 bg-emerald-400/12 shadow-[0_0_44px_rgba(16,185,129,.18)]">
-              <div className="h-8 w-8 rounded-full border-4 border-emerald-200/80 border-t-transparent animate-spin" />
+            <div className={`mx-auto grid h-20 w-20 place-items-center rounded-[26px] border ${
+              approvalStatus === "rejected"
+                ? "border-rose-200/22 bg-rose-400/12 shadow-[0_0_44px_rgba(244,63,94,.18)]"
+                : "border-emerald-200/22 bg-emerald-400/12 shadow-[0_0_44px_rgba(16,185,129,.18)]"
+            }`}>
+              {approvalStatus === "pending" ? (
+                <div className="h-8 w-8 rounded-full border-4 border-emerald-200/80 border-t-transparent animate-spin" />
+              ) : approvalStatus === "approved" ? (
+                <svg className="h-10 w-10 text-emerald-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                  <path d="m5 12 4 4L19 6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <svg className="h-10 w-10 text-rose-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
+                </svg>
+              )}
             </div>
-            <h2 className="mt-6 text-3xl font-black tracking-tight text-white">Wait for Approval</h2>
+            <h2 className="mt-6 text-3xl font-black tracking-tight text-white">
+              {approvalStatus === "approved"
+                ? "Your Email Has Been Approved"
+                : approvalStatus === "rejected"
+                  ? "Access Request Rejected"
+                  : "Wait for Approval"}
+            </h2>
             <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-slate-300">{message}</p>
             <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.045] p-4 text-left">
               <div className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">Next step</div>
