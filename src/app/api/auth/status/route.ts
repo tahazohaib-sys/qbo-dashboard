@@ -3,9 +3,10 @@ import { findUserByAuthToken } from "@/lib/auth-db";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: Request) {
+export async function POST(req: Request) {
   try {
-    const token = new URL(req.url).searchParams.get("token") || "";
+    const body = await req.json();
+    const token = String(body?.token ?? "");
     const user = await findUserByAuthToken(token, "access_status");
 
     if (!user) {
