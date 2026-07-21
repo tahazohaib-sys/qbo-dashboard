@@ -160,7 +160,7 @@ export async function setUserPassword(userId: string, passwordHash: string) {
   return rows[0] ?? null;
 }
 
-type AuthTokenType = "approval" | "login_code";
+type AuthTokenType = "approval" | "login_code" | "access_status";
 
 export async function createAuthToken(userId: string, tokenType: AuthTokenType, expiresInHours: number) {
   await ensureAuthTables();
@@ -220,6 +220,26 @@ export async function consumeLoginVerificationCode(email: string, code: string) 
     [hashToken(normalizedCode), user.id]
   );
   return rows[0]?.user_id ? user : null;
+}
+
+export async function findUserByAuthToken(rawToken: string, tokenType: AuthTokenType) {
+  await ensureAuthTables();
+  if (!rawToken) return null;
+
+  const { rows } = await query<DashboardUser>(
+    `
+      select u.id, u.email, u.password_hash, u.status, u.email_verified_at
+      from dashboard_auth_tokens t
+      join dashboard_users u on u.id = t.user_id
+      where t.token_hash = $1
+        and t.token_type = $2
+        and t.consumed_at is null
+        and t.expires_at > now()
+      limit 1
+    `,
+    [hashToken(rawToken), tokenType]
+  );
+  return rows[0] ?? null;
 }
 
 export async function consumeAuthToken(rawToken: string, tokenType: AuthTokenType) {
