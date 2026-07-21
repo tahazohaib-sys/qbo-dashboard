@@ -23,7 +23,6 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  CartesianGrid,
   BarChart,
   Bar,
   PieChart,
@@ -413,7 +412,6 @@ function displayTxnAmount(txn: AccountTxnsResp["transactions"][number], homeCurr
 const AXIS_TICK = { fill: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 500 } as const;
 const AXIS_LINE = false;
 const TICK_LINE = false;
-const GRID = { stroke: "rgba(255,255,255,0.1)", strokeDasharray: "3 3" } as const;
 
 const CHART_COLORS = {
   positive: "#22d3ee",
@@ -1384,7 +1382,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
   return (
     <div className='premium-dashboard relative min-h-screen overflow-hidden bg-[radial-gradient(1000px_720px_at_9%_0%,rgba(37,99,235,0.30),transparent_58%),radial-gradient(900px_680px_at_86%_8%,rgba(14,165,233,0.16),transparent_55%),radial-gradient(900px_650px_at_62%_100%,rgba(15,118,110,0.11),transparent_60%),linear-gradient(180deg,#061429_0%,#050915_44%,#030610_100%)] text-slate-100 [font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe_UI",Roboto,Arial]'>
-      <div className="pointer-events-none absolute inset-0 opacity-[0.045] [background-image:linear-gradient(rgba(255,255,255,0.6)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.6)_1px,transparent_1px)] [background-size:42px_42px]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-blue-500/10 to-transparent" />
       <WorldMapVideoBackground />
 
@@ -1722,7 +1719,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                             layout="vertical"
                             margin={{ top: 4, right: 16, left: 4, bottom: 4 }}
                           >
-                            <CartesianGrid {...GRID} horizontal={false} />
                             <XAxis
                               type="number"
                               tick={AXIS_TICK}
@@ -1761,7 +1757,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                     <div className="h-[280px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={monthlyArAp} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
                           <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <YAxis
                             tick={AXIS_TICK}
@@ -2526,7 +2521,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           <stop offset="100%" stopColor="#34d399" />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
@@ -2559,7 +2553,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           <stop offset="100%" stopColor="#2dd4bf" stopOpacity={0.03} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={(v) => `${v}%`} />
                       <Tooltip
@@ -2841,7 +2834,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                 <div className="h-[320px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={investmentBarData} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                      <CartesianGrid {...GRID} />
                       <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                       <Tooltip content={<MoneyTooltip single />} />
@@ -3205,7 +3197,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                               <stop offset="95%" stopColor="#fca5a5" stopOpacity={0.04} />
                             </linearGradient>
                           </defs>
-                          <CartesianGrid {...GRID} />
                           <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip />} />
@@ -3366,7 +3357,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                     <div className="h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <ComposedChart data={marginTrajectoryData} margin={{ top: 10, right: 16, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
                           <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <YAxis
                             tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE}
@@ -3417,7 +3407,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                     <div className="h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={benchmarkBars} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                          <CartesianGrid {...GRID} />
                           <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                           <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                           <Tooltip content={<MoneyTooltip single />} />
@@ -3455,7 +3444,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 <stop offset="95%" stopColor="#22d3ee" stopOpacity={0.04} />
                               </linearGradient>
                             </defs>
-                            <CartesianGrid {...GRID} />
                             <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                             <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                             <Tooltip content={<MoneyTooltip />} />
@@ -3924,10 +3912,6 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
           background: rgba(14, 165, 233, 0.075) !important;
         }
 
-        .premium-dashboard .recharts-cartesian-grid line {
-          stroke: rgba(148, 163, 184, 0.13);
-        }
-
         .premium-dashboard .recharts-tooltip-cursor {
           fill: rgba(14, 165, 233, 0.08);
         }
@@ -4146,8 +4130,6 @@ function SidebarNavItem({
 }
 
 function Sidebar({ tab, onSelect }: { tab: TabKey; onSelect: (key: TabKey) => void }) {
-  const flowDelays = [0, 1.4, 2.8, 4.2, 5.6];
-
   return (
     <aside className="relative z-10 hidden w-[76px] shrink-0 flex-col items-center md:flex">
       <div className="flex items-center justify-center py-5">
@@ -4164,36 +4146,9 @@ function Sidebar({ tab, onSelect }: { tab: TabKey; onSelect: (key: TabKey) => vo
 
       <div className="relative min-h-0 w-full flex-1 overflow-hidden">
         <div className="sidebar-flow-rail absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-gradient-to-b from-cyan-300/0 via-cyan-300/20 to-emerald-300/0" />
-        {flowDelays.map((delay, i) => (
-          <span
-            key={i}
-            className="sidebar-flow-dot absolute left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-cyan-200/80 shadow-[0_0_10px_2px_rgba(34,211,238,0.45)]"
-            style={{ animationDelay: `${delay}s` }}
-          />
-        ))}
       </div>
 
       <style jsx global>{`
-        @keyframes sidebar-flow {
-          0% {
-            top: -4%;
-            opacity: 0;
-          }
-          10% {
-            opacity: 1;
-          }
-          85% {
-            opacity: 1;
-          }
-          100% {
-            top: 104%;
-            opacity: 0;
-          }
-        }
-        .sidebar-flow-dot {
-          animation: sidebar-flow 7s linear infinite;
-        }
-
         .nav-label {
           max-width: 0;
           padding-left: 0;
@@ -4258,7 +4213,6 @@ function Sidebar({ tab, onSelect }: { tab: TabKey; onSelect: (key: TabKey) => vo
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .sidebar-flow-dot,
           .nav-sparkle {
             animation: none !important;
             display: none;
@@ -4424,7 +4378,6 @@ function ExpenseDetailModal({
             <div className="h-[170px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={trend} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
-                  <CartesianGrid {...GRID} vertical={false} />
                   <XAxis dataKey="label" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                   <YAxis width={44} tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
                   <Tooltip
