@@ -16,8 +16,9 @@ import {
   formatMonthLabel,
 } from "./theme";
 import { ReportChrome, SectionHeader, SubHeading, Paragraph, KpiGrid, DataTable, BulletList, Callout, Divider } from "./blocks";
+import type { TableColumn } from "./blocks";
 import { GroupedBarChart, LineTrendChart, DonutChart, DonutLegend, ChartLegend } from "./charts";
-import type { FinancialReportData } from "./reportData";
+import type { FinancialReportData, CategoryMonthly } from "./reportData";
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
@@ -222,6 +223,75 @@ function ExecutiveSummarySection({
   );
 }
 
+/* ------------------------- Category × month detail table ------------------------- */
+
+// Renders every category's month-by-month figures — the level of detail a
+// summarized chart can't show. Wide ranges are split into readable chunks of
+// a few months each rather than compressing everything into one dense table.
+function MonthlyBreakdownTable({
+  months,
+  categories,
+  formatValue,
+  totalLabel,
+  chunkSize = 6,
+}: {
+  months: string[];
+  categories: CategoryMonthly[];
+  formatValue: (n: number) => string;
+  totalLabel: string;
+  chunkSize?: number;
+}) {
+  if (!months.length || !categories.length) return null;
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < months.length; i += chunkSize) chunks.push(months.slice(i, i + chunkSize));
+
+  return (
+    <View>
+      {chunks.map((chunkMonths, ci) => {
+        const startIdx = ci * chunkSize;
+        const columns: TableColumn[] = [
+          { key: "name", header: "Category", width: 2.2 },
+          ...chunkMonths.map((m, i) => ({ key: `m${startIdx + i}`, header: formatMonthLabel(m), align: "right" as const })),
+          { key: "subtotal", header: "Subtotal", align: "right" as const, width: 1.1 },
+        ];
+
+        const rows = categories.map((cat) => {
+          const row: Record<string, string> = { name: cat.name };
+          let subtotal = 0;
+          chunkMonths.forEach((_, i) => {
+            const v = cat.monthly[startIdx + i] ?? 0;
+            subtotal += v;
+            row[`m${startIdx + i}`] = formatValue(v);
+          });
+          row.subtotal = formatValue(subtotal);
+          return row;
+        });
+
+        const totalRow: Record<string, string> = { name: totalLabel };
+        let grandSubtotal = 0;
+        chunkMonths.forEach((_, i) => {
+          const colTotal = categories.reduce((s, cat) => s + (cat.monthly[startIdx + i] ?? 0), 0);
+          grandSubtotal += colTotal;
+          totalRow[`m${startIdx + i}`] = formatValue(colTotal);
+        });
+        totalRow.subtotal = formatValue(grandSubtotal);
+
+        return (
+          <View key={ci} style={{ marginTop: ci > 0 ? 12 : 0 }}>
+            {chunks.length > 1 ? (
+              <Text style={{ fontSize: 8, color: COLORS.muted, marginBottom: 4 }}>
+                {formatMonthLabel(chunkMonths[0])} – {formatMonthLabel(chunkMonths[chunkMonths.length - 1])}
+              </Text>
+            ) : null}
+            <DataTable dense columns={columns} rows={rows} totalRow={totalRow} />
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 /* --------------------------------- Profit & Loss --------------------------------- */
 
 function ProfitAndLossSection({
@@ -317,6 +387,13 @@ function ProfitAndLossSection({
             }}
           />
 
+          <SubHeading>Revenue by Category — Monthly</SubHeading>
+          {data.incomeMonthly.length && data.pnlMonths.length ? (
+            <MonthlyBreakdownTable months={data.pnlMonths} categories={data.incomeMonthly} formatValue={compact} totalLabel="Total Revenue" />
+          ) : (
+            <Paragraph>Month-by-month revenue detail is not available for this period.</Paragraph>
+          )}
+
           <SubHeading>Expense Composition</SubHeading>
           {donutData.length ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 20 }}>
@@ -328,10 +405,16 @@ function ProfitAndLossSection({
           )}
           {data.pnlBreakdown.length > 8 ? (
             <Text style={{ fontSize: 7.5, color: COLORS.faint, marginTop: 6 }}>
-              Showing the 8 largest expense categories. {data.pnlBreakdown.length - 8} additional categories are grouped under
-              &quot;Other categories&quot;.
+              Showing the 8 largest expense categories above. The full category list, broken down by month, follows below.
             </Text>
           ) : null}
+
+          <SubHeading>Expense Detail by Month</SubHeading>
+          {data.expenseMonthly.length && data.pnlMonths.length ? (
+            <MonthlyBreakdownTable months={data.pnlMonths} categories={data.expenseMonthly} formatValue={compact} totalLabel="Total Expenses" />
+          ) : (
+            <Paragraph>Month-by-month expense detail is not available for this period.</Paragraph>
+          )}
         </>
       )}
     </Page>

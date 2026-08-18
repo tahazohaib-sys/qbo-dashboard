@@ -18,8 +18,10 @@ export type DashboardResp = {
   error?: string;
 };
 
-export type PnlRow = { path: string; rowType: string; label: string; amount: number };
-export type PnlTableResp = { ok: boolean; rows: PnlRow[]; currency: string; error?: string };
+export type PnlMonthlyRow = { path: string; rowType: string; label: string; monthly: number[]; total: number };
+export type PnlMonthlyResp = { ok: boolean; months: string[]; currency: string; rows: PnlMonthlyRow[]; error?: string };
+
+export type CategoryMonthly = { name: string; monthly: number[]; total: number };
 
 export type CashBankAccount = {
   id: string;
@@ -153,6 +155,9 @@ export type FinancialReportData = {
   generatedAt: string;
   dashboard: DashboardResp | null;
   pnlBreakdown: Array<{ name: string; value: number }>;
+  pnlMonths: string[];
+  expenseMonthly: CategoryMonthly[];
+  incomeMonthly: CategoryMonthly[];
   cashBanks: CashBanksResp | null;
   arAp: ArApResp | null;
   retained: RetainedResp | null;
@@ -186,18 +191,24 @@ async function safeFetchJson<T>(url: string, init?: RequestInit): Promise<{ ok: 
   }
 }
 
-function buildPnlBreakdown(rows: PnlRow[]): Array<{ name: string; value: number }> {
-  const expenseRows = rows.filter((r) => {
+function buildCategoryMonthly(rows: PnlMonthlyRow[], monthCount: number, pathPrefixes: string[]): CategoryMonthly[] {
+  const filtered = rows.filter((r) => {
     if (r.rowType !== "Data") return false;
     const p = r.path || "";
-    return p.startsWith("P&L > Expenses") || p.startsWith("P&L > Other Expenses");
+    return pathPrefixes.some((prefix) => p.startsWith(prefix));
   });
-  const map = new Map<string, number>();
-  for (const r of expenseRows) map.set(r.label, (map.get(r.label) ?? 0) + (r.amount ?? 0));
-  return Array.from(map.entries())
-    .map(([name, value]) => ({ name, value }))
-    .filter(({ value }) => value > 0)
-    .sort((a, b) => b.value - a.value);
+
+  const map = new Map<string, CategoryMonthly>();
+  for (const r of filtered) {
+    const existing = map.get(r.label) ?? { name: r.label, monthly: new Array(monthCount).fill(0), total: 0 };
+    for (let i = 0; i < monthCount; i++) existing.monthly[i] += r.monthly[i] ?? 0;
+    existing.total += r.total;
+    map.set(r.label, existing);
+  }
+
+  return Array.from(map.values())
+    .filter((x) => x.total !== 0 || x.monthly.some((v) => v !== 0))
+    .sort((a, b) => b.total - a.total);
 }
 
 export async function fetchFinancialReportData(origin: string, range: ReportRange): Promise<FinancialReportData> {
@@ -205,7 +216,7 @@ export async function fetchFinancialReportData(origin: string, range: ReportRang
   const warnings: string[] = [];
 
   const dashboardUrl = `${origin}/api/dashboard?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(method)}`;
-  const pnlUrl = `${origin}/api/qbo/pnl-table?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(method)}`;
+  const pnlMonthlyUrl = `${origin}/api/qbo/pnl-monthly?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(method)}`;
   const cashUrl = `${origin}/api/qbo/cash-banks?includeZero=true`;
   const retainedUrl = `${origin}/api/qbo/retained-earning?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(method)}`;
   const insightsUrl = `${origin}/api/ai/insights?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(method)}`;
@@ -216,9 +227,9 @@ export async function fetchFinancialReportData(origin: string, range: ReportRang
     `&fromYear=${fromYear}&fromMonth=${fromMonth}&toYear=${toYear}&toMonth=${toMonth}` +
     `&accounting_method=${encodeURIComponent(method)}`;
 
-  const [dashRes, pnlRes, cashRes, arApRes, retainedRes, insightsRes] = await Promise.all([
+  const [dashRes, pnlMonthlyRes, cashRes, arApRes, retainedRes, insightsRes] = await Promise.all([
     safeFetchJson<DashboardResp>(dashboardUrl),
-    safeFetchJson<PnlTableResp>(pnlUrl),
+    safeFetchJson<PnlMonthlyResp>(pnlMonthlyUrl),
     safeFetchJson<CashBanksResp>(cashUrl),
     safeFetchJson<ArApResp>(arApUrl),
     safeFetchJson<RetainedResp>(retainedUrl),
@@ -226,11 +237,20 @@ export async function fetchFinancialReportData(origin: string, range: ReportRang
   ]);
 
   if (!dashRes.ok) warnings.push(`Profit & Loss data could not be loaded (${dashRes.error ?? "unknown error"}).`);
-  if (!pnlRes.ok) warnings.push(`Expense breakdown could not be loaded (${pnlRes.error ?? "unknown error"}).`);
+  if (!pnlMonthlyRes.ok) warnings.push(`Month-by-month income/expense detail could not be loaded (${pnlMonthlyRes.error ?? "unknown error"}).`);
   if (!cashRes.ok) warnings.push(`Bank & cash balances could not be loaded (${cashRes.error ?? "unknown error"}).`);
   if (!arApRes.ok) warnings.push(`Accounts receivable/payable data could not be loaded (${arApRes.error ?? "unknown error"}).`);
   if (!retainedRes.ok) warnings.push(`Retained earnings data could not be loaded (${retainedRes.error ?? "unknown error"}).`);
   if (!insightsRes.ok) warnings.push(`Executive commentary could not be generated (${insightsRes.error ?? "unknown error"}).`);
+
+  const pnlMonths = pnlMonthlyRes.data?.months ?? [];
+  const expenseMonthly = pnlMonthlyRes.data
+    ? buildCategoryMonthly(pnlMonthlyRes.data.rows, pnlMonths.length, ["P&L > Expenses", "P&L > Other Expenses"])
+    : [];
+  const incomeMonthly = pnlMonthlyRes.data
+    ? buildCategoryMonthly(pnlMonthlyRes.data.rows, pnlMonths.length, ["P&L > Income", "P&L > Other Income"])
+    : [];
+  const pnlBreakdown = expenseMonthly.filter((x) => x.total > 0).map((x) => ({ name: x.name, value: x.total }));
 
   let forecast: ForecastApiResp | null = null;
   if (dashRes.data?.series?.length) {
@@ -250,7 +270,10 @@ export async function fetchFinancialReportData(origin: string, range: ReportRang
     range,
     generatedAt: new Date().toISOString(),
     dashboard: dashRes.data,
-    pnlBreakdown: pnlRes.data ? buildPnlBreakdown(pnlRes.data.rows) : [],
+    pnlBreakdown,
+    pnlMonths,
+    expenseMonthly,
+    incomeMonthly,
     cashBanks: cashRes.data,
     arAp: arApRes.data,
     retained: retainedRes.data,
