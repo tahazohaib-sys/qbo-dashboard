@@ -945,6 +945,46 @@ export default function DashboardPage() {
     await runActiveTabLoad(tab, nextFilters);
   }
 
+  const [downloadingReport, setDownloadingReport] = useState(false);
+
+  async function handleDownloadFinancialAnalysis() {
+    if (downloadingReport) return;
+    setDownloadingReport(true);
+    setErr("");
+    try {
+      const { start, end } = buildStartEnd(appliedFilters.fromYear, appliedFilters.fromMonth, appliedFilters.toYear, appliedFilters.toMonth);
+      const url =
+        `/api/reports/financial-analysis?start_date=${encodeURIComponent(start)}` +
+        `&end_date=${encodeURIComponent(end)}&accounting_method=${encodeURIComponent(appliedFilters.method)}`;
+
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) {
+        const ct = res.headers.get("content-type") ?? "";
+        const message = ct.includes("application/json") ? (await res.json())?.error : await res.text();
+        throw new Error(message || `Report generation failed (${res.status})`);
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const filenameMatch = disposition.match(/filename="([^"]+)"/);
+      const filename = filenameMatch?.[1] || `Financial-Analysis-${start}-to-${end}.pdf`;
+
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setErr(message || "Failed to generate the financial analysis report.");
+    } finally {
+      setDownloadingReport(false);
+    }
+  }
+
   useEffect(() => {
     applyFiltersRef.current = applyFilters;
   });
@@ -1497,13 +1537,24 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <button
-              onClick={applyFilters}
-              className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
-              disabled={loading}
-            >
-              Apply
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={applyFilters}
+                className="rounded-xl border border-white/10 bg-emerald-500/15 px-4 py-2 text-sm font-semibold hover:bg-emerald-500/20 active:scale-[0.99]"
+                disabled={loading}
+              >
+                Apply
+              </button>
+
+              <button
+                onClick={handleDownloadFinancialAnalysis}
+                className="rounded-xl border border-emerald-300/30 bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/25 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={downloadingReport}
+                title="Generate a detailed PDF financial analysis for the selected period, covering every module."
+              >
+                {downloadingReport ? "Preparing report..." : "Download Financial Analysis"}
+              </button>
+            </div>
           </div>
 
           {err ? (
