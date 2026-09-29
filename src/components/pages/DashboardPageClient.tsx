@@ -3,6 +3,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import MonthlyCashFlowPanel from "@/components/MonthlyCashFlowPanel";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -355,7 +356,7 @@ const DONUT_COLOR_CLASSES = [
   "bg-slate-400",
 ];
 
-type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
+type TabKey = "pnl" | "cash" | "monthlyCash" | "retained" | "forecast" | "revenue" | "arAp";
 type AppliedFilter = {
   fromYear: number;
   fromMonth: number;
@@ -739,7 +740,7 @@ export default function DashboardPage() {
   }
 
   async function loadActiveTabData(nextTab: TabKey, filters: AppliedFilter, requestId: number) {
-    if (nextTab === "revenue") return;
+    if (nextTab === "revenue" || nextTab === "monthlyCash") return; // monthly cash flow loads its own data
 
     const { fy, fm, ty, tm, start, end } = getNormalizedFilters(filters);
     setErr("");
@@ -1405,6 +1406,9 @@ export default function DashboardPage() {
           <TabButton active={tab === "cash"} onClick={() => setTab("cash")}>
             Bank & Cash Balances
           </TabButton>
+          <TabButton active={tab === "monthlyCash"} onClick={() => setTab("monthlyCash")}>
+            Monthly Cash Flow
+          </TabButton>
           <TabButton active={tab === "arAp"} onClick={() => setTab("arAp")}>
             AR/AP
           </TabButton>
@@ -1532,6 +1536,14 @@ export default function DashboardPage() {
               </button>
             </div>
           </div>
+        ) : null}
+
+        {/* MONTHLY CASH FLOW TAB */}
+        {tab === "monthlyCash" ? (
+          <MonthlyCashFlowPanel
+            key={`${appliedFilters.fromYear}-${appliedFilters.fromMonth}-${appliedFilters.toYear}-${appliedFilters.toMonth}-${appliedFilters.method}`}
+            filters={appliedFilters}
+          />
         ) : null}
 
         {/* AR/AP TAB */}
