@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { qboFetch } from "@/lib/metrics";
+import { buildDirectorReport } from "@/lib/cashflow-report";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,7 @@ type HeadSummary = {
   accountId: string;
   accountName: string;
   accountType: string;
+  accountSubType: string;
   classification: string;
   amount: number;
   txnCount: number;
@@ -376,6 +378,231 @@ function cancelReversals(movements: Movement[]): { kept: Movement[]; reversals: 
   return { kept, reversals };
 }
 
+async function summarizeMonth(
+  range: { start: string; end: string },
+  method: "Accrual" | "Cash",
+  accounts: Map<string, QboAccount>
+) {
+  const report = await fetchGeneralLedger(range.start, range.end, method);
+
+  const accountsByName = new Map<string, string>();
+  for (const a of accounts.values()) {
+    accountsByName.set(a.name.toLowerCase(), a.id);
+    accountsByName.set(a.fullName.toLowerCase(), a.id);
+  }
+
+  const lines = collectGlLines(report, accountsByName);
+
+  // Group GL lines by transaction
+  const byTxn = new Map<string, GlLine[]>();
+  for (const l of lines) {
+    const list = byTxn.get(l.txnKey);
+    if (list) list.push(l);
+    else byTxn.set(l.txnKey, [l]);
+  }
+
+  const inflowHeads = new Map<string, HeadSummary>();
+  const outflowHeads = new Map<string, HeadSummary>();
+  const cashAccounts = new Map<string, CashAccountSummary & { txnKeys: Set<string> }>();
+  let internalTransfers = 0;
+  let cashTxnCount = 0;
+
+  const headFor = (map: Map<string, HeadSummary>, l: GlLine) => {
+    let h = map.get(l.accountId);
+    if (!h) {
+      const a = accounts.get(l.accountId);
+      h = {
+        accountId: l.accountId,
+        accountName: a?.fullName || l.accountName,
+        accountType: a?.accountType ?? "",
+        accountSubType: a?.accountSubType ?? "",
+        classification: a?.classification ?? "",
+        amount: 0,
+        txnCount: 0,
+        transactions: [],
+      };
+      map.set(l.accountId, h);
+    }
+    return h;
+  };
+
+  const addHeadTxn = (h: HeadSummary, l: GlLine, amount: number, cashNames: string[]) => {
+    h.amount += amount;
+    const existing = h.transactions.find((t) => t.txnId === l.txnId && t.txnType === l.txnType);
+    if (existing) {
+      existing.amount += amount;
+      return;
+    }
+    h.txnCount += 1;
+    h.transactions.push({
+      txnId: l.txnId,
+      txnType: l.txnType,
+      date: l.date,
+      docNum: l.docNum,
+      name: l.name,
+      memo: l.memo,
+      amount,
+      cashAccounts: cashNames,
+    });
+  };
+
+  // One movement = one head line of a transaction that touches a cash account.
+  const movements: Movement[] = [];
+
+  for (const [txnKey, txnLines] of byTxn) {
+    const cashLines = txnLines.filter((l) => isCashAccount(accounts.get(l.accountId)));
+    if (cashLines.length === 0) continue; // no entry in a Bank / Cash on hand account
+
+    cashTxnCount += 1;
+    const otherLines = txnLines.filter((l) => !isCashAccount(accounts.get(l.accountId)));
+    const isTransfer = otherLines.length === 0;
+    const cashIds = Array.from(new Set(cashLines.map((l) => l.accountId)));
+    const cashNames = cashIds.map((id) => accounts.get(id)?.fullName || cashLines.find((l) => l.accountId === id)!.accountName);
+
+    for (const l of cashLines) {
+      let s = cashAccounts.get(l.accountId);
+      if (!s) {
+        const a = accounts.get(l.accountId);
+        s = {
+          accountId: l.accountId,
+          accountName: a?.fullName || l.accountName,
+          accountSubType: a?.accountSubType ?? "",
+          inflow: 0,
+          outflow: 0,
+          transfersIn: 0,
+          transfersOut: 0,
+          net: 0,
+          txnCount: 0,
+          txnKeys: new Set(),
+        };
+        cashAccounts.set(l.accountId, s);
+      }
+      if (isTransfer) {
+        s.transfersIn += l.debit;
+        s.transfersOut += l.credit;
+      } else {
+        s.inflow += l.debit;
+        s.outflow += l.credit;
+      }
+      s.net += l.debit - l.credit;
+      s.txnKeys.add(txnKey);
+    }
+
+    if (isTransfer) {
+      internalTransfers += cashLines.reduce((sum, l) => sum + l.debit, 0);
+      continue;
+    }
+
+    for (const l of otherLines) {
+      const cashAccountId = cashIds.length === 1 ? cashIds[0] : null;
+      if (l.credit > 0) movements.push({ line: l, direction: "in", amount: l.credit, cashAccountId, cashNames });
+      if (l.debit > 0) movements.push({ line: l, direction: "out", amount: l.debit, cashAccountId, cashNames });
+    }
+  }
+
+  const { kept, reversals } = cancelReversals(movements);
+
+  // A cancelled pair moved the same amount in and out of one cash account.
+  for (const r of reversals) {
+    const s = cashAccounts.get(r.cashAccountId);
+    if (!s) continue;
+    s.inflow -= r.amount;
+    s.outflow -= r.amount;
+  }
+
+  for (const m of kept) {
+    const map = m.direction === "in" ? inflowHeads : outflowHeads;
+    addHeadTxn(headFor(map, m.line), m.line, m.amount, m.cashNames);
+  }
+
+  const finishHeads = (map: Map<string, HeadSummary>) =>
+    Array.from(map.values())
+      .map((h) => ({
+        ...h,
+        amount: round2(h.amount),
+        transactions: h.transactions
+          .map((t) => ({ ...t, amount: round2(t.amount) }))
+          .sort((a, b) => Date.parse(a.date) - Date.parse(b.date)),
+      }))
+      .filter((h) => h.amount !== 0)
+      .sort((a, b) => b.amount - a.amount);
+
+  const inflows = finishHeads(inflowHeads);
+  const outflows = finishHeads(outflowHeads);
+
+  const cashAccountRows: CashAccountSummary[] = Array.from(cashAccounts.values())
+    .map(({ txnKeys, ...s }) => ({
+      ...s,
+      inflow: round2(s.inflow),
+      outflow: round2(s.outflow),
+      transfersIn: round2(s.transfersIn),
+      transfersOut: round2(s.transfersOut),
+      net: round2(s.net),
+      txnCount: txnKeys.size,
+    }))
+    .sort((a, b) => a.accountName.localeCompare(b.accountName));
+
+  const totalInflow = round2(inflows.reduce((s, h) => s + h.amount, 0));
+  const totalOutflow = round2(outflows.reduce((s, h) => s + h.amount, 0));
+
+  return {
+    totals: {
+      inflow: totalInflow,
+      outflow: totalOutflow,
+      net: round2(totalInflow - totalOutflow),
+      internalTransfers: round2(internalTransfers),
+      transactionCount: cashTxnCount,
+      reversedAmount: round2(reversals.reduce((sum, r) => sum + r.amount, 0)),
+      reversedCount: reversals.length,
+    },
+    reversals: reversals.map((r) => ({
+      ...r,
+      accountName: accounts.get(r.accountId)?.fullName || r.accountName,
+      cashAccountName: accounts.get(r.cashAccountId)?.fullName || r.cashAccountId,
+    })),
+    inflows,
+    outflows,
+    cashAccounts: cashAccountRows,
+  };
+}
+
+function previousMonth(month: string) {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(y, m - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Cash held in Bank / Cash on hand accounts at the end of a day, in home
+ * currency, from the Balance Sheet. Returns null when the report cannot be read.
+ */
+async function getCashBalance(asOf: string, accounts: Map<string, QboAccount>): Promise<number | null> {
+  try {
+    const rep = await qboFetch(
+      `reports/BalanceSheet?start_date=${encodeURIComponent(asOf)}&end_date=${encodeURIComponent(asOf)}` +
+        `&summarize_column_by=Total`
+    );
+    let total = 0;
+    let found = false;
+    const walk = (rows: any) => {
+      const arr = Array.isArray(rows) ? rows : rows?.Row;
+      if (!Array.isArray(arr)) return;
+      for (const r of arr) {
+        if (r?.Rows) walk(r.Rows);
+        if (r?.type !== "Data" || !Array.isArray(r?.ColData)) continue;
+        const id = r.ColData[0]?.id != null ? String(r.ColData[0].id) : "";
+        if (!id || !isCashAccount(accounts.get(id))) continue;
+        total += toNumber(r.ColData[r.ColData.length - 1]?.value);
+        found = true;
+      }
+    };
+    walk(rep?.Rows);
+    return found ? round2(total) : 0;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -386,171 +613,29 @@ export async function GET(req: Request) {
     if (!range) {
       return NextResponse.json({ ok: false, error: "Invalid month. Use YYYY-MM." }, { status: 400 });
     }
+    const prevMonth = previousMonth(month);
+    const prevRange = monthRange(prevMonth)!;
 
-    const [accounts, homeCurrency, report] = await Promise.all([
-      getAllAccounts(),
-      getHomeCurrency(),
-      fetchGeneralLedger(range.start, range.end, method),
+    const [accounts, homeCurrency] = await Promise.all([getAllAccounts(), getHomeCurrency()]);
+
+    const [current, previous, closingCash] = await Promise.all([
+      summarizeMonth(range, method, accounts),
+      summarizeMonth(prevRange, method, accounts).catch(() => null),
+      getCashBalance(range.end, accounts),
     ]);
 
-    const accountsByName = new Map<string, string>();
-    for (const a of accounts.values()) {
-      accountsByName.set(a.name.toLowerCase(), a.id);
-      accountsByName.set(a.fullName.toLowerCase(), a.id);
-    }
+    // Cash at the start of the month = cash at the end - net change in the month.
+    const netCashChange = round2(current.cashAccounts.reduce((sum, a) => sum + a.net, 0));
+    const openingCash = closingCash == null ? null : round2(closingCash - netCashChange);
 
-    const lines = collectGlLines(report, accountsByName);
-
-    // Group GL lines by transaction
-    const byTxn = new Map<string, GlLine[]>();
-    for (const l of lines) {
-      const list = byTxn.get(l.txnKey);
-      if (list) list.push(l);
-      else byTxn.set(l.txnKey, [l]);
-    }
-
-    const inflowHeads = new Map<string, HeadSummary>();
-    const outflowHeads = new Map<string, HeadSummary>();
-    const cashAccounts = new Map<string, CashAccountSummary & { txnKeys: Set<string> }>();
-    let internalTransfers = 0;
-    let cashTxnCount = 0;
-
-    const headFor = (map: Map<string, HeadSummary>, l: GlLine) => {
-      let h = map.get(l.accountId);
-      if (!h) {
-        const a = accounts.get(l.accountId);
-        h = {
-          accountId: l.accountId,
-          accountName: a?.fullName || l.accountName,
-          accountType: a?.accountType ?? "",
-          classification: a?.classification ?? "",
-          amount: 0,
-          txnCount: 0,
-          transactions: [],
-        };
-        map.set(l.accountId, h);
-      }
-      return h;
-    };
-
-    const addHeadTxn = (h: HeadSummary, l: GlLine, amount: number, cashNames: string[]) => {
-      h.amount += amount;
-      const existing = h.transactions.find((t) => t.txnId === l.txnId && t.txnType === l.txnType);
-      if (existing) {
-        existing.amount += amount;
-        return;
-      }
-      h.txnCount += 1;
-      h.transactions.push({
-        txnId: l.txnId,
-        txnType: l.txnType,
-        date: l.date,
-        docNum: l.docNum,
-        name: l.name,
-        memo: l.memo,
-        amount,
-        cashAccounts: cashNames,
-      });
-    };
-
-    // One movement = one head line of a transaction that touches a cash account.
-    const movements: Movement[] = [];
-
-    for (const [txnKey, txnLines] of byTxn) {
-      const cashLines = txnLines.filter((l) => isCashAccount(accounts.get(l.accountId)));
-      if (cashLines.length === 0) continue; // no entry in a Bank / Cash on hand account
-
-      cashTxnCount += 1;
-      const otherLines = txnLines.filter((l) => !isCashAccount(accounts.get(l.accountId)));
-      const isTransfer = otherLines.length === 0;
-      const cashIds = Array.from(new Set(cashLines.map((l) => l.accountId)));
-      const cashNames = cashIds.map((id) => accounts.get(id)?.fullName || cashLines.find((l) => l.accountId === id)!.accountName);
-
-      for (const l of cashLines) {
-        let s = cashAccounts.get(l.accountId);
-        if (!s) {
-          const a = accounts.get(l.accountId);
-          s = {
-            accountId: l.accountId,
-            accountName: a?.fullName || l.accountName,
-            accountSubType: a?.accountSubType ?? "",
-            inflow: 0,
-            outflow: 0,
-            transfersIn: 0,
-            transfersOut: 0,
-            net: 0,
-            txnCount: 0,
-            txnKeys: new Set(),
-          };
-          cashAccounts.set(l.accountId, s);
-        }
-        if (isTransfer) {
-          s.transfersIn += l.debit;
-          s.transfersOut += l.credit;
-        } else {
-          s.inflow += l.debit;
-          s.outflow += l.credit;
-        }
-        s.net += l.debit - l.credit;
-        s.txnKeys.add(txnKey);
-      }
-
-      if (isTransfer) {
-        internalTransfers += cashLines.reduce((sum, l) => sum + l.debit, 0);
-        continue;
-      }
-
-      for (const l of otherLines) {
-        const cashAccountId = cashIds.length === 1 ? cashIds[0] : null;
-        if (l.credit > 0) movements.push({ line: l, direction: "in", amount: l.credit, cashAccountId, cashNames });
-        if (l.debit > 0) movements.push({ line: l, direction: "out", amount: l.debit, cashAccountId, cashNames });
-      }
-    }
-
-    const { kept, reversals } = cancelReversals(movements);
-
-    // A cancelled pair moved the same amount in and out of one cash account.
-    for (const r of reversals) {
-      const s = cashAccounts.get(r.cashAccountId);
-      if (!s) continue;
-      s.inflow -= r.amount;
-      s.outflow -= r.amount;
-    }
-
-    for (const m of kept) {
-      const map = m.direction === "in" ? inflowHeads : outflowHeads;
-      addHeadTxn(headFor(map, m.line), m.line, m.amount, m.cashNames);
-    }
-
-    const finishHeads = (map: Map<string, HeadSummary>) =>
-      Array.from(map.values())
-        .map((h) => ({
-          ...h,
-          amount: round2(h.amount),
-          transactions: h.transactions
-            .map((t) => ({ ...t, amount: round2(t.amount) }))
-            .sort((a, b) => Date.parse(a.date) - Date.parse(b.date)),
-        }))
-        .filter((h) => h.amount !== 0)
-        .sort((a, b) => b.amount - a.amount);
-
-    const inflows = finishHeads(inflowHeads);
-    const outflows = finishHeads(outflowHeads);
-
-    const cashAccountRows: CashAccountSummary[] = Array.from(cashAccounts.values())
-      .map(({ txnKeys, ...s }) => ({
-        ...s,
-        inflow: round2(s.inflow),
-        outflow: round2(s.outflow),
-        transfersIn: round2(s.transfersIn),
-        transfersOut: round2(s.transfersOut),
-        net: round2(s.net),
-        txnCount: txnKeys.size,
-      }))
-      .sort((a, b) => a.accountName.localeCompare(b.accountName));
-
-    const totalInflow = round2(inflows.reduce((s, h) => s + h.amount, 0));
-    const totalOutflow = round2(outflows.reduce((s, h) => s + h.amount, 0));
+    const directorReport = buildDirectorReport({
+      month,
+      currency: homeCurrency,
+      current,
+      previous: previous ? { month: prevMonth, ...previous } : null,
+      openingCash,
+      closingCash,
+    });
 
     return NextResponse.json({
       ok: true,
@@ -559,23 +644,8 @@ export async function GET(req: Request) {
       end_date: range.end,
       accountingMethod: method,
       homeCurrency,
-      totals: {
-        inflow: totalInflow,
-        outflow: totalOutflow,
-        net: round2(totalInflow - totalOutflow),
-        internalTransfers: round2(internalTransfers),
-        transactionCount: cashTxnCount,
-        reversedAmount: round2(reversals.reduce((sum, r) => sum + r.amount, 0)),
-        reversedCount: reversals.length,
-      },
-      reversals: reversals.map((r) => ({
-        ...r,
-        accountName: accounts.get(r.accountId)?.fullName || r.accountName,
-        cashAccountName: accounts.get(r.cashAccountId)?.fullName || r.cashAccountId,
-      })),
-      inflows,
-      outflows,
-      cashAccounts: cashAccountRows,
+      ...current,
+      directorReport,
     });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });

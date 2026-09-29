@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import CashFlowDirectorReport from "@/components/CashFlowDirectorReport";
+import type { DirectorReport } from "@/lib/cashflow-report";
 
 type HeadTxn = {
   txnId: string;
@@ -17,6 +19,7 @@ type HeadSummary = {
   accountId: string;
   accountName: string;
   accountType: string;
+  accountSubType: string;
   classification: string;
   amount: number;
   txnCount: number;
@@ -75,6 +78,7 @@ type MonthlyCashFlowResp =
       outflows: HeadSummary[];
       cashAccounts: CashAccountSummary[];
       reversals: ReversalPair[];
+      directorReport: DirectorReport;
     }
   | { ok: false; error: string };
 
@@ -188,9 +192,8 @@ export default function MonthlyCashFlowPanel({ filters }: { filters: MonthlyCash
           ))}
         </div>
         <p className="mt-3 text-xs text-slate-400">
-          Only entries in accounts with detail type Bank or Cash on hand are used. Account heads show the other side of
-          these entries. Heads and accounts without entries in the selected month are not shown. Failed payments and
-          returned cheques (same amount in and out, same head and account) are removed, so only the final entry counts.
+          This report shows the real money that moved in and out of the company&apos;s bank and cash accounts in the selected
+          month. Failed payments and returned cheques are not counted.
         </p>
       </Card>
 
@@ -201,102 +204,111 @@ export default function MonthlyCashFlowPanel({ filters }: { filters: MonthlyCash
           <div className="py-6 text-slate-300">Loading…</div>
         </Card>
       ) : data ? (
-        <div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Cash inflow" value={formatMoney(cur, data.totals.inflow)} tone="text-emerald-300" />
-            <Stat label="Cash outflow" value={formatMoney(cur, data.totals.outflow)} tone="text-rose-300" />
-            <Stat
-              label="Net cash flow"
-              value={formatMoney(cur, data.totals.net)}
-              tone={data.totals.net >= 0 ? "text-emerald-300" : "text-rose-300"}
-            />
-            <Stat
-              label="Internal transfers"
-              value={formatMoney(cur, data.totals.internalTransfers)}
-              tone="text-slate-100"
-              sub="Bank / cash to bank / cash"
-            />
-          </div>
+        <div className="space-y-5">
+          {hasActivity ? <CashFlowDirectorReport report={data.directorReport} /> : null}
 
-          {!hasActivity ? (
+          <details className="group rounded-[24px] border border-white/10 bg-white/[0.03] p-5" open={!hasActivity}>
+            <summary className="cursor-pointer select-none text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-300 marker:text-slate-500">
+              Accounting detail (for the finance team)
+            </summary>
             <div className="mt-5">
-              <Card title={monthLabel(data.month)}>
-                <div className="py-6 text-slate-300">No entries in Bank or Cash on hand accounts in this month.</div>
-              </Card>
-            </div>
-          ) : (
-            <>
-              <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
-                <HeadsTable
-                  title={`Cash inflow · ${monthLabel(data.month)}`}
-                  heads={data.inflows}
-                  total={data.totals.inflow}
-                  currency={cur}
-                  barClass="bg-emerald-400/70"
-                  amountClass="text-emerald-200"
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Stat label="Cash inflow" value={formatMoney(cur, data.totals.inflow)} tone="text-emerald-300" />
+                <Stat label="Cash outflow" value={formatMoney(cur, data.totals.outflow)} tone="text-rose-300" />
+                <Stat
+                  label="Net cash flow"
+                  value={formatMoney(cur, data.totals.net)}
+                  tone={data.totals.net >= 0 ? "text-emerald-300" : "text-rose-300"}
                 />
-                <HeadsTable
-                  title={`Cash outflow · ${monthLabel(data.month)}`}
-                  heads={data.outflows}
-                  total={data.totals.outflow}
-                  currency={cur}
-                  barClass="bg-rose-400/70"
-                  amountClass="text-rose-200"
+                <Stat
+                  label="Internal transfers"
+                  value={formatMoney(cur, data.totals.internalTransfers)}
+                  tone="text-slate-100"
+                  sub="Bank / cash to bank / cash"
                 />
               </div>
 
-              <div className="mt-5">
-                <Card title="Bank & cash accounts with entries">
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[720px] text-sm">
-                      <thead>
-                        <tr className="border-b border-white/10 text-left text-[11px] uppercase tracking-[0.14em] text-slate-400">
-                          <th className="py-2 pr-3 font-semibold">Account</th>
-                          <th className="py-2 pr-3 font-semibold">Detail type</th>
-                          <th className="py-2 pr-3 text-right font-semibold">Inflow</th>
-                          <th className="py-2 pr-3 text-right font-semibold">Outflow</th>
-                          <th className="py-2 pr-3 text-right font-semibold">Transfers (net)</th>
-                          <th className="py-2 pr-3 text-right font-semibold">Net change</th>
-                          <th className="py-2 text-right font-semibold">Entries</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.cashAccounts.map((a) => (
-                          <tr key={a.accountId} className="border-b border-white/5">
-                            <td className="py-2 pr-3 font-medium text-slate-100">{a.accountName}</td>
-                            <td className="py-2 pr-3 text-slate-400">{subTypeLabel(a.accountSubType)}</td>
-                            <td className="py-2 pr-3 text-right tabular-nums text-emerald-200">{formatMoney(cur, a.inflow)}</td>
-                            <td className="py-2 pr-3 text-right tabular-nums text-rose-200">{formatMoney(cur, a.outflow)}</td>
-                            <td className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                              {formatMoney(cur, a.transfersIn - a.transfersOut)}
-                            </td>
-                            <td
-                              className={`py-2 pr-3 text-right font-semibold tabular-nums ${
-                                a.net >= 0 ? "text-emerald-300" : "text-rose-300"
-                              }`}
-                            >
-                              {formatMoney(cur, a.net)}
-                            </td>
-                            <td className="py-2 text-right tabular-nums text-slate-300">{a.txnCount}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="mt-3 text-xs text-slate-500">
-                    Amounts are in {cur} (home currency) · {data.accountingMethod} basis · {data.totals.transactionCount}{" "}
-                    transactions · {data.start_date} to {data.end_date}
-                  </p>
-                </Card>
-              </div>
-
-              {data.reversals.length ? (
+              {!hasActivity ? (
                 <div className="mt-5">
-                  <ReversalsTable pairs={data.reversals} total={data.totals.reversedAmount} currency={cur} />
+                  <Card title={monthLabel(data.month)}>
+                    <div className="py-6 text-slate-300">No entries in Bank or Cash on hand accounts in this month.</div>
+                  </Card>
                 </div>
-              ) : null}
-            </>
-          )}
+              ) : (
+                <>
+                  <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
+                    <HeadsTable
+                      title={`Cash inflow · ${monthLabel(data.month)}`}
+                      heads={data.inflows}
+                      total={data.totals.inflow}
+                      currency={cur}
+                      barClass="bg-emerald-400/70"
+                      amountClass="text-emerald-200"
+                    />
+                    <HeadsTable
+                      title={`Cash outflow · ${monthLabel(data.month)}`}
+                      heads={data.outflows}
+                      total={data.totals.outflow}
+                      currency={cur}
+                      barClass="bg-rose-400/70"
+                      amountClass="text-rose-200"
+                    />
+                  </div>
+
+                  <div className="mt-5">
+                    <Card title="Bank & cash accounts with entries">
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[720px] text-sm">
+                          <thead>
+                            <tr className="border-b border-white/10 text-left text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                              <th className="py-2 pr-3 font-semibold">Account</th>
+                              <th className="py-2 pr-3 font-semibold">Detail type</th>
+                              <th className="py-2 pr-3 text-right font-semibold">Inflow</th>
+                              <th className="py-2 pr-3 text-right font-semibold">Outflow</th>
+                              <th className="py-2 pr-3 text-right font-semibold">Transfers (net)</th>
+                              <th className="py-2 pr-3 text-right font-semibold">Net change</th>
+                              <th className="py-2 text-right font-semibold">Entries</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {data.cashAccounts.map((a) => (
+                              <tr key={a.accountId} className="border-b border-white/5">
+                                <td className="py-2 pr-3 font-medium text-slate-100">{a.accountName}</td>
+                                <td className="py-2 pr-3 text-slate-400">{subTypeLabel(a.accountSubType)}</td>
+                                <td className="py-2 pr-3 text-right tabular-nums text-emerald-200">{formatMoney(cur, a.inflow)}</td>
+                                <td className="py-2 pr-3 text-right tabular-nums text-rose-200">{formatMoney(cur, a.outflow)}</td>
+                                <td className="py-2 pr-3 text-right tabular-nums text-slate-300">
+                                  {formatMoney(cur, a.transfersIn - a.transfersOut)}
+                                </td>
+                                <td
+                                  className={`py-2 pr-3 text-right font-semibold tabular-nums ${
+                                    a.net >= 0 ? "text-emerald-300" : "text-rose-300"
+                                  }`}
+                                >
+                                  {formatMoney(cur, a.net)}
+                                </td>
+                                <td className="py-2 text-right tabular-nums text-slate-300">{a.txnCount}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="mt-3 text-xs text-slate-500">
+                        Amounts are in {cur} (home currency) · {data.accountingMethod} basis · {data.totals.transactionCount}{" "}
+                        transactions · {data.start_date} to {data.end_date}
+                      </p>
+                    </Card>
+                  </div>
+
+                  {data.reversals.length ? (
+                    <div className="mt-5">
+                      <ReversalsTable pairs={data.reversals} total={data.totals.reversedAmount} currency={cur} />
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
+          </details>
         </div>
       ) : null}
     </div>
