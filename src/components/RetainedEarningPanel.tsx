@@ -34,6 +34,7 @@ export type RetainedData = {
   };
   retainedEarning?: number;
   monthly?: Array<{ month: string; label: string; netProfit: number; assets: number; netInvestments: number; retained: number; cumulativeRetained: number }>;
+  monthlyCoverage?: { months: number; totalMonths: number; from: string | null; to: string | null; truncated: boolean };
   previous?: { start: string; end: string; netProfit: number; longTermAssetsMovement: number; netInvestments: number; retainedEarning: number } | null;
   ratios?: { retentionRatio: number | null; reinvestmentRatio: number | null; assetsShare: number | null; investmentsShare: number | null; positiveMonths: number; months: number };
   verdict?: { status: "healthy" | "balanced" | "watch" | "risk"; label: string; headline: string };
@@ -144,10 +145,16 @@ export default function RetainedEarningPanel({ data, loading }: { data: Retained
           title="Month by month"
           hint={
             ratios && ratios.months > 0
-              ? `${ratios.positiveMonths} of ${ratios.months} months added to retained earning`
+              ? `${ratios.positiveMonths} of ${ratios.months}${data.monthlyCoverage?.truncated ? " shown" : ""} months added to retained earning`
               : undefined
           }
         >
+          {data.monthlyCoverage?.truncated ? (
+            <div className="mb-3 rounded-xl border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              Only the last {data.monthlyCoverage.months} of {data.monthlyCoverage.totalMonths} months are shown here ({monthly[0].label} –{" "}
+              {monthly[monthly.length - 1].label}). The running total starts in {monthly[0].label}. The totals above still cover the whole period.
+            </div>
+          ) : null}
           <MonthlyTrend monthly={monthly} />
         </Card>
       ) : null}

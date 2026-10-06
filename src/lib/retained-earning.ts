@@ -266,7 +266,13 @@ export function buildVerdict(c: Components, ratios: Ratios): Verdict {
   };
 }
 
-export function buildInsights(c: Components, ratios: Ratios, monthly: MonthPoint[], previous: PeriodSummary | null): Insight[] {
+export function buildInsights(
+  c: Components,
+  ratios: Ratios,
+  monthly: MonthPoint[],
+  previous: PeriodSummary | null,
+  monthlyTruncated = false
+): Insight[] {
   const f = formatPKR;
   const out: Insight[] = [];
   const p = c.netProfit;
@@ -318,6 +324,8 @@ export function buildInsights(c: Components, ratios: Ratios, monthly: MonthPoint
 
   // 4. Monthly consistency
   if (monthly.length >= 2) {
+    // When the monthly view is cut to the latest months, say which months it covers.
+    const scope = monthlyTruncated ? `In the last ${monthly.length} months (${monthly[0].label} – ${monthly[monthly.length - 1].label}): ` : "";
     const neg = monthly.filter((m) => m.retained < 0);
     const best = [...monthly].sort((a, b) => b.retained - a.retained)[0];
     const worst = [...monthly].sort((a, b) => a.retained - b.retained)[0];
@@ -325,9 +333,10 @@ export function buildInsights(c: Components, ratios: Ratios, monthly: MonthPoint
       tone: neg.length === 0 ? "good" : neg.length > monthly.length / 2 ? "risk" : "watch",
       title: "Month by month",
       text:
-        neg.length === 0
+        scope +
+        (neg.length === 0
           ? `Every month added to retained earnings. Best month: ${best.label} (${f(best.retained)}).`
-          : `${monthly.length - neg.length} of ${monthly.length} months added to retained earnings. Best: ${best.label} (${f(best.retained)}). Weakest: ${worst.label} (${f(worst.retained)}).`,
+          : `${monthly.length - neg.length} of ${monthly.length} months added to retained earnings. Best: ${best.label} (${f(best.retained)}). Weakest: ${worst.label} (${f(worst.retained)}).`),
     });
 
     // trend: second half vs first half
@@ -339,7 +348,7 @@ export function buildInsights(c: Components, ratios: Ratios, monthly: MonthPoint
         out.push({
           tone: b > a ? "good" : "watch",
           title: b > a ? "Improving trend" : "Weakening trend",
-          text: `Average monthly retained earnings ${b > a ? "rose" : "fell"} from ${f(a)} (early months) to ${f(b)} (recent months).`,
+          text: `${scope}Average monthly retained earnings ${b > a ? "rose" : "fell"} from ${f(a)} (early months) to ${f(b)} (recent months).`,
         });
       }
     }

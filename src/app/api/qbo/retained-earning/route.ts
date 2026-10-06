@@ -132,7 +132,16 @@ export async function GET(req: Request) {
     }
 
     const prior = dayBefore(start);
-    const windows = monthWindows(start, end).slice(-MAX_MONTHS);
+    const allWindows = monthWindows(start, end);
+    const windows = allWindows.slice(-MAX_MONTHS);
+    // The monthly view covers at most MAX_MONTHS (the latest ones); say so in the response.
+    const monthlyCoverage = {
+      months: windows.length,
+      totalMonths: allWindows.length,
+      from: windows[0]?.key ?? null,
+      to: windows[windows.length - 1]?.key ?? null,
+      truncated: allWindows.length > windows.length,
+    };
     const prev = previousPeriod(start, monthWindows(start, end).length);
 
     // Period snapshots + P&L (same calculation as before)
@@ -198,7 +207,7 @@ export async function GET(req: Request) {
 
     const ratios = computeRatios(c, monthly);
     const verdict = buildVerdict(c, ratios);
-    const insights = buildInsights(c, ratios, monthly, previous);
+    const insights = buildInsights(c, ratios, monthly, previous, monthlyCoverage.truncated);
 
     const charts = {
       investmentBars: [
@@ -241,6 +250,7 @@ export async function GET(req: Request) {
       charts,
 
       monthly,
+      monthlyCoverage,
       previous,
       ratios,
       verdict,
