@@ -84,21 +84,28 @@ function monthWindows(start: string, end: string) {
   return out;
 }
 
-type ColMeta = { idx: number; key: string; title: string };
+type ColMeta = { idx: number; keys: string[]; title: string };
 
+/**
+ * A GL column names its key in MetaData[ColKey], ColKey or ColType,
+ * depending on the report and tenant. All three are kept, so matching
+ * never depends on the (possibly localized) header text.
+ */
 function getColumns(report: any): ColMeta[] {
   const cols = report?.Columns?.Column ?? [];
   if (!Array.isArray(cols)) return [];
   return cols.map((c: any, idx: number) => {
     const meta = Array.isArray(c?.MetaData) ? c.MetaData : [];
-    const colKey = meta.find((m: any) => m?.Name === "ColKey")?.Value;
-    return { idx, key: String(colKey ?? "").toLowerCase(), title: String(c?.ColTitle ?? "").trim().toLowerCase() };
+    const keys = [meta.find((m: any) => m?.Name === "ColKey")?.Value, c?.ColKey, c?.ColType]
+      .filter((k) => k != null && k !== "")
+      .map((k) => String(k).toLowerCase());
+    return { idx, keys, title: String(c?.ColTitle ?? "").trim().toLowerCase() };
   });
 }
 
 function findCol(cols: ColMeta[], keys: string[], titles: string[]) {
   for (const k of keys) {
-    const hit = cols.find((c) => c.key === k);
+    const hit = cols.find((c) => c.keys.includes(k));
     if (hit) return hit.idx;
   }
   for (const t of titles) {
