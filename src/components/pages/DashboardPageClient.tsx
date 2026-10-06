@@ -4,6 +4,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import ExpenseDrilldown from "@/components/ExpenseDrilldown";
+import RetainedEarningPanel from "@/components/RetainedEarningPanel";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -335,16 +336,6 @@ const MONTHS = [
   { v: 12, label: "Dec" },
 ];
 
-const DONUT_COLORS = [
-  "#60a5fa",
-  "#34d399",
-  "#fbbf24",
-  "#a78bfa",
-  "#fb7185",
-  "#22d3ee",
-  "#f97316",
-  "#94a3b8",
-];
 
 // Expense Composition palette: the donut hues, 4 more, and slate last for "Other".
 // The two lists stay index-aligned (hex for charts, Tailwind class for the legend).
@@ -1138,67 +1129,6 @@ export default function DashboardPage() {
 
   const accounts = (cashBanks?.accounts ?? []).filter((a) => Math.abs(a.currentBalance ?? 0) > 0);
 
-  /* ---------------- retained normalized values ---------------- */
-
-  const reOk = !!retained?.ok;
-  const reProfit = (retained?.netProfit ?? retained?.profit ?? 0) || 0;
-  const reLongTermAssets = (retained?.longTermAssetsMovement ?? retained?.longTermAssetsAdditions ?? 0) || 0;
-  const reInvestments = retained?.investments ?? null;
-  const reTotalInvestments = (reInvestments?.totalInvestments ?? retained?.totalInvestments ?? 0) || 0;
-  const reContribution = (reInvestments?.contribution ?? retained?.contributionReceived ?? 0) || 0;
-  const reNetInvestments = (reInvestments?.netInvestments ?? retained?.netInvestments ?? 0) || 0;
-  const reRetained = (retained?.retainedEarning ?? 0) || 0;
-
-  const retainedBreakdown = useMemo(() => {
-    if (!reOk) return [];
-    const parts = [
-      { name: "Long-term Assets", value: Math.max(0, reLongTermAssets) },
-      { name: "Net Investments", value: Math.max(0, reNetInvestments) },
-    ];
-    return parts.filter((x) => x.value > 0);
-  }, [reOk, reLongTermAssets, reNetInvestments]);
-
-  const investmentBarData = useMemo(() => {
-    if (!reOk) return [];
-    if (retained?.charts?.investmentBars?.length) return retained.charts.investmentBars;
-    return [
-      { name: "Investments", value: reTotalInvestments },
-      { name: "Contribution Received", value: reContribution },
-    ];
-  }, [reOk, retained?.charts?.investmentBars, reTotalInvestments, reContribution]);
-
-  const donutData = useMemo(() => {
-    if (!reOk) return [];
-    if (retained?.charts?.retainedDonut?.length) return retained.charts.retainedDonut;
-
-    const parts = [
-      { name: "Long-term Assets", value: Math.max(0, reLongTermAssets) },
-      { name: "Net Investments", value: Math.max(0, reNetInvestments) },
-      { name: "Retained Earning", value: Math.max(0, reRetained) },
-    ].filter((x) => x.value > 0);
-
-    return parts;
-  }, [reOk, retained?.charts?.retainedDonut, reLongTermAssets, reNetInvestments, reRetained]);
-
-  const ltDetail = useMemo(() => {
-    if (retained?.longTermAssets?.detail?.length) return retained.longTermAssets.detail;
-
-    if (retained?.fixedAssetAdditions?.length) {
-      return retained.fixedAssetAdditions.map((x) => ({
-        label: x.label,
-        end: x.amount,
-        prior: 0,
-        movement: x.amount,
-      }));
-    }
-    return [];
-  }, [retained]);
-
-  const invDetail = useMemo(() => {
-    if (reInvestments?.items?.length) return reInvestments.items;
-    if (retained?.investmentsByEntity?.length) return retained.investmentsByEntity;
-    return [];
-  }, [reInvestments?.items, retained?.investmentsByEntity]);
 
   /* ---------------- forecast derived values (UI-safe) ---------------- */
 
@@ -2830,136 +2760,7 @@ export default function DashboardPage() {
         ) : null}
 
         {/* RETAINED TAB */}
-        {tab === "retained" ? (
-          <>
-            <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-              <KpiCard title="Net Profit" numericValue={reProfit} formatValue={formatPKRCompact} />
-              <KpiCard title="Long-term Assets" numericValue={reLongTermAssets} formatValue={formatPKRCompact} />
-              <KpiCard title="Net Investments" numericValue={reNetInvestments} formatValue={formatPKRCompact} />
-              <KpiCard
-                title="Retained Earning"
-                numericValue={reRetained}
-                formatValue={formatPKRCompact}
-                highlight={reRetained < 0 ? "bad" : "good"}
-              />
-            </div>
-
-            <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Panel title="Investment Summary">
-                <div className="h-[320px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={investmentBarData} margin={{ top: 10, right: 12, left: 6, bottom: 6 }}>
-                      <CartesianGrid {...GRID} />
-                      <XAxis dataKey="name" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
-                      <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                      <Tooltip content={<MoneyTooltip single />} />
-                      <Bar dataKey="value" radius={[10, 10, 0, 0]}>
-                        {investmentBarData.map((entry, i) => (
-                          <Cell key={`cell-${i}`} fill={entry.name === "Investments" ? CHART_COLORS.negative : CHART_COLORS.profit} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </Panel>
-
-              <Panel title="Retained Earning Breakdown">
-                <div className="h-[320px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Tooltip content={<MoneyTooltip pie />} />
-                      <Legend />
-                      <Pie
-                        data={donutData.length ? donutData : retainedBreakdown}
-                        dataKey="value"
-                        nameKey="name"
-                        innerRadius={70}
-                        outerRadius={110}
-                        paddingAngle={2}
-                      >
-                        {(donutData.length ? donutData : retainedBreakdown).map((_, i) => (
-                          <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
-                        ))}
-                      </Pie>
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </Panel>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-4">
-              <Panel title="Net Investments Detail">
-                {retainedLoading ? (
-                  <div className="py-3 text-slate-300">Loading…</div>
-                ) : invDetail.length ? (
-                  <div className="mt-2 overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="text-left text-xs text-slate-300">
-                        <tr>
-                          <th className="py-2 pr-3">Account</th>
-                          <th className="py-2 text-right">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {invDetail.map((x, i) => (
-                          <tr key={i} className="border-t border-white/10">
-                            <td className="py-2 pr-3">{x.label}</td>
-                            <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(x.amount ?? 0))}</td>
-                          </tr>
-                        ))}
-                        <tr className="border-t-2 border-white/15 bg-white/5">
-                          <td className="py-2 pr-3 font-semibold">Net Investments</td>
-                          <td className="py-2 text-right font-semibold">{formatPKRCompact(reNetInvestments)}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="py-3 text-slate-300">No investment movements found.</div>
-                )}
-              </Panel>
-            </div>
-
-            <div className="mt-4">
-              <Panel title="Long-term Assets Detail">
-                {retainedLoading ? (
-                  <div className="py-3 text-slate-300">Loading…</div>
-                ) : ltDetail.length ? (
-                  <div className="mt-2 overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="text-left text-xs text-slate-300">
-                        <tr>
-                          <th className="py-2 pr-3">Account</th>
-                          <th className="py-2 text-right">Prior</th>
-                          <th className="py-2 text-right">End</th>
-                          <th className="py-2 text-right">Movement</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ltDetail.map((x, i) => (
-                          <tr key={i} className="border-t border-white/10">
-                            <td className="py-2 pr-3">{x.label}</td>
-                            <td className="py-2 text-right text-slate-200">{formatPKRCompact(Number(x.prior ?? 0))}</td>
-                            <td className="py-2 text-right text-slate-200">{formatPKRCompact(Number(x.end ?? 0))}</td>
-                            <td className="py-2 text-right font-semibold">{formatPKRCompact(Number(x.movement ?? 0))}</td>
-                          </tr>
-                        ))}
-                        <tr className="border-t-2 border-white/15 bg-white/5">
-                          <td className="py-2 pr-3 font-semibold">Total Movement</td>
-                          <td className="py-2 text-right"></td>
-                          <td className="py-2 text-right"></td>
-                          <td className="py-2 text-right font-semibold">{formatPKRCompact(reLongTermAssets)}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="py-3 text-slate-300">No fixed asset movement found.</div>
-                )}
-              </Panel>
-            </div>
-          </>
-        ) : null}
+        {tab === "retained" ? <RetainedEarningPanel data={retained} loading={retainedLoading} /> : null}
 
         {/* CFO FORECAST TAB */}
         {tab === "forecast" ? (
