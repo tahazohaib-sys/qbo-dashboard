@@ -155,11 +155,13 @@ export function computeComponents(
   }
   const ltDetail = Array.from(assetMap.values())
     .map((x) => ({ label: x.label, end: x.end, prior: x.prior, movement: x.end - x.prior }))
-    .filter((x) => x.end !== 0 || x.prior !== 0 || x.movement !== 0)
-    .sort((a, b) => Math.abs(b.movement) - Math.abs(a.movement) || b.end - a.end);
+    // Only assets with a movement in the range; an unchanged asset adds 0 to the total.
+    .filter((x) => Math.abs(x.movement) >= 0.005)
+    .sort((a, b) => Math.abs(b.movement) - Math.abs(a.movement));
 
-  const ltEnd = ltDetail.reduce((s, x) => s + x.end, 0);
-  const ltPrior = ltDetail.reduce((s, x) => s + x.prior, 0);
+  // Balances of all fixed assets, including the unchanged ones hidden from the list.
+  const ltEnd = Array.from(assetMap.values()).reduce((s, x) => s + x.end, 0);
+  const ltPrior = Array.from(assetMap.values()).reduce((s, x) => s + x.prior, 0);
   const longTermAssetsMovement = ltEnd - ltPrior;
 
   // Equity Data rows of the end snapshot
