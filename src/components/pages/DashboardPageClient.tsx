@@ -2,6 +2,7 @@
 "use client";
 
 import Link from "next/link";
+import ExpenseDrilldown from "@/components/ExpenseDrilldown";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -40,6 +41,7 @@ type PnlRow = {
   rowType: "Section" | "Data";
   label: string;
   amount: number;
+  accountId?: string;
 };
 
 type PnlTableResp = {
@@ -343,7 +345,10 @@ const DONUT_COLORS = [
   "#94a3b8",
 ];
 
-const DONUT_COLOR_CLASSES = [
+// Expense Composition palette: the donut hues, 4 more, and slate last for "Other".
+// The two lists stay index-aligned (hex for charts, Tailwind class for the legend).
+const EXPENSE_COLORS = ["#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#fb7185", "#22d3ee", "#f97316", "#f472b6", "#a3e635", "#2dd4bf", "#818cf8", "#94a3b8"];
+const EXPENSE_COLOR_CLASSES = [
   "bg-blue-400",
   "bg-emerald-400",
   "bg-amber-300",
@@ -351,8 +356,13 @@ const DONUT_COLOR_CLASSES = [
   "bg-rose-400",
   "bg-cyan-300",
   "bg-orange-400",
+  "bg-pink-400",
+  "bg-lime-400",
+  "bg-teal-400",
+  "bg-indigo-400",
   "bg-slate-400",
 ];
+
 
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
 
@@ -540,7 +550,9 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<DashboardResp | null>(null);
-  const [pnlBreakdown, setPnlBreakdown] = useState<{ name: string; value: number }[]>([]);
+  const [pnlBreakdown, setPnlBreakdown] = useState<{ name: string; value: number; accountIds: string[] }[]>([]);
+  const [selectedExpense, setSelectedExpense] = useState<string | null>(null);
+  const expenseDrilldownRef = useRef<HTMLDivElement | null>(null);
   const [cashBanks, setCashBanks] = useState<CashBanksResp | null>(null);
 
   const [selectedAccount, setSelectedAccount] = useState<CashBankAccount | null>(null);
@@ -794,10 +806,15 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
         return p.startsWith("P&L > Expenses") || p.startsWith("P&L > Other Expenses");
       });
 
-      const map = new Map<string, number>();
-      for (const r of expenseRows) map.set(r.label, (map.get(r.label) ?? 0) + (r.amount ?? 0));
+      const map = new Map<string, { value: number; ids: Set<string> }>();
+      for (const r of expenseRows) {
+        const cur = map.get(r.label) ?? { value: 0, ids: new Set<string>() };
+        cur.value += r.amount ?? 0;
+        if (r.accountId) cur.ids.add(r.accountId);
+        map.set(r.label, cur);
+      }
       const sorted = Array.from(map.entries())
-        .map(([name, value]) => ({ name, value }))
+        .map(([name, { value, ids }]) => ({ name, value, accountIds: Array.from(ids) }))
         .filter(({ value }) => value > 0)
         .sort((a, b) => b.value - a.value);
       const nextBreakdown = sorted;
@@ -1039,12 +1056,60 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
         kpi.profit
       )}, with expenses exceeding revenue. Primary pressure remains in core fixed costs, so immediate focus should be on revenue realization and invoice coverage.`;
 
+  // 1) All salary accounts fold into one "Salary Expense" category.
+  // 2) Categories are shown from high to low.
+  // 3) "Other" holds only the smallest categories, and together they stay
+  //    below 10% of total expenses. It is shown last.
   const expenseComposition = useMemo(() => {
-    const sorted = [...pnlBreakdown].sort((a, b) => b.value - a.value);
-    const topSix = sorted.slice(0, 6);
-    const remaining = sorted.slice(6).reduce((sum, item) => sum + item.value, 0);
-    return remaining > 0 ? [...topSix, { name: "Other", value: remaining }] : topSix;
+    const SALARY_RX = /salar|wage|payroll/i;
+    const OTHER_MAX_SHARE = 0.1;
+    const OTHER_COLOR_IDX = EXPENSE_COLORS.length - 1; // slate
+
+    const salary = { name: "Salary Expense", value: 0, accountIds: [] as string[], members: 0 };
+    const nonSalary: { name: string; value: number; accountIds: string[] }[] = [];
+    for (const item of pnlBreakdown) {
+      if (SALARY_RX.test(item.name)) {
+        salary.value += item.value;
+        salary.accountIds.push(...item.accountIds);
+        salary.members += 1;
+      } else {
+        nonSalary.push(item);
+      }
+    }
+
+    const all = salary.members > 0 ? [{ name: salary.name, value: salary.value, accountIds: salary.accountIds }, ...nonSalary] : nonSalary;
+    const total = all.reduce((sum, item) => sum + item.value, 0);
+    const sorted = all.filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
+
+    // Take categories from the smallest up while their sum stays below 10%.
+    let cut = sorted.length;
+    let otherSum = 0;
+    while (cut > 0 && otherSum + sorted[cut - 1].value < total * OTHER_MAX_SHARE) {
+      otherSum += sorted[cut - 1].value;
+      cut -= 1;
+    }
+    // One small category alone is shown by its own name, not as "Other".
+    if (sorted.length - cut === 1) cut = sorted.length;
+    const main = sorted.slice(0, cut);
+    const rest = sorted.slice(cut);
+
+    const out = main.map((item, i) => ({ ...item, colorIdx: i % OTHER_COLOR_IDX }));
+    const remaining = rest.reduce((sum, item) => sum + item.value, 0);
+    if (remaining > 0) {
+      out.push({ name: "Other", value: remaining, accountIds: rest.flatMap((item) => item.accountIds), colorIdx: OTHER_COLOR_IDX });
+    }
+    return out;
   }, [pnlBreakdown]);
+
+  function toggleExpense(name: string) {
+    setSelectedExpense((cur) => (cur === name ? null : name));
+    if (selectedExpense !== name) {
+      requestAnimationFrame(() => expenseDrilldownRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+  }
+
+  const selectedExpenseIdx = expenseComposition.findIndex((e) => e.name === selectedExpense);
+  const selectedExpenseItem = selectedExpenseIdx >= 0 ? expenseComposition[selectedExpenseIdx] : null;
 
   const expenseTotal = useMemo(() => expenseComposition.reduce((sum, item) => sum + item.value, 0), [expenseComposition]);
 
@@ -2514,16 +2579,33 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
             {/* EXPENSE BREAKDOWN: Donut + Ranked List */}
             <div className="mt-6">
-              <ChartCard title="Expense Composition" legend={expenseComposition.map((entry, idx) => ({ label: entry.name, color: DONUT_COLOR_CLASSES[idx % DONUT_COLOR_CLASSES.length] }))}>
+              <ChartCard title="Expense Composition" legend={expenseComposition.map((entry) => ({ label: entry.name, color: EXPENSE_COLOR_CLASSES[entry.colorIdx] }))}>
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                   {/* Donut chart */}
                   <div className="h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Tooltip content={<MoneyTooltip pie />} />
-                        <Pie data={expenseComposition} dataKey="value" nameKey="name" innerRadius={72} outerRadius={108} paddingAngle={2} cornerRadius={6}>
-                          {expenseComposition.map((_, i) => (
-                            <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
+                        <Pie
+                          data={expenseComposition}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={72}
+                          outerRadius={108}
+                          paddingAngle={2}
+                          cornerRadius={6}
+                          onClick={(entry: { name?: string }) => entry?.name && toggleExpense(entry.name)}
+                          className="cursor-pointer"
+                        >
+                          {expenseComposition.map((item, i) => (
+                            <Cell
+                              key={i}
+                              fill={EXPENSE_COLORS[item.colorIdx]}
+                              fillOpacity={selectedExpense && selectedExpense !== item.name ? 0.3 : 1}
+                              stroke={selectedExpense === item.name ? "#ffffff" : "none"}
+                              strokeWidth={selectedExpense === item.name ? 2 : 0}
+                              style={{ cursor: "pointer", transition: "fill-opacity 0.3s ease" }}
+                            />
                           ))}
                         </Pie>
                         <text x="50%" y="46%" textAnchor="middle" fill="rgba(148,163,184,0.8)" fontSize={10} letterSpacing="0.18em">TOTAL</text>
@@ -2534,27 +2616,63 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
                   {/* Ranked horizontal bars */}
                   <div className="flex flex-col justify-center gap-3 py-2">
-                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</div>
-                    {expenseComposition.map((item, idx) => {
+                    <div className="mb-1 flex items-baseline justify-between gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</span>
+                      <span className="text-[10px] text-slate-500">Click a category for its monthly analysis</span>
+                    </div>
+                    {expenseComposition.map((item) => {
                       const pct = expenseTotal > 0 ? (item.value / expenseTotal) * 100 : 0;
+                      const isSel = selectedExpense === item.name;
                       return (
-                        <div key={item.name}>
+                        <button
+                          type="button"
+                          key={item.name}
+                          onClick={() => toggleExpense(item.name)}
+                          aria-pressed={isSel}
+                          className={`-mx-2 rounded-xl px-2 py-1.5 text-left transition duration-200 hover:bg-white/[0.05] ${
+                            isSel ? "bg-white/[0.07] ring-1 ring-white/15" : ""
+                          } ${selectedExpense && !isSel ? "opacity-55 hover:opacity-100" : ""}`}
+                        >
                           <div className="mb-1 flex items-center justify-between">
                             <span className="flex items-center gap-1.5 text-xs text-slate-300">
-                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
+                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: EXPENSE_COLORS[item.colorIdx] }} />
                               {item.name}
                             </span>
                             <span className="text-xs font-semibold text-slate-200">{pct.toFixed(1)}% &middot; {formatPKRCompact(item.value)}</span>
                           </div>
                           <div className="h-1.5 w-full rounded-full bg-white/8">
-                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
+                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: EXPENSE_COLORS[item.colorIdx] }} />
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
                 </div>
               </ChartCard>
+            </div>
+
+            {/* EXPENSE DRILL-DOWN: shown only after a category is clicked */}
+            <div ref={expenseDrilldownRef} className="scroll-mt-6">
+              {selectedExpenseItem ? (
+                selectedExpenseItem.accountIds.length > 0 ? (
+                  <ExpenseDrilldown
+                    key={`${selectedExpenseItem.name}|${getNormalizedFilters(appliedFilters).start}|${getNormalizedFilters(appliedFilters).end}`}
+                    category={{
+                      name: selectedExpenseItem.name,
+                      value: selectedExpenseItem.value,
+                      color: EXPENSE_COLORS[selectedExpenseItem.colorIdx],
+                      accountIds: selectedExpenseItem.accountIds,
+                    }}
+                    start={getNormalizedFilters(appliedFilters).start}
+                    end={getNormalizedFilters(appliedFilters).end}
+                    onClose={() => setSelectedExpense(null)}
+                  />
+                ) : (
+                  <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
+                    QuickBooks did not return an account id for &quot;{selectedExpenseItem.name}&quot;, so its entries cannot be read.
+                  </div>
+                )
+              ) : null}
             </div>
 
             {/* KEY INSIGHTS STRIP */}
