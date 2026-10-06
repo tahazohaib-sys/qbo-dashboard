@@ -116,18 +116,52 @@ function cell(colData: any[], idx: number) {
 
 type GlLine = { accountId: string; accountName: string; name: string; entry: Entry };
 
-async function fetchMonthLines(
-  accountIds: string[],
-  w: { start: string; end: string },
-  method: string
-): Promise<GlLine[]> {
-  const columns = ["tx_date", "txn_type", "doc_num", "name", "memo", "account_name", "debt_amt", "credit_amt"].join(",");
-  const report = await qboFetch(
+type AmountCols = ["debt_amt", "credit_amt"] | ["debt_home_amt", "credit_home_amt"];
+const PLAIN_COLS: AmountCols = ["debt_amt", "credit_amt"];
+const HOME_COLS: AmountCols = ["debt_home_amt", "credit_home_amt"];
+
+/**
+ * Companies with multicurrency on expose the GL debit / credit in home
+ * currency as debt_home_amt / credit_home_amt instead of debt_amt /
+ * credit_amt. Pick the set from the company preferences.
+ */
+async function preferredAmountCols(): Promise<AmountCols> {
+  try {
+    const prefs = await qboFetch("preferences");
+    return prefs?.Preferences?.CurrencyPrefs?.MultiCurrencyEnabled === true ? HOME_COLS : PLAIN_COLS;
+  } catch {
+    return PLAIN_COLS;
+  }
+}
+
+async function fetchGl(accountIds: string[], w: { start: string; end: string }, method: string, amountCols: AmountCols) {
+  const columns = ["tx_date", "txn_type", "doc_num", "name", "memo", "account_name", ...amountCols].join(",");
+  return qboFetch(
     `reports/GeneralLedger?start_date=${encodeURIComponent(w.start)}&end_date=${encodeURIComponent(w.end)}` +
       `&accounting_method=${encodeURIComponent(method)}` +
       `&account=${encodeURIComponent(accountIds.join(","))}` +
       `&columns=${encodeURIComponent(columns)}`
   );
+}
+
+async function fetchMonthLines(
+  accountIds: string[],
+  w: { start: string; end: string },
+  method: string,
+  amountCols: AmountCols
+): Promise<GlLine[]> {
+  let report: any;
+  try {
+    report = await fetchGl(accountIds, w, method, amountCols);
+  } catch (e) {
+    // If the preferred amount columns are refused, try the other set once.
+    const other = amountCols === HOME_COLS ? PLAIN_COLS : HOME_COLS;
+    try {
+      report = await fetchGl(accountIds, w, method, other);
+    } catch {
+      throw e;
+    }
+  }
 
   const cols = getColumns(report);
   const iDate = findCol(cols, ["tx_date"], ["date"]);
@@ -136,8 +170,8 @@ async function fetchMonthLines(
   const iName = findCol(cols, ["name"], ["name"]);
   const iMemo = findCol(cols, ["memo"], ["memo/description", "memo", "description"]);
   const iAcct = findCol(cols, ["account_name"], ["account"]);
-  const iDebit = findCol(cols, ["debt_amt"], ["debit"]);
-  const iCredit = findCol(cols, ["credit_amt"], ["credit"]);
+  const iDebit = findCol(cols, ["debt_home_amt", "debt_amt"], ["debit"]);
+  const iCredit = findCol(cols, ["credit_home_amt", "credit_amt"], ["credit"]);
 
   const wanted = new Set(accountIds);
   const out: GlLine[] = [];
@@ -202,10 +236,11 @@ export async function GET(req: Request) {
     }
 
     const months = monthWindows(start, end);
+    const amountCols = await preferredAmountCols();
     const lines: GlLine[][] = new Array(months.length);
     for (let i = 0; i < months.length; i += MONTH_BATCH) {
       const batch = months.slice(i, i + MONTH_BATCH);
-      const res = await Promise.all(batch.map((w) => fetchMonthLines(accountIds, w, method)));
+      const res = await Promise.all(batch.map((w) => fetchMonthLines(accountIds, w, method, amountCols)));
       res.forEach((r, j) => (lines[i + j] = r));
     }
 
@@ -237,7 +272,7 @@ export async function GET(req: Request) {
         it.monthly[mi] += l.entry.amount;
         it.total += l.entry.amount;
         it.entryCount += 1;
-        if (it.entries.length < MAX_ENTRIES_PER_ITEM) it.entries.push(l.entry);
+        it.entries.push(l.entry);
       }
     });
 
@@ -251,9 +286,11 @@ export async function GET(req: Request) {
             ...it,
             monthly: it.monthly.map(round2),
             total: round2(it.total),
+            // Newest first, then cap, so the most recent entries are kept.
             entries: it.entries
               .map((e) => ({ ...e, amount: round2(e.amount) }))
-              .sort((x, y) => Date.parse(y.date) - Date.parse(x.date)),
+              .sort((x, y) => Date.parse(y.date) - Date.parse(x.date))
+              .slice(0, MAX_ENTRIES_PER_ITEM),
           }))
           .filter((it) => it.total !== 0 || it.monthly.some((v) => v !== 0))
           .sort((x, y) => y.total - x.total),
