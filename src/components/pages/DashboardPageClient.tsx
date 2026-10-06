@@ -1038,14 +1038,38 @@ export default function DashboardPage() {
         kpi.profit
       )}, with expenses exceeding revenue. Primary pressure remains in core fixed costs, so immediate focus should be on revenue realization and invoice coverage.`;
 
+  // 1) All salary accounts fold into one "Salary Expense" category.
+  // 2) Categories under 10% of total expenses fold into "Other" (shown last).
+  // 3) The rest are shown from high to low.
   const expenseComposition = useMemo(() => {
-    const sorted = [...pnlBreakdown].sort((a, b) => b.value - a.value);
-    const topSix = sorted.slice(0, 6);
-    const rest = sorted.slice(6);
+    const SALARY_RX = /salar|wage|payroll/i;
+    const OTHER_SHARE = 0.1;
+    const OTHER_COLOR_IDX = DONUT_COLORS.length - 1; // slate
+
+    const salary = { name: "Salary Expense", value: 0, accountIds: [] as string[], members: 0 };
+    const nonSalary: { name: string; value: number; accountIds: string[] }[] = [];
+    for (const item of pnlBreakdown) {
+      if (SALARY_RX.test(item.name)) {
+        salary.value += item.value;
+        salary.accountIds.push(...item.accountIds);
+        salary.members += 1;
+      } else {
+        nonSalary.push(item);
+      }
+    }
+
+    const all = salary.members > 0 ? [{ name: salary.name, value: salary.value, accountIds: salary.accountIds }, ...nonSalary] : nonSalary;
+    const total = all.reduce((sum, item) => sum + item.value, 0);
+    const sorted = all.sort((a, b) => b.value - a.value);
+    const main = sorted.filter((item) => total > 0 && item.value / total >= OTHER_SHARE);
+    const rest = sorted.filter((item) => !(total > 0 && item.value / total >= OTHER_SHARE));
+
+    const out = main.map((item, i) => ({ ...item, colorIdx: i % OTHER_COLOR_IDX }));
     const remaining = rest.reduce((sum, item) => sum + item.value, 0);
-    return remaining > 0
-      ? [...topSix, { name: "Other", value: remaining, accountIds: rest.flatMap((item) => item.accountIds) }]
-      : topSix;
+    if (remaining > 0) {
+      out.push({ name: "Other", value: remaining, accountIds: rest.flatMap((item) => item.accountIds), colorIdx: OTHER_COLOR_IDX });
+    }
+    return out;
   }, [pnlBreakdown]);
 
   function toggleExpense(name: string) {
@@ -2529,7 +2553,7 @@ export default function DashboardPage() {
 
             {/* EXPENSE BREAKDOWN: Donut + Ranked List */}
             <div className="mt-6">
-              <ChartCard title="Expense Composition" legend={expenseComposition.map((entry, idx) => ({ label: entry.name, color: DONUT_COLOR_CLASSES[idx % DONUT_COLOR_CLASSES.length] }))}>
+              <ChartCard title="Expense Composition" legend={expenseComposition.map((entry) => ({ label: entry.name, color: DONUT_COLOR_CLASSES[entry.colorIdx] }))}>
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                   {/* Donut chart */}
                   <div className="h-[300px]">
@@ -2550,7 +2574,7 @@ export default function DashboardPage() {
                           {expenseComposition.map((item, i) => (
                             <Cell
                               key={i}
-                              fill={DONUT_COLORS[i % DONUT_COLORS.length]}
+                              fill={DONUT_COLORS[item.colorIdx]}
                               fillOpacity={selectedExpense && selectedExpense !== item.name ? 0.3 : 1}
                               stroke={selectedExpense === item.name ? "#ffffff" : "none"}
                               strokeWidth={selectedExpense === item.name ? 2 : 0}
@@ -2570,7 +2594,7 @@ export default function DashboardPage() {
                       <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</span>
                       <span className="text-[10px] text-slate-500">Click a category for its monthly analysis</span>
                     </div>
-                    {expenseComposition.map((item, idx) => {
+                    {expenseComposition.map((item) => {
                       const pct = expenseTotal > 0 ? (item.value / expenseTotal) * 100 : 0;
                       const isSel = selectedExpense === item.name;
                       return (
@@ -2585,13 +2609,13 @@ export default function DashboardPage() {
                         >
                           <div className="mb-1 flex items-center justify-between">
                             <span className="flex items-center gap-1.5 text-xs text-slate-300">
-                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
+                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: DONUT_COLORS[item.colorIdx] }} />
                               {item.name}
                             </span>
                             <span className="text-xs font-semibold text-slate-200">{pct.toFixed(1)}% &middot; {formatPKRCompact(item.value)}</span>
                           </div>
                           <div className="h-1.5 w-full rounded-full bg-white/8">
-                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
+                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: DONUT_COLORS[item.colorIdx] }} />
                           </div>
                         </button>
                       );
@@ -2610,7 +2634,7 @@ export default function DashboardPage() {
                     category={{
                       name: selectedExpenseItem.name,
                       value: selectedExpenseItem.value,
-                      color: DONUT_COLORS[selectedExpenseIdx % DONUT_COLORS.length],
+                      color: DONUT_COLORS[selectedExpenseItem.colorIdx],
                       accountIds: selectedExpenseItem.accountIds,
                     }}
                     start={getNormalizedFilters(appliedFilters).start}
