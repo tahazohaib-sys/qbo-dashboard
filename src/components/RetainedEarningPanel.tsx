@@ -118,7 +118,7 @@ export default function RetainedEarningPanel({ data, loading }: { data: Retained
       {/* KPI tiles with change vs previous period */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi label="Net profit" value={profit} prev={prev?.netProfit} goodWhenUp accent={C.profit} note="Earned in the period (P&L)" />
-        <Kpi label="Asset purchases" value={assets} prev={prev?.longTermAssetsMovement} accent={C.deduct} note="Laptops, LEDs, vehicles" />
+        <Kpi label="Asset purchases" value={assets} prev={prev?.longTermAssetsMovement} accent={C.deduct} note="Fixed assets, without depreciation" />
         <Kpi
           label="Net investments"
           value={inv.netInvestments}
@@ -402,7 +402,7 @@ function BridgeTip({ active, payload }: { active?: boolean; payload?: Array<{ pa
   const s = payload[0].payload;
   const explain: Record<string, string> = {
     Profit: "Profit from the P&L for the period.",
-    Assets: "Increase in long-term assets (laptops, LEDs, vehicles).",
+    Assets: "Increase in fixed assets (all fixed-asset accounts, without depreciation).",
     Invested: "Money put into investments.",
     Received: "Contributions received back.",
     Retained: "What the company kept after all of the above.",

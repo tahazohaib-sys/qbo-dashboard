@@ -6,8 +6,10 @@ import {
   computeComponents,
   computeRatios,
   flattenRows,
+  isDepreciationAccount,
   netIncomeRow,
   toNum,
+  type FixedAssetFilter,
   type FlatRow,
   type MonthPoint,
   type PeriodSummary,
@@ -109,6 +111,32 @@ async function fetchMonthlyNetProfit(start: string, end: string, method: string)
   return out;
 }
 
+/**
+ * Ids of all "Fixed Asset" accounts (active and inactive), without
+ * accumulated depreciation / amortization. null when the list cannot be read.
+ */
+async function fetchFixedAssetFilter(): Promise<FixedAssetFilter> {
+  const run = async (where: string) => {
+    const q = `SELECT Id, Name, AccountSubType FROM Account WHERE ${where} MAXRESULTS 1000`;
+    const data = await qboFetch(`query?query=${encodeURIComponent(q)}`);
+    return (data?.QueryResponse?.Account ?? []) as Array<{ Id?: string; Name?: string; AccountSubType?: string }>;
+  };
+  try {
+    let rows: Array<{ Id?: string; Name?: string; AccountSubType?: string }>;
+    try {
+      rows = await run("AccountType = 'Fixed Asset' AND Active IN (true, false)");
+    } catch {
+      rows = await run("AccountType = 'Fixed Asset'");
+    }
+    const ids = new Set(
+      rows.filter((a) => a.Id && !isDepreciationAccount(String(a.Name ?? ""), String(a.AccountSubType ?? ""))).map((a) => String(a.Id))
+    );
+    return { ids };
+  } catch {
+    return { ids: null };
+  }
+}
+
 async function inBatches<T, R>(items: T[], fn: (t: T) => Promise<R>): Promise<R[]> {
   const out: R[] = [];
   for (let i = 0; i < items.length; i += BATCH) {
@@ -145,12 +173,13 @@ export async function GET(req: Request) {
     const prev = previousPeriod(start, monthWindows(start, end).length);
 
     // Period snapshots + P&L (same calculation as before)
-    const [endRows, priorRows, netProfit] = await Promise.all([
+    const [endRows, priorRows, netProfit, fixedAssets] = await Promise.all([
       fetchBalanceSheetRows(end, method),
       fetchBalanceSheetRows(prior, method),
       fetchNetProfit(start, end, method),
+      fetchFixedAssetFilter(),
     ]);
-    const c = computeComponents(endRows, priorRows, netProfit);
+    const c = computeComponents(endRows, priorRows, netProfit, fixedAssets);
 
     /* -------- Monthly breakdown (best effort) -------- */
     let monthly: MonthPoint[] = [];
@@ -169,7 +198,7 @@ export async function GET(req: Request) {
 
       let cumulative = 0;
       monthly = windows.map((w) => {
-        const mc = computeComponents(known.get(w.end)!, known.get(dayBefore(w.start))!, profitByMonth.get(w.key) ?? 0);
+        const mc = computeComponents(known.get(w.end)!, known.get(dayBefore(w.start))!, profitByMonth.get(w.key) ?? 0, fixedAssets);
         cumulative += mc.retainedEarning;
         return {
           month: w.key,
@@ -192,7 +221,7 @@ export async function GET(req: Request) {
         fetchBalanceSheetRows(dayBefore(prev.start), method),
         fetchNetProfit(prev.start, prev.end, method),
       ]);
-      const pc = computeComponents(priorRows, prevPriorRows, prevProfit);
+      const pc = computeComponents(priorRows, prevPriorRows, prevProfit, fixedAssets);
       previous = {
         start: prev.start,
         end: prev.end,
@@ -236,6 +265,7 @@ export async function GET(req: Request) {
         end: c.ltEnd,
         prior: c.ltPrior,
         method: "BalanceSheet snapshot: end - day_before_start",
+        source: fixedAssets.ids ? "All Fixed Asset accounts (without accumulated depreciation)" : "Fixed Assets section of the Balance Sheet (without depreciation rows)",
         detail: c.ltDetail,
       },
 

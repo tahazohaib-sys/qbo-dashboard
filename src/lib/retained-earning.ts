@@ -2,7 +2,8 @@
  * Retained Earning calculation and plain-language analysis.
  *
  *   Retained Earning = Net Profit
- *                    - movement of long-term assets (Laptop / LED / Vehicle)
+ *                    - movement of long-term assets (all Fixed Asset accounts,
+ *                      without accumulated depreciation / amortization)
  *                    - net investments (investments made - contributions received)
  *
  * All balance-sheet movements are "snapshot at end" minus "snapshot on the
@@ -84,8 +85,35 @@ export function netIncomeRow(rows: FlatRow[]) {
 
 /* ---------------- components ---------------- */
 
-// Long-term asset accounts, as named in QBO.
-export const LT_LABELS = ["Laptop", "LED", "Vehicle RTC League"];
+/**
+ * Which Balance Sheet rows count as long-term assets.
+ * - ids: QBO account ids of type "Fixed Asset", without accumulated
+ *   depreciation / amortization (from the Account list).
+ * - When the Account list could not be read (ids = null), Data rows in a
+ *   "Fixed Assets" section are used instead.
+ * Depreciation accounts are left out, so the movement shows real purchases
+ * and disposals, not the monthly depreciation charge.
+ */
+export type FixedAssetFilter = { ids: Set<string> | null };
+
+const DEPRECIATION_RX = /depreciation|amorti[sz]ation/i;
+
+export function isDepreciationAccount(name: string, subType = "") {
+  return DEPRECIATION_RX.test(name) || /Accumulated(Depreciation|Amortization|Depletion)/i.test(subType);
+}
+
+function isFixedAssetRow(r: FlatRow, filter: FixedAssetFilter) {
+  if (r.type !== "Data") return false;
+  if (isDepreciationAccount(r.label)) return false;
+  const id = r.cols?.[0]?.id;
+  if (filter.ids) return id != null && filter.ids.has(String(id));
+  return /fixed\s*assets?|property,?\s*plant/i.test(r.path);
+}
+
+function fixedAssetKey(r: FlatRow) {
+  const id = r.cols?.[0]?.id;
+  return id != null ? `id:${id}` : `label:${norm(r.label)}`;
+}
 
 export type InvItem = { label: string; amount: number; type: "investment" | "contribution" };
 
@@ -103,12 +131,32 @@ export type Components = {
 };
 
 /** Components between two balance-sheet snapshots, plus the P&L net profit. */
-export function computeComponents(endRows: FlatRow[], priorRows: FlatRow[], netProfit: number): Components {
-  const ltDetail = LT_LABELS.map((label) => {
-    const endVal = totalOf(findRowByLabel(endRows, [label]));
-    const priorVal = totalOf(findRowByLabel(priorRows, [label]));
-    return { label, end: endVal, prior: priorVal, movement: endVal - priorVal };
-  }).filter((x) => x.end !== 0 || x.prior !== 0 || x.movement !== 0);
+export function computeComponents(
+  endRows: FlatRow[],
+  priorRows: FlatRow[],
+  netProfit: number,
+  fixedAssets: FixedAssetFilter = { ids: null }
+): Components {
+  // Every fixed-asset account found in either snapshot (an account can be new or closed in the period).
+  const assetMap = new Map<string, { label: string; end: number; prior: number }>();
+  for (const r of endRows) {
+    if (!isFixedAssetRow(r, fixedAssets)) continue;
+    const k = fixedAssetKey(r);
+    const cur = assetMap.get(k) ?? { label: r.label, end: 0, prior: 0 };
+    cur.end += totalOf(r);
+    assetMap.set(k, cur);
+  }
+  for (const r of priorRows) {
+    if (!isFixedAssetRow(r, fixedAssets)) continue;
+    const k = fixedAssetKey(r);
+    const cur = assetMap.get(k) ?? { label: r.label, end: 0, prior: 0 };
+    cur.prior += totalOf(r);
+    assetMap.set(k, cur);
+  }
+  const ltDetail = Array.from(assetMap.values())
+    .map((x) => ({ label: x.label, end: x.end, prior: x.prior, movement: x.end - x.prior }))
+    .filter((x) => x.end !== 0 || x.prior !== 0 || x.movement !== 0)
+    .sort((a, b) => Math.abs(b.movement) - Math.abs(a.movement) || b.end - a.end);
 
   const ltEnd = ltDetail.reduce((s, x) => s + x.end, 0);
   const ltPrior = ltDetail.reduce((s, x) => s + x.prior, 0);
