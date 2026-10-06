@@ -3,6 +3,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import ExpenseDrilldown from "@/components/ExpenseDrilldown";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -41,6 +42,7 @@ type PnlRow = {
   rowType: "Section" | "Data";
   label: string;
   amount: number;
+  accountId?: string;
 };
 
 type PnlTableResp = {
@@ -529,7 +531,9 @@ export default function DashboardPage() {
 
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<DashboardResp | null>(null);
-  const [pnlBreakdown, setPnlBreakdown] = useState<{ name: string; value: number }[]>([]);
+  const [pnlBreakdown, setPnlBreakdown] = useState<{ name: string; value: number; accountIds: string[] }[]>([]);
+  const [selectedExpense, setSelectedExpense] = useState<string | null>(null);
+  const expenseDrilldownRef = useRef<HTMLDivElement | null>(null);
   const [cashBanks, setCashBanks] = useState<CashBanksResp | null>(null);
 
   const [selectedAccount, setSelectedAccount] = useState<CashBankAccount | null>(null);
@@ -777,10 +781,15 @@ export default function DashboardPage() {
         return p.startsWith("P&L > Expenses") || p.startsWith("P&L > Other Expenses");
       });
 
-      const map = new Map<string, number>();
-      for (const r of expenseRows) map.set(r.label, (map.get(r.label) ?? 0) + (r.amount ?? 0));
+      const map = new Map<string, { value: number; ids: Set<string> }>();
+      for (const r of expenseRows) {
+        const cur = map.get(r.label) ?? { value: 0, ids: new Set<string>() };
+        cur.value += r.amount ?? 0;
+        if (r.accountId) cur.ids.add(r.accountId);
+        map.set(r.label, cur);
+      }
       const sorted = Array.from(map.entries())
-        .map(([name, value]) => ({ name, value }))
+        .map(([name, { value, ids }]) => ({ name, value, accountIds: Array.from(ids) }))
         .filter(({ value }) => value > 0)
         .sort((a, b) => b.value - a.value);
       const nextBreakdown = sorted;
@@ -1032,9 +1041,22 @@ export default function DashboardPage() {
   const expenseComposition = useMemo(() => {
     const sorted = [...pnlBreakdown].sort((a, b) => b.value - a.value);
     const topSix = sorted.slice(0, 6);
-    const remaining = sorted.slice(6).reduce((sum, item) => sum + item.value, 0);
-    return remaining > 0 ? [...topSix, { name: "Other", value: remaining }] : topSix;
+    const rest = sorted.slice(6);
+    const remaining = rest.reduce((sum, item) => sum + item.value, 0);
+    return remaining > 0
+      ? [...topSix, { name: "Other", value: remaining, accountIds: rest.flatMap((item) => item.accountIds) }]
+      : topSix;
   }, [pnlBreakdown]);
+
+  function toggleExpense(name: string) {
+    setSelectedExpense((cur) => (cur === name ? null : name));
+    if (selectedExpense !== name) {
+      requestAnimationFrame(() => expenseDrilldownRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+  }
+
+  const selectedExpenseIdx = expenseComposition.findIndex((e) => e.name === selectedExpense);
+  const selectedExpenseItem = selectedExpenseIdx >= 0 ? expenseComposition[selectedExpenseIdx] : null;
 
   const expenseTotal = useMemo(() => expenseComposition.reduce((sum, item) => sum + item.value, 0), [expenseComposition]);
 
@@ -2514,9 +2536,26 @@ export default function DashboardPage() {
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Tooltip content={<MoneyTooltip pie />} />
-                        <Pie data={expenseComposition} dataKey="value" nameKey="name" innerRadius={72} outerRadius={108} paddingAngle={2} cornerRadius={6}>
-                          {expenseComposition.map((_, i) => (
-                            <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
+                        <Pie
+                          data={expenseComposition}
+                          dataKey="value"
+                          nameKey="name"
+                          innerRadius={72}
+                          outerRadius={108}
+                          paddingAngle={2}
+                          cornerRadius={6}
+                          onClick={(entry: { name?: string }) => entry?.name && toggleExpense(entry.name)}
+                          className="cursor-pointer"
+                        >
+                          {expenseComposition.map((item, i) => (
+                            <Cell
+                              key={i}
+                              fill={DONUT_COLORS[i % DONUT_COLORS.length]}
+                              fillOpacity={selectedExpense && selectedExpense !== item.name ? 0.3 : 1}
+                              stroke={selectedExpense === item.name ? "#ffffff" : "none"}
+                              strokeWidth={selectedExpense === item.name ? 2 : 0}
+                              style={{ cursor: "pointer", transition: "fill-opacity 0.3s ease" }}
+                            />
                           ))}
                         </Pie>
                         <text x="50%" y="46%" textAnchor="middle" fill="rgba(148,163,184,0.8)" fontSize={10} letterSpacing="0.18em">TOTAL</text>
@@ -2527,11 +2566,23 @@ export default function DashboardPage() {
 
                   {/* Ranked horizontal bars */}
                   <div className="flex flex-col justify-center gap-3 py-2">
-                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</div>
+                    <div className="mb-1 flex items-baseline justify-between gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Breakdown by Category</span>
+                      <span className="text-[10px] text-slate-500">Click a category for its monthly analysis</span>
+                    </div>
                     {expenseComposition.map((item, idx) => {
                       const pct = expenseTotal > 0 ? (item.value / expenseTotal) * 100 : 0;
+                      const isSel = selectedExpense === item.name;
                       return (
-                        <div key={item.name}>
+                        <button
+                          type="button"
+                          key={item.name}
+                          onClick={() => toggleExpense(item.name)}
+                          aria-pressed={isSel}
+                          className={`-mx-2 rounded-xl px-2 py-1.5 text-left transition duration-200 hover:bg-white/[0.05] ${
+                            isSel ? "bg-white/[0.07] ring-1 ring-white/15" : ""
+                          } ${selectedExpense && !isSel ? "opacity-55 hover:opacity-100" : ""}`}
+                        >
                           <div className="mb-1 flex items-center justify-between">
                             <span className="flex items-center gap-1.5 text-xs text-slate-300">
                               <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
@@ -2542,12 +2593,36 @@ export default function DashboardPage() {
                           <div className="h-1.5 w-full rounded-full bg-white/8">
                             <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: DONUT_COLORS[idx % DONUT_COLORS.length] }} />
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
                 </div>
               </ChartCard>
+            </div>
+
+            {/* EXPENSE DRILL-DOWN: shown only after a category is clicked */}
+            <div ref={expenseDrilldownRef} className="scroll-mt-6">
+              {selectedExpenseItem ? (
+                selectedExpenseItem.accountIds.length > 0 ? (
+                  <ExpenseDrilldown
+                    key={`${selectedExpenseItem.name}|${getNormalizedFilters(appliedFilters).start}|${getNormalizedFilters(appliedFilters).end}`}
+                    category={{
+                      name: selectedExpenseItem.name,
+                      value: selectedExpenseItem.value,
+                      color: DONUT_COLORS[selectedExpenseIdx % DONUT_COLORS.length],
+                      accountIds: selectedExpenseItem.accountIds,
+                    }}
+                    start={getNormalizedFilters(appliedFilters).start}
+                    end={getNormalizedFilters(appliedFilters).end}
+                    onClose={() => setSelectedExpense(null)}
+                  />
+                ) : (
+                  <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
+                    QuickBooks did not return an account id for &quot;{selectedExpenseItem.name}&quot;, so its entries cannot be read.
+                  </div>
+                )
+              ) : null}
             </div>
 
             {/* KEY INSIGHTS STRIP */}

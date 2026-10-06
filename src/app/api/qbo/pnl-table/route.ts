@@ -15,6 +15,7 @@ type RowItem = {
   rowType: string;       // Section / Data / Summary etc.
   label: string;         // row name
   amount: number;        // numeric value
+  accountId?: string;    // QBO account id (Data rows)
 };
 
 function normalizeLabel(v: any) {
@@ -49,11 +50,13 @@ function flattenRows(rows: any, currentPath: string, out: RowItem[]) {
 
     // Only include meaningful rows (label exists)
     if (label) {
+      const id = r?.ColData?.[0]?.id;
       out.push({
         path: currentPath,
         rowType: rowType || "unknown",
         label,
         amount,
+        ...(id != null ? { accountId: String(id) } : {}),
       });
     }
 
