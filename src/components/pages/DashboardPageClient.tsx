@@ -346,7 +346,10 @@ const DONUT_COLORS = [
   "#94a3b8",
 ];
 
-const DONUT_COLOR_CLASSES = [
+// Expense Composition palette: the donut hues, 4 more, and slate last for "Other".
+// The two lists stay index-aligned (hex for charts, Tailwind class for the legend).
+const EXPENSE_COLORS = ["#60a5fa", "#34d399", "#fbbf24", "#a78bfa", "#fb7185", "#22d3ee", "#f97316", "#f472b6", "#a3e635", "#2dd4bf", "#818cf8", "#94a3b8"];
+const EXPENSE_COLOR_CLASSES = [
   "bg-blue-400",
   "bg-emerald-400",
   "bg-amber-300",
@@ -354,8 +357,13 @@ const DONUT_COLOR_CLASSES = [
   "bg-rose-400",
   "bg-cyan-300",
   "bg-orange-400",
+  "bg-pink-400",
+  "bg-lime-400",
+  "bg-teal-400",
+  "bg-indigo-400",
   "bg-slate-400",
 ];
+
 
 type TabKey = "pnl" | "cash" | "retained" | "forecast" | "revenue" | "arAp";
 type AppliedFilter = {
@@ -1039,12 +1047,13 @@ export default function DashboardPage() {
       )}, with expenses exceeding revenue. Primary pressure remains in core fixed costs, so immediate focus should be on revenue realization and invoice coverage.`;
 
   // 1) All salary accounts fold into one "Salary Expense" category.
-  // 2) Categories under 10% of total expenses fold into "Other" (shown last).
-  // 3) The rest are shown from high to low.
+  // 2) Categories are shown from high to low.
+  // 3) "Other" holds only the smallest categories, and together they stay
+  //    below 10% of total expenses. It is shown last.
   const expenseComposition = useMemo(() => {
     const SALARY_RX = /salar|wage|payroll/i;
-    const OTHER_SHARE = 0.1;
-    const OTHER_COLOR_IDX = DONUT_COLORS.length - 1; // slate
+    const OTHER_MAX_SHARE = 0.1;
+    const OTHER_COLOR_IDX = EXPENSE_COLORS.length - 1; // slate
 
     const salary = { name: "Salary Expense", value: 0, accountIds: [] as string[], members: 0 };
     const nonSalary: { name: string; value: number; accountIds: string[] }[] = [];
@@ -1060,9 +1069,19 @@ export default function DashboardPage() {
 
     const all = salary.members > 0 ? [{ name: salary.name, value: salary.value, accountIds: salary.accountIds }, ...nonSalary] : nonSalary;
     const total = all.reduce((sum, item) => sum + item.value, 0);
-    const sorted = all.sort((a, b) => b.value - a.value);
-    const main = sorted.filter((item) => total > 0 && item.value / total >= OTHER_SHARE);
-    const rest = sorted.filter((item) => !(total > 0 && item.value / total >= OTHER_SHARE));
+    const sorted = all.filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
+
+    // Take categories from the smallest up while their sum stays below 10%.
+    let cut = sorted.length;
+    let otherSum = 0;
+    while (cut > 0 && otherSum + sorted[cut - 1].value < total * OTHER_MAX_SHARE) {
+      otherSum += sorted[cut - 1].value;
+      cut -= 1;
+    }
+    // One small category alone is shown by its own name, not as "Other".
+    if (sorted.length - cut === 1) cut = sorted.length;
+    const main = sorted.slice(0, cut);
+    const rest = sorted.slice(cut);
 
     const out = main.map((item, i) => ({ ...item, colorIdx: i % OTHER_COLOR_IDX }));
     const remaining = rest.reduce((sum, item) => sum + item.value, 0);
@@ -2553,7 +2572,7 @@ export default function DashboardPage() {
 
             {/* EXPENSE BREAKDOWN: Donut + Ranked List */}
             <div className="mt-6">
-              <ChartCard title="Expense Composition" legend={expenseComposition.map((entry) => ({ label: entry.name, color: DONUT_COLOR_CLASSES[entry.colorIdx] }))}>
+              <ChartCard title="Expense Composition" legend={expenseComposition.map((entry) => ({ label: entry.name, color: EXPENSE_COLOR_CLASSES[entry.colorIdx] }))}>
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                   {/* Donut chart */}
                   <div className="h-[300px]">
@@ -2574,7 +2593,7 @@ export default function DashboardPage() {
                           {expenseComposition.map((item, i) => (
                             <Cell
                               key={i}
-                              fill={DONUT_COLORS[item.colorIdx]}
+                              fill={EXPENSE_COLORS[item.colorIdx]}
                               fillOpacity={selectedExpense && selectedExpense !== item.name ? 0.3 : 1}
                               stroke={selectedExpense === item.name ? "#ffffff" : "none"}
                               strokeWidth={selectedExpense === item.name ? 2 : 0}
@@ -2609,13 +2628,13 @@ export default function DashboardPage() {
                         >
                           <div className="mb-1 flex items-center justify-between">
                             <span className="flex items-center gap-1.5 text-xs text-slate-300">
-                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: DONUT_COLORS[item.colorIdx] }} />
+                              <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: EXPENSE_COLORS[item.colorIdx] }} />
                               {item.name}
                             </span>
                             <span className="text-xs font-semibold text-slate-200">{pct.toFixed(1)}% &middot; {formatPKRCompact(item.value)}</span>
                           </div>
                           <div className="h-1.5 w-full rounded-full bg-white/8">
-                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: DONUT_COLORS[item.colorIdx] }} />
+                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: EXPENSE_COLORS[item.colorIdx] }} />
                           </div>
                         </button>
                       );
@@ -2634,7 +2653,7 @@ export default function DashboardPage() {
                     category={{
                       name: selectedExpenseItem.name,
                       value: selectedExpenseItem.value,
-                      color: DONUT_COLORS[selectedExpenseItem.colorIdx],
+                      color: EXPENSE_COLORS[selectedExpenseItem.colorIdx],
                       accountIds: selectedExpenseItem.accountIds,
                     }}
                     start={getNormalizedFilters(appliedFilters).start}
