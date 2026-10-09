@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AUTH_COOKIE, createSessionToken, isAdminEmail, SESSION_MAX_AGE_SECONDS } from "@/lib/auth";
+import { AUTH_COOKIE, createSessionToken, isAdminEmail, SESSION_MAX_AGE_SECONDS, sessionCookieOptions } from "@/lib/auth";
 import { consumeLoginVerificationCode } from "@/lib/auth-db";
 
 export async function POST(req: Request) {
@@ -15,13 +15,7 @@ export async function POST(req: Request) {
 
     const isAdmin = isAdminEmail(user.email);
     const res = NextResponse.json({ ok: true, isAdmin });
-    res.cookies.set(AUTH_COOKIE, createSessionToken({ sub: user.id, email: user.email, isAdmin }), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: SESSION_MAX_AGE_SECONDS,
-    });
+    res.cookies.set(AUTH_COOKIE, createSessionToken({ sub: user.id, email: user.email, isAdmin }), sessionCookieOptions(SESSION_MAX_AGE_SECONDS));
     return res;
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Verification failed." }, { status: 500 });

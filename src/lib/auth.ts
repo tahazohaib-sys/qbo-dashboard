@@ -71,6 +71,17 @@ export function verifySessionToken(token: string | undefined): SessionPayload | 
   }
 }
 
+/** Cookie options for the dashboard session (set on login, cleared on logout). */
+export function sessionCookieOptions(maxAge: number) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge,
+  };
+}
+
 export async function getCurrentSession() {
   const cookieStore = await cookies();
   return verifySessionToken(cookieStore.get(AUTH_COOKIE)?.value);

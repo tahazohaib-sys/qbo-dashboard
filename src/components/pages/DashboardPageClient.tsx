@@ -944,9 +944,10 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
     await runActiveTabLoad(tab, nextFilters);
   }
 
-  async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.href = "/login";
+  /** Refresh: drop the stored data so the current tab loads fresh data from QuickBooks. */
+  async function refreshNow() {
+    moduleCacheRef.current.clear();
+    await applyFilters();
   }
 
   useEffect(() => {
@@ -1355,7 +1356,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={applyFilters}
+              type="button"
+              onClick={refreshNow}
               className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 active:scale-[0.99]"
               disabled={loading}
             >
@@ -1371,12 +1373,15 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
               </Link>
             ) : null}
 
-            <button
-              onClick={logout}
-              className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:border-rose-300/25 hover:bg-rose-400/10 active:scale-[0.99]"
-            >
-              Logout
-            </button>
+            {/* A plain form, so Logout works even before the page scripts have loaded. */}
+            <form method="post" action="/api/auth/logout">
+              <button
+                type="submit"
+                className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:border-rose-300/25 hover:bg-rose-400/10 active:scale-[0.99]"
+              >
+                Logout
+              </button>
+            </form>
           </div>
         </div>
 

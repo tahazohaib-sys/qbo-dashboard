@@ -80,8 +80,14 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
     <div className="rounded-[30px] border border-white/10 bg-slate-950/72 p-5 shadow-[0_36px_120px_rgba(0,0,0,.48)] backdrop-blur-2xl sm:p-6">
       <div className="flex flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-xs font-black uppercase tracking-[0.3em] text-cyan-200/80">Admin Console</p>
+          <a href="/dashboard" className="text-xs font-bold text-slate-400 transition hover:text-white">
+            ← Back to dashboard
+          </a>
+          <p className="mt-3 text-xs font-black uppercase tracking-[0.3em] text-cyan-200/80">Admin Console</p>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Access Management</h1>
+          <p className="mt-2 max-w-xl text-sm text-slate-400">
+            Every email that asked for access. Revoke removes dashboard access at once; Approve gives it back.
+          </p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex">
           {[

@@ -37,7 +37,8 @@ function LoginForm() {
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Request failed.");
 
-      if (awaitingCode) {
+      // Signed in: after the code on a first login, or with email + password afterwards.
+      if (awaitingCode || json.needsCode === false) {
         router.push(next);
         router.refresh();
         return;
@@ -209,7 +210,7 @@ function LoginForm() {
             <span className="text-white">Login</span>
           </h1>
           <p className="mt-7 max-w-xl text-lg leading-8 text-slate-300/90">
-            Continue only after your email has been approved. Your password and one-time code keep the finance dashboard protected.
+            Continue only after your email has been approved. Your first sign-in is confirmed with a one-time code sent to your email; after that, your email and password are enough.
           </p>
           <div className="mt-9 flex max-w-xl items-center gap-4">
             <div className="flex-1 rounded-[24px] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-sm transition duration-300 hover:border-cyan-200/25 hover:bg-white/[0.06]">
@@ -245,7 +246,7 @@ function LoginForm() {
             <p className="mt-3 text-sm leading-6 text-slate-300">
               {awaitingCode
                 ? "Enter the six-digit code sent to your approved email address."
-                : "Use your approved email and password. On your first approved login, the password you enter will be saved."}
+                : "Use your approved email and password. On your first login, the password you enter is saved after you confirm the code we email you."}
             </p>
           </div>
 
