@@ -518,7 +518,7 @@ function WorldMapVideoBackground(): React.JSX.Element {
   );
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const years = useMemo(() => ymOptions(6), []);
   const now = new Date();
 
@@ -960,6 +960,11 @@ export default function DashboardPage() {
     const nextFilters: AppliedFilter = { fromYear, fromMonth, toYear, toMonth, method };
     setAppliedFilters(nextFilters);
     await runActiveTabLoad(tab, nextFilters);
+  }
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
   }
 
   useEffect(() => {
@@ -1458,6 +1463,22 @@ export default function DashboardPage() {
               disabled={loading}
             >
               {loading ? "Refreshing..." : "Refresh"}
+            </button>
+
+            {isAdmin ? (
+              <Link
+                href="/admin/access"
+                className="rounded-xl border border-emerald-300/25 bg-emerald-400/15 px-4 py-2 text-sm font-semibold text-emerald-50 hover:bg-emerald-400/20 active:scale-[0.99]"
+              >
+                Manage Access
+              </Link>
+            ) : null}
+
+            <button
+              onClick={logout}
+              className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:border-rose-300/25 hover:bg-rose-400/10 active:scale-[0.99]"
+            >
+              Logout
             </button>
           </div>
         </div>

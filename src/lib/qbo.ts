@@ -1,5 +1,8 @@
 import { getTokens, saveTokens } from "@/lib/db";
 
+// Short-lived cookie that ties the QuickBooks OAuth callback to the browser that started it (CSRF protection).
+export const QBO_STATE_COOKIE = "qbo_oauth_state";
+
 function mustEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env var: ${name}`);
