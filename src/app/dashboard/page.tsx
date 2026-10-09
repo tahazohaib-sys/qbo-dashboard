@@ -1,4 +1,6 @@
 import dynamic from "next/dynamic";
+import { getCurrentSession, isAdminEmail } from "@/lib/auth";
+import { findUserById } from "@/lib/auth-db";
 
 const DashboardPageClient = dynamic(() => import("@/components/pages/DashboardPageClient"), {
   loading: () => (
@@ -16,6 +18,10 @@ const DashboardPageClient = dynamic(() => import("@/components/pages/DashboardPa
   ),
 });
 
-export default function DashboardPage() {
-  return <DashboardPageClient />;
+export default async function DashboardPage() {
+  const session = await getCurrentSession();
+  const user = session ? await findUserById(session.sub) : null;
+  const isAdmin = Boolean(user?.status === "approved" && isAdminEmail(user.email));
+
+  return <DashboardPageClient isAdmin={isAdmin} />;
 }
