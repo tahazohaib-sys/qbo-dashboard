@@ -16,6 +16,60 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Dashboard Login Approval
+
+The dashboard is protected by an approval-first login flow:
+
+- A new user opens `/login`, enters only their email, and clicks Request Access.
+- An approval email is sent to `taha.zohaib@rtcleague.com` with Approve and Reject buttons.
+- Until Taha approves the email, the user cannot log in.
+- After approval, the user opens `/login`, enters the approved email and a password.
+- On the first approved login, that password is saved for the user.
+- A six-digit login code is sent to the approved email.
+- The dashboard session is created only after the user enters the correct login code.
+- Rejected, pending, and unapproved emails are blocked from dashboard access.
+
+Required production environment variables:
+
+```bash
+AUTH_SECRET="replace-with-a-long-random-secret"
+NEXT_PUBLIC_APP_URL="https://your-dashboard-domain.com"
+DATABASE_URL="postgresql://..."
+AUTH_APPROVER_EMAIL="taha.zohaib@rtcleague.com"
+```
+
+Configure one email sender before production use. If no sender is configured, approval links and login codes are returned/logged for testing.
+
+Option 1: SMTP with Gmail, no custom domain required:
+
+```bash
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT="465"
+SMTP_USER="your-gmail-address@gmail.com"
+SMTP_PASS="your-google-app-password"
+AUTH_EMAIL_FROM="QBO Dashboard <your-gmail-address@gmail.com>"
+```
+
+For Gmail, enable 2-Step Verification on the Google account, create an app password, and use that app password as `SMTP_PASS`. Do not use your normal Gmail password.
+
+Option 2: Resend, best when you have a verified sending domain:
+
+```bash
+RESEND_API_KEY="your-resend-api-key"
+AUTH_EMAIL_FROM="QBO Dashboard <your-verified-sender@your-domain.com>"
+```
+
+### Free domain / URL option
+
+You do not need to buy a custom domain to deploy this dashboard. The simplest free option is Vercel:
+
+1. Import this GitHub repo into Vercel.
+2. Deploy the `Test-Module` branch, or merge it into your production branch and deploy that branch.
+3. Vercel gives a free URL like `https://your-project-name.vercel.app`.
+4. Set `NEXT_PUBLIC_APP_URL` to that exact Vercel URL so approval links open the correct deployed dashboard.
+
+A free Vercel subdomain is enough for the dashboard URL. If you do not want to buy a domain yet, use the Gmail SMTP settings above for verification and approval emails.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
