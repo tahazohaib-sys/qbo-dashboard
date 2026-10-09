@@ -578,10 +578,6 @@ export default function DashboardPage() {
   const [customAmount, setCustomAmount] = useState<string>("");
 
   const [err, setErr] = useState<string>("");
-  const [lastUpdated, setLastUpdated] = useState("--:--:--");
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const applyFiltersRef = useRef<() => Promise<void>>(async () => {});
   const requestIdRef = useRef(0);
   const moduleCacheRef = useRef<Map<string, any>>(new Map());
   const hasInitializedRef = useRef(false);
@@ -742,10 +738,6 @@ export default function DashboardPage() {
     return [tabKey, fy, fm, ty, tm, filters.method, ...extras].join("|");
   }
 
-  function setLastUpdatedNow() {
-    setLastUpdated(new Date().toLocaleTimeString("en-GB", { hour12: false }));
-  }
-
   function shouldApplyRequest(requestId: number) {
     return requestId === requestIdRef.current;
   }
@@ -763,7 +755,6 @@ export default function DashboardPage() {
         if (!shouldApplyRequest(requestId)) return;
         setData(cached.dashboard);
         setPnlBreakdown(cached.pnlBreakdown);
-        setLastUpdatedNow();
         return;
       }
 
@@ -806,7 +797,6 @@ export default function DashboardPage() {
       if (!shouldApplyRequest(requestId)) return;
       setData(dashJson);
       setPnlBreakdown(nextBreakdown);
-      setLastUpdatedNow();
       return;
     }
 
@@ -818,7 +808,6 @@ export default function DashboardPage() {
         if (!shouldApplyRequest(requestId)) return;
         setCashBanks(cached.cashBanks);
         setTxns(cached.txns);
-        setLastUpdatedNow();
         return;
       }
 
@@ -831,7 +820,6 @@ export default function DashboardPage() {
       if (!shouldApplyRequest(requestId)) return;
       setCashBanks(cbJson);
       setTxns(txRes);
-      setLastUpdatedNow();
       return;
     }
 
@@ -841,7 +829,6 @@ export default function DashboardPage() {
       if (cached) {
         if (!shouldApplyRequest(requestId)) return;
         setRetained(cached.retained);
-        setLastUpdatedNow();
         return;
       }
 
@@ -855,7 +842,6 @@ export default function DashboardPage() {
       moduleCacheRef.current.set(key, { retained: nextRetained });
       if (!shouldApplyRequest(requestId)) return;
       setRetained(nextRetained);
-      setLastUpdatedNow();
       return;
     }
 
@@ -868,7 +854,6 @@ export default function DashboardPage() {
         setMonthlyArAp(cached.monthlySeries);
         setArApCustomRows(cached.customRows);
         setArApCustomErr(cached.customErr ?? "");
-        setLastUpdatedNow();
         return;
       }
 
@@ -886,7 +871,6 @@ export default function DashboardPage() {
       setMonthlyArAp(arApResp.monthlySeries);
       setArApCustomRows(customRowsSettled.rows);
       setArApCustomErr(customRowsSettled.error);
-      setLastUpdatedNow();
       return;
     }
 
@@ -898,7 +882,6 @@ export default function DashboardPage() {
         setData(cached.dashboard);
         setForecastData(cached.forecastData);
         setForecastCashPKR(cached.cashPKR ?? null);
-        setLastUpdatedNow();
         return;
       }
 
@@ -929,7 +912,6 @@ export default function DashboardPage() {
       setData(dashJson);
       setForecastData(nextForecast);
       setForecastCashPKR(cashPKR);
-      setLastUpdatedNow();
     }
   }
 
@@ -963,10 +945,6 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    applyFiltersRef.current = applyFilters;
-  });
-
-  useEffect(() => {
     applyFilters();
     hasInitializedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -994,39 +972,6 @@ export default function DashboardPage() {
     runActiveTabLoad("forecast", appliedFilters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forecastHorizon]);
-
-  useEffect(() => {
-    if (!autoRefresh) {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-      return;
-    }
-
-    const runRefresh = () => {
-      if (document.visibilityState === "visible") {
-        applyFiltersRef.current();
-      }
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        runRefresh();
-      }
-    };
-
-    refreshTimerRef.current = setInterval(runRefresh, 30_000);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [autoRefresh]);
 
   const series = data?.series ?? [];
   const kpi = data?.kpis?.ytd ?? { revenue: 0, expenses: 0, profit: 0 };
@@ -1123,11 +1068,6 @@ export default function DashboardPage() {
     ? series.reduce((best, s) => s.profit > best.profit ? s : best, series[0])
     : { month: "—", profit: 0 };
   const expenseRatio: number | null = kpi.revenue > 0 ? kpi.expenses / kpi.revenue : null;
-
-  const headerAsOf = useMemo(() => {
-    if (!data?.asOf) return "";
-    return new Date(data.asOf).toLocaleString();
-  }, [data?.asOf]);
 
   const currencyTotals = useMemo(() => {
     const t = cashBanks?.totalsByCurrency ?? {};
@@ -1405,53 +1345,10 @@ export default function DashboardPage() {
       <div className="pointer-events-none absolute top-1/3 -left-16 h-56 w-56 rounded-full bg-emerald-400/15 blur-3xl" />
 
       <div className="relative z-10 mx-auto max-w-7xl px-5 py-8">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="relative h-12 w-12 shrink-0">
-              <Image src="/logo.png" alt="RTC League Logo" fill className="object-contain" priority />
-            </div>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <BrandTitle />
 
-            <div>
-              <h1 className="text-[26px] font-semibold tracking-tight text-white">Finance Dashboard</h1>
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100">
-              <span className="relative inline-flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300/60 motion-reduce:animate-none" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300" />
-              </span>
-              <span className="font-semibold uppercase tracking-[0.14em]">Live</span>
-              <span className="text-emerald-100/80">Last updated: {lastUpdated}</span>
-            </div>
-
-            <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
-              <div className="font-medium text-slate-200">
-                Company: {data?.companyName ?? "—"} ({data?.currency ?? "PKR"})
-              </div>
-              <div className="opacity-80">As of: {headerAsOf || "—"}</div>
-            </div>
-
-            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200">
-              <span className="uppercase tracking-[0.12em]">Auto refresh</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={autoRefresh}
-                onClick={() => setAutoRefresh((prev) => !prev)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
-                  autoRefresh ? "border-cyan-300/50 bg-cyan-400/30" : "border-white/15 bg-white/10"
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
-                    autoRefresh ? "translate-x-5" : "translate-x-1"
-                  }`}
-                />
-              </button>
-            </label>
-
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={applyFilters}
               className="rounded-xl border border-white/10 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 active:scale-[0.99]"
@@ -3650,6 +3547,74 @@ function Collapse({ show, children }: { show: boolean; children: React.ReactNode
       ].join(" ")}
     >
       <div className="overflow-hidden">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Header brand: the wide RTC League logo floats slowly behind the
+ * "Finance Dashboard" title. The logo stays visible (soft glow, partial
+ * opacity) and the title stays readable (bright gradient + dark halo).
+ */
+function BrandTitle() {
+  return (
+    <div className="brand-title relative flex h-[76px] shrink-0 items-center sm:h-[112px]">
+      <div className="brand-logo pointer-events-none absolute inset-y-0 left-0 w-[180px] sm:w-[300px]" aria-hidden>
+        <Image src="/logo.png" alt="" fill sizes="300px" className="object-contain object-left" priority />
+      </div>
+      <span className="brand-sheen pointer-events-none absolute inset-y-0 left-0 w-[180px] sm:w-[300px]" aria-hidden />
+      <h1 className="relative z-10 whitespace-nowrap pl-[104px] text-[22px] font-extrabold leading-none tracking-tight sm:pl-[176px] sm:text-[40px]">
+        <span className="brand-text">Finance Dashboard</span>
+        <span className="sr-only"> — RTC League</span>
+      </h1>
+
+      <style jsx>{`
+        .brand-logo {
+          opacity: 0.85;
+          filter: drop-shadow(0 0 14px rgba(34, 211, 238, 0.45)) drop-shadow(0 0 2px rgba(255, 255, 255, 0.35));
+          animation: brand-float 6s ease-in-out infinite;
+        }
+        .brand-sheen {
+          background: linear-gradient(105deg, transparent 30%, rgba(165, 243, 252, 0.28) 48%, transparent 66%);
+          background-size: 250% 100%;
+          mix-blend-mode: screen;
+          -webkit-mask: url(/logo.png) left center / contain no-repeat;
+          mask: url(/logo.png) left center / contain no-repeat;
+          animation: brand-sheen 5.5s ease-in-out infinite;
+        }
+        .brand-text {
+          background: linear-gradient(92deg, #ffffff 0%, #e0f2fe 38%, #67e8f9 70%, #a5b4fc 100%);
+          -webkit-background-clip: text;
+          background-clip: text;
+          color: transparent;
+          filter: drop-shadow(0 2px 10px rgba(2, 6, 23, 0.95)) drop-shadow(0 0 1px rgba(2, 6, 23, 0.9));
+        }
+        @keyframes brand-float {
+          0%,
+          100% {
+            transform: translate3d(0, 4px, 0) scale(1);
+          }
+          50% {
+            transform: translate3d(6px, -6px, 0) scale(1.03);
+          }
+        }
+        @keyframes brand-sheen {
+          0%,
+          15% {
+            background-position: 120% 0;
+          }
+          60%,
+          100% {
+            background-position: -40% 0;
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .brand-logo,
+          .brand-sheen {
+            animation: none;
+          }
+        }
+      `}</style>
     </div>
   );
 }
