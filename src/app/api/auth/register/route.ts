@@ -66,6 +66,14 @@ export async function POST(req: Request) {
       `,
     });
 
+    // Never hand the approval links to the requester on production: they could approve themselves.
+    if (!emailResult.sent && process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        { ok: false, error: "Email delivery is not configured, so the request could not be sent to the approver. Contact the admin." },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json({
       ok: true,
       message: emailResult.sent
