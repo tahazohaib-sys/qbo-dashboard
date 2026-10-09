@@ -19,7 +19,20 @@ export type DashboardAccessUser = DashboardUser & {
   updated_at: Date;
 };
 
-export async function ensureAuthTables() {
+let authTablesReady: Promise<void> | null = null;
+
+/** Creates / updates the auth tables once per server instance. */
+export function ensureAuthTables() {
+  if (!authTablesReady) {
+    authTablesReady = createAuthTables().catch((e) => {
+      authTablesReady = null;
+      throw e;
+    });
+  }
+  return authTablesReady;
+}
+
+async function createAuthTables() {
   await query(`
     create table if not exists dashboard_users (
       id text primary key,
@@ -49,6 +62,8 @@ export async function ensureAuthTables() {
   `);
 
   await query(`create index if not exists dashboard_auth_tokens_user_idx on dashboard_auth_tokens(user_id)`);
+  // First password chosen at login; saved on the user only after the email code is verified.
+  await query(`alter table dashboard_auth_tokens add column if not exists pending_password_hash text`);
 }
 
 export async function ensureAdminUser(email: string) {
@@ -180,7 +195,7 @@ export async function createAuthToken(userId: string, tokenType: AuthTokenType, 
   return rawToken;
 }
 
-export async function createLoginVerificationCode(userId: string) {
+export async function createLoginVerificationCode(userId: string, pendingPasswordHash: string | null = null) {
   await ensureAuthTables();
   await query(
     `update dashboard_auth_tokens set consumed_at = now() where user_id = $1 and token_type = 'login_code' and consumed_at is null`,
@@ -190,10 +205,10 @@ export async function createLoginVerificationCode(userId: string) {
   const code = String(crypto.randomInt(100000, 1000000));
   await query(
     `
-      insert into dashboard_auth_tokens (token_hash, user_id, token_type, expires_at)
-      values ($1, $2, 'login_code', now() + interval '15 minutes')
+      insert into dashboard_auth_tokens (token_hash, user_id, token_type, expires_at, pending_password_hash)
+      values ($1, $2, 'login_code', now() + interval '15 minutes', $3)
     `,
-    [hashToken(code), userId]
+    [hashToken(code), userId, pendingPasswordHash]
   );
   return code;
 }
@@ -206,7 +221,7 @@ export async function consumeLoginVerificationCode(email: string, code: string) 
   const user = await findUserByEmail(email);
   if (!user || user.status !== "approved") return null;
 
-  const { rows } = await query<{ user_id: string }>(
+  const { rows } = await query<{ user_id: string; pending_password_hash: string | null }>(
     `
       update dashboard_auth_tokens
       set consumed_at = now()
@@ -215,11 +230,17 @@ export async function consumeLoginVerificationCode(email: string, code: string) 
         and token_type = 'login_code'
         and consumed_at is null
         and expires_at > now()
-      returning user_id
+      returning user_id, pending_password_hash
     `,
     [hashToken(normalizedCode), user.id]
   );
-  return rows[0]?.user_id ? user : null;
+  if (!rows[0]?.user_id) return null;
+
+  // The inbox is now proven: save a first password chosen at login, if the account still has none.
+  if (!user.password_hash && rows[0].pending_password_hash) {
+    return (await setUserPassword(user.id, rows[0].pending_password_hash)) ?? user;
+  }
+  return user;
 }
 
 export async function consumeAuthToken(rawToken: string, tokenType: AuthTokenType) {

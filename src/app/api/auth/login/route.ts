@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { hashPassword, isAdminEmail, sendAuthEmail, verifyPassword } from "@/lib/auth";
-import { createLoginVerificationCode, ensureAdminUser, findUserByEmail, setUserPassword } from "@/lib/auth-db";
+import { createLoginVerificationCode, ensureAdminUser, findUserByEmail } from "@/lib/auth-db";
 
 export async function POST(req: Request) {
   try {
@@ -12,7 +12,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Password must be at least 8 characters." }, { status: 400 });
     }
 
-    let user = isAdminEmail(email) ? await ensureAdminUser(email) : await findUserByEmail(email);
+    const user = isAdminEmail(email) ? await ensureAdminUser(email) : await findUserByEmail(email);
     if (!user) {
       return NextResponse.json({ ok: false, error: "This email is not approved for dashboard access." }, { status: 401 });
     }
@@ -29,16 +29,18 @@ export async function POST(req: Request) {
       }
     }
 
+    // A first password is not saved yet: it is kept with the login code and saved only
+    // after the code from the inbox is verified (see consumeLoginVerificationCode).
+    let pendingPasswordHash: string | null = null;
     if (user.password_hash) {
       if (!verifyPassword(password, user.password_hash)) {
         return NextResponse.json({ ok: false, error: "Invalid email or password." }, { status: 401 });
       }
     } else {
-      user = await setUserPassword(user.id, hashPassword(password));
-      if (!user) return NextResponse.json({ ok: false, error: "Could not set password for this account." }, { status: 500 });
+      pendingPasswordHash = hashPassword(password);
     }
 
-    const verificationCode = await createLoginVerificationCode(user.id);
+    const verificationCode = await createLoginVerificationCode(user.id, pendingPasswordHash);
     const emailResult = await sendAuthEmail({
       to: user.email,
       subject: "Your QBO Dashboard login code",
@@ -51,6 +53,14 @@ export async function POST(req: Request) {
         </div>
       `,
     });
+
+    // Never hand out the code itself on production: it would skip the inbox check.
+    if (!emailResult.sent && process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        { ok: false, error: "Email delivery is not configured, so the login code cannot be sent. Contact the admin." },
+        { status: 503 }
+      );
+    }
 
     return NextResponse.json({
       ok: true,
