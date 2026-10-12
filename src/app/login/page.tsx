@@ -3,6 +3,7 @@
 import { FormEvent, Suspense, useState } from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
+import SetupSlideshow from "./SetupSlideshow";
 
 function LoginForm() {
   const router = useRouter();
@@ -50,8 +51,8 @@ function LoginForm() {
         setVerificationCode(json.devVerificationCode);
         setDevCode(json.devVerificationCode);
       }
-    } catch (err: any) {
-      setError(err?.message || "Something went wrong.");
+    } catch (err) {
+      setError((err instanceof Error && err.message) || "Something went wrong.");
     } finally {
       setLoading(false);
     }
@@ -83,9 +84,6 @@ function LoginForm() {
         @keyframes logo-float {
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-6px); }
-        }
-        @keyframes grad-move {
-          to { background-position: 200% center; }
         }
         @keyframes halo-pulse {
           0%, 100% { opacity: .55; transform: scale(1); }
@@ -147,15 +145,6 @@ function LoginForm() {
           z-index: -1;
         }
 
-        .grad-text {
-          background: linear-gradient(90deg, #a5f3fc, #e0f2fe, #6ee7b7, #93c5fd, #a5f3fc);
-          background-size: 200% auto;
-          -webkit-background-clip: text;
-          background-clip: text;
-          color: transparent;
-          animation: grad-move 7s linear infinite;
-        }
-
         .shine-btn > .shine {
           position: absolute;
           top: 0;
@@ -175,7 +164,7 @@ function LoginForm() {
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .aurora, .orb, .grad-text, .logo-float, .logo-halo, .shine-btn:hover > .shine { animation: none !important; }
+          .aurora, .orb, .logo-float, .logo-halo, .shine-btn:hover > .shine { animation: none !important; }
           .auth-rise { animation: none !important; opacity: 1 !important; transform: none !important; }
         }
       `}</style>
@@ -204,15 +193,10 @@ function LoginForm() {
               className="h-auto w-[248px] select-none drop-shadow-[0_10px_30px_rgba(34,211,238,0.25)]"
             />
           </div>
-          <h1 className="mt-10 max-w-xl text-6xl font-black leading-[0.95] tracking-tight">
-            <span className="grad-text">Approved</span>
-            <br />
-            <span className="text-white">Login</span>
-          </h1>
-          <p className="mt-7 max-w-xl text-lg leading-8 text-slate-300/90">
-            Continue only after your email has been approved. Your first sign-in is confirmed with a one-time code sent to your email; after that, your email and password are enough.
-          </p>
-          <div className="mt-9 flex max-w-xl items-center gap-4">
+          <div className="mt-10">
+            <SetupSlideshow />
+          </div>
+          <div className="mt-6 flex max-w-xl items-center gap-4">
             <div className="flex-1 rounded-[24px] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-sm transition duration-300 hover:border-cyan-200/25 hover:bg-white/[0.06]">
               <div className="flex items-center justify-between gap-4">
                 <div>
@@ -241,13 +225,10 @@ function LoginForm() {
           </div>
 
           <div className="rounded-[24px] border border-white/10 bg-white/[0.045] p-5">
-            <p className="text-xs font-bold uppercase tracking-[0.28em] text-cyan-200/80">Secure Portal</p>
-            <h2 className="mt-3 text-3xl font-black tracking-tight text-white">{awaitingCode ? "Verify your code" : "Sign in"}</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-300">
-              {awaitingCode
-                ? "Enter the six-digit code sent to your approved email address."
-                : "Use your approved email and password. On your first login, the password you enter is saved after you confirm the code we email you."}
-            </p>
+            <h2 className="text-3xl font-black tracking-tight text-white">{awaitingCode ? "Verify your code" : "Sign in"}</h2>
+            {awaitingCode ? (
+              <p className="mt-3 text-sm leading-6 text-slate-300">Enter the six-digit code sent to your approved email address.</p>
+            ) : null}
           </div>
 
           <form onSubmit={submit} className="mt-6 space-y-5">
@@ -310,9 +291,14 @@ function LoginForm() {
               className="shine-btn relative h-14 w-full overflow-hidden rounded-2xl border border-cyan-200/25 bg-gradient-to-r from-cyan-500/30 via-emerald-400/22 to-cyan-500/30 px-5 text-base font-black text-white shadow-[0_18px_44px_rgba(8,145,178,.28)] transition duration-300 hover:-translate-y-0.5 hover:border-cyan-100/45 hover:shadow-[0_22px_54px_rgba(8,145,178,.4)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span className="shine" />
-              <span className="relative">{loading ? "Working..." : awaitingCode ? "Verify and Login" : "Send Login Code"}</span>
+              <span className="relative">{loading ? "Working..." : awaitingCode ? "Verify and Login" : "Sign in"}</span>
             </button>
           </form>
+        </div>
+
+        {/* On small screens the left column is hidden, so the setup steps show under the form. */}
+        <div className="auth-rise auth-rise-2 mx-auto w-full max-w-[500px] lg:hidden">
+          <SetupSlideshow compact />
         </div>
       </section>
     </main>
