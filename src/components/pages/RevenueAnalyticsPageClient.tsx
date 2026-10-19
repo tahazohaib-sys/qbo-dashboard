@@ -1049,7 +1049,7 @@ export default function RevenueAnalyticsPage() {
                     <BarChart
                       data={sorted}
                       layout="vertical"
-                      margin={{ top: 6, right: 80, left: 8, bottom: 6 }}
+                      margin={{ top: 6, right: 120, left: 8, bottom: 6 }}
                     >
                       <CartesianGrid {...GRID} horizontal={false} />
                       <XAxis
@@ -1075,7 +1075,7 @@ export default function RevenueAnalyticsPage() {
                         <LabelList
                           dataKey="revenue"
                           position="right"
-                          formatter={(v: any) => fmtAxisShort(v)}
+                          formatter={(v: any) => fmtMoney(Number(v ?? 0), symbol)}
                           style={{ fill: "#cbd5e1", fontSize: 11, fontWeight: 600 }}
                         />
                       </Bar>
