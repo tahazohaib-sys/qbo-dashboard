@@ -88,3 +88,15 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Stripe Financials
+
+The `/dashboard/stripe-financials` page reads data from Stripe: balance, gross volume, fees, refunds, disputes, net revenue, payouts, MRR and top customers. The data comes from `/api/stripe/financials?from=YYYY-MM-DD&to=YYYY-MM-DD`.
+
+Set the Stripe key on the server only. Do not commit it:
+
+```bash
+STRIPE_SECRET_KEY="rk_live_..."   # or sk_live_... / sk_test_...
+```
+
+Use a restricted key with read access to Balance, Balance transactions, Charges, Payouts, Subscriptions and Customers. The publishable key (`pk_...`) is not used.

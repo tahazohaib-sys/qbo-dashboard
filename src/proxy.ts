@@ -31,6 +31,7 @@ function isProtectedApi(pathname: string) {
     pathname === "/api/dashboard" ||
     pathname === "/api/forecast" ||
     pathname === "/api/revenue-analytics" ||
+    pathname.startsWith("/api/stripe/") ||
     pathname.startsWith("/api/ai/") ||
     pathname.startsWith("/api/custom-fields/") ||
     pathname === "/api/qbo/pnl-table" ||

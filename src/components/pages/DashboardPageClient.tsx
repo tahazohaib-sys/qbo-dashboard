@@ -1406,6 +1406,10 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
           <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" prefetch={false} onActivate={() => setTab("revenue")}>
             Revenue Analytics
           </TabLinkButton>
+
+          <TabLinkButton active={false} href="/dashboard/stripe-financials" prefetch={false}>
+            Stripe Financials
+          </TabLinkButton>
         </div>
 
         {/* Filters */}
