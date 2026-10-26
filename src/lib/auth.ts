@@ -4,7 +4,13 @@ import { cookies } from "next/headers";
 
 export const AUTH_COOKIE = "qbo_dashboard_session";
 export const ADMIN_APPROVER_EMAIL = process.env.AUTH_APPROVER_EMAIL || "taha.zohaib@rtcleague.com";
-export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
+/**
+ * Idle timeout. Each request from a signed-in user issues a new token with a
+ * new expiry, so the session ends only after this much time with no activity.
+ */
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 2;
+/** Issue a new token at most once per minute, not on every request. */
+const SESSION_REFRESH_AFTER_SECONDS = 60;
 
 type SessionPayload = {
   sub: string;
@@ -69,6 +75,12 @@ export function verifySessionToken(token: string | undefined): SessionPayload | 
   } catch {
     return null;
   }
+}
+
+/** True when the token is old enough that a request should issue a new one. */
+export function shouldRefreshSession(session: SessionPayload) {
+  const remaining = session.exp - Math.floor(Date.now() / 1000);
+  return remaining < SESSION_MAX_AGE_SECONDS - SESSION_REFRESH_AFTER_SECONDS;
 }
 
 /** Cookie options for the dashboard session (set on login, cleared on logout). */
