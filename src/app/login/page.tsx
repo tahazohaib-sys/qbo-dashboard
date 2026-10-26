@@ -70,7 +70,16 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState(approved ? "Your access is approved. Choose your password to continue." : "");
+  const reason = searchParams.get("reason");
+  const [message, setMessage] = useState(
+    approved
+      ? "Your access is approved. Choose your password to continue."
+      : reason === "idle"
+        ? "You were signed out after 2 hours with no activity. Sign in again to continue."
+        : reason === "expired"
+          ? "Your session expired. Sign in again to continue."
+          : ""
+  );
   const [devCode, setDevCode] = useState("");
   const [error, setError] = useState("");
 

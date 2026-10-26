@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AUTH_COOKIE, isAdminEmail, verifySessionToken } from "@/lib/auth";
+import {
+  AUTH_COOKIE,
+  createSessionToken,
+  isAdminEmail,
+  SESSION_MAX_AGE_SECONDS,
+  sessionCookieOptions,
+  shouldRefreshSession,
+  verifySessionToken,
+} from "@/lib/auth";
 import { findUserById } from "@/lib/auth-db";
 
 /**
@@ -8,11 +16,13 @@ import { findUserById } from "@/lib/auth-db";
  * Next.js 16 runs proxy.ts on the Node.js runtime, so every protected request
  * checks both the signed session cookie and the user's current status in the
  * database. A revoked or rejected user loses access at once, not when the
- * 7-day cookie expires. The check fails closed: no valid session, an unknown
+ * cookie expires. Each allowed request extends the session, so it ends after
+ * 2 hours with no activity. The check fails closed: no valid session, an unknown
  * user, a non-approved status or a database error all deny access.
  */
 
-type Access = { ok: true; isAdmin: boolean } | { ok: false };
+type Session = NonNullable<ReturnType<typeof verifySessionToken>>;
+type Access = { ok: true; isAdmin: boolean; session: Session } | { ok: false };
 
 async function checkAccess(req: NextRequest): Promise<Access> {
   try {
@@ -20,7 +30,7 @@ async function checkAccess(req: NextRequest): Promise<Access> {
     if (!session) return { ok: false };
     const user = await findUserById(session.sub);
     if (!user || user.status !== "approved") return { ok: false };
-    return { ok: true, isAdmin: isAdminEmail(user.email) };
+    return { ok: true, isAdmin: isAdminEmail(user.email), session };
   } catch {
     return { ok: false };
   }
@@ -40,7 +50,8 @@ function isProtectedApi(pathname: string) {
     pathname === "/api/qbo/retained-earning" ||
     pathname === "/api/qbo/expense-breakdown" ||
     pathname === "/api/qbo/monthly-cashflow" ||
-    pathname === "/api/qbo/debug-balance-sheet"
+    pathname === "/api/qbo/debug-balance-sheet" ||
+    pathname === "/api/auth/keepalive"
   );
 }
 
@@ -49,12 +60,22 @@ function isAdminOnlyApi(pathname: string) {
   return pathname === "/api/qbo/start" || pathname === "/api/qbo/callback";
 }
 
+/** Lets the request through and, when due, issues a new token so the idle timer starts again. */
+function allow(access: Extract<Access, { ok: true }>) {
+  const res = NextResponse.next();
+  if (shouldRefreshSession(access.session)) {
+    const { sub, email } = access.session;
+    res.cookies.set(AUTH_COOKIE, createSessionToken({ sub, email, isAdmin: access.isAdmin }), sessionCookieOptions(SESSION_MAX_AGE_SECONDS));
+  }
+  return res;
+}
+
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   if (pathname.startsWith("/dashboard")) {
     const access = await checkAccess(req);
-    if (access.ok) return NextResponse.next();
+    if (access.ok) return allow(access);
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
@@ -62,13 +83,13 @@ export async function proxy(req: NextRequest) {
 
   if (isAdminOnlyApi(pathname)) {
     const access = await checkAccess(req);
-    if (access.ok && access.isAdmin) return NextResponse.next();
+    if (access.ok && access.isAdmin) return allow(access);
     return NextResponse.json({ ok: false, error: "Only the dashboard admin can connect QuickBooks." }, { status: 403 });
   }
 
   if (isProtectedApi(pathname)) {
     const access = await checkAccess(req);
-    if (access.ok) return NextResponse.next();
+    if (access.ok) return allow(access);
     return NextResponse.json({ ok: false, error: "Authentication required." }, { status: 401 });
   }
 
