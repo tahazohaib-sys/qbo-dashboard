@@ -44,6 +44,21 @@ export type ForecastHistoryResp = {
   error?: string;
 };
 
+type DisplayCurrency = "PKR" | "USD";
+type FxState =
+  | { status: "idle" | "loading" }
+  | { status: "ok"; rate: number; source: string; asOf: string }
+  | { status: "error"; error: string };
+
+/** Factor that converts an amount in the home currency to the display currency. null = no rate yet. */
+function conversionFactor(home: string, display: DisplayCurrency, pkrPerUsd: number | null) {
+  if (home === display) return 1;
+  if (!pkrPerUsd) return null;
+  if (home === "PKR" && display === "USD") return 1 / pkrPerUsd;
+  if (home === "USD" && display === "PKR") return pkrPerUsd;
+  return null;
+}
+
 /* ---------------- colours (validated for colour-blind separation on the dark surface) ---------------- */
 
 const C = {
@@ -100,9 +115,50 @@ export default function ForecastPanel({
   const [opts, setOpts] = useState<ForecastOptions>(DEFAULTS);
   const set = <K extends keyof ForecastOptions>(k: K, v: ForecastOptions[K]) => setOpts((o) => ({ ...o, [k]: v }));
 
-  const currency = data?.currency ?? "PKR";
-  const history = useMemo(() => data?.history ?? [], [data?.history]);
-  const openingCash = data?.cash?.balance ?? null;
+  // Currency: amounts come in the QuickBooks home currency and are converted at one market rate.
+  const homeCurrency = data?.currency ?? "PKR";
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("PKR");
+  const [fx, setFx] = useState<FxState>({ status: "idle" });
+  const [rateInput, setRateInput] = useState("");
+  const typedRate = Number(rateInput);
+  const pkrPerUsd = Number.isFinite(typedRate) && typedRate > 0 ? typedRate : null;
+  const factor = conversionFactor(homeCurrency, displayCurrency, pkrPerUsd);
+  const currency = factor != null ? displayCurrency : homeCurrency;
+  const otherCurrency: DisplayCurrency = currency === "USD" ? "PKR" : "USD";
+  const otherFactor = conversionFactor(currency, otherCurrency, pkrPerUsd);
+
+  async function loadMarketRate() {
+    setFx({ status: "loading" });
+    try {
+      const res = await fetch("/api/fx-rate", { cache: "no-store" });
+      const json = await res.json();
+      if (!json?.ok) throw new Error(json?.error || "No market rate");
+      setFx({ status: "ok", rate: json.rate, source: json.source, asOf: json.asOf });
+      setRateInput(Number(json.rate).toFixed(2));
+    } catch (e: unknown) {
+      setFx({ status: "error", error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  function changeCurrency(next: DisplayCurrency) {
+    setDisplayCurrency(next);
+    if (next !== homeCurrency && fx.status === "idle") loadMarketRate();
+  }
+
+  const history = useMemo(() => {
+    const rows = data?.history ?? [];
+    if (factor == null || factor === 1) return rows;
+    return rows.map((h) => ({
+      month: h.month,
+      revenue: h.revenue * factor,
+      cogs: h.cogs * factor,
+      opex: h.opex * factor,
+      otherIncome: h.otherIncome * factor,
+      otherExpenses: h.otherExpenses * factor,
+      netProfit: h.netProfit * factor,
+    }));
+  }, [data?.history, factor]);
+  const openingCash = data?.cash ? data.cash.balance * (factor ?? 1) : null;
   const seasonalityAvailable = history.length >= SEASONAL_MIN_MONTHS;
   const effectiveOpts = useMemo(() => ({ ...opts, seasonality: opts.seasonality && seasonalityAvailable }), [opts, seasonalityAvailable]);
 
@@ -121,12 +177,48 @@ export default function ForecastPanel({
 
   const isDefault = JSON.stringify(opts) === JSON.stringify(DEFAULTS);
   const money = (n: number) => fmtMoney(n, currency);
+  // Large amounts (PKR) show in thousands; small amounts (USD) show in full.
+  const tableScale = result && Math.max(...result.months.map((m) => m.revenue), result.actualAverage.revenue) >= 1_000_000 ? 1000 : 1;
+  const otherMoney = otherFactor != null ? (n: number) => `≈ ${fmtMoney(n * otherFactor, otherCurrency)}` : undefined;
 
   return (
     <div className="mt-6 space-y-5">
       {/* Filters */}
       <Card title="Forecast options" hint="The forecast updates when you change an option">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
+          <Select
+            label="Currency"
+            value={displayCurrency}
+            onChange={(v) => changeCurrency(v as DisplayCurrency)}
+            options={[
+              { v: "PKR", label: "PKR (Rs)" },
+              { v: "USD", label: "USD ($)" },
+            ]}
+          />
+          <label className="block" title="PKR for 1 USD. The market rate is filled in; you can type a different rate.">
+            <span className="text-[11px] uppercase tracking-[0.12em] text-slate-300">USD rate (Rs per $1)</span>
+            <div className="mt-1 flex gap-1.5">
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={rateInput}
+                placeholder={fx.status === "loading" ? "Loading…" : "e.g. 280.00"}
+                onChange={(e) => setRateInput(e.target.value)}
+                className="w-full min-w-0 rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm tabular-nums outline-none transition focus:border-cyan-300/40"
+              />
+              <button
+                type="button"
+                onClick={loadMarketRate}
+                disabled={fx.status === "loading"}
+                title="Get the market rate again"
+                className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-2.5 text-xs text-slate-200 hover:bg-white/10 disabled:opacity-50"
+              >
+                {fx.status === "loading" ? "…" : "Market"}
+              </button>
+            </div>
+          </label>
           <Select
             label="Base period"
             value={baseMonths}
@@ -177,6 +269,9 @@ export default function ForecastPanel({
                   data.excludedPartialMonth ? ` · ${monthLabel(data.excludedPartialMonth)} is not included because it is not complete` : ""
                 }`
               : "The base period ends with the “To” month of the date filter above."}
+            <span className="block">
+              <RateNote fx={fx} pkrPerUsd={pkrPerUsd} home={homeCurrency} display={displayCurrency} converted={factor != null && factor !== 1} />
+            </span>
           </span>
           {!isDefault ? (
             <button onClick={() => setOpts(DEFAULTS)} className="rounded-lg border border-white/10 bg-white/5 px-3 py-1 text-slate-200 hover:bg-white/10">
@@ -198,7 +293,7 @@ export default function ForecastPanel({
         <Empty text={`The forecast needs at least ${MIN_BASE_MONTHS} complete months. Select a longer base period.`} />
       ) : (
         <div className={`space-y-5 transition-opacity ${loading ? "opacity-60" : ""}`}>
-          <Kpis r={result} money={money} horizon={opts.horizon} />
+          <Kpis r={result} money={money} otherMoney={otherMoney} horizon={opts.horizon} />
 
           <Card
             title="Revenue, costs and net profit"
@@ -207,8 +302,11 @@ export default function ForecastPanel({
             <MainChart history={history} r={result} currency={currency} />
           </Card>
 
-          <Card title="Forecast profit & loss statement" hint={`Amounts in ${currencySymbol(currency)} thousands · costs and losses in brackets`}>
-            <PnlTable r={result} />
+          <Card
+            title="Forecast profit & loss statement"
+            hint={`Amounts in ${currencySymbol(currency)}${tableScale === 1000 ? " thousands" : ""} · costs and losses in brackets`}
+          >
+            <PnlTable r={result} scale={tableScale} />
           </Card>
 
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
@@ -243,7 +341,17 @@ export default function ForecastPanel({
 
 /* ---------------- KPIs ---------------- */
 
-function Kpis({ r, money, horizon }: { r: ForecastResult; money: (n: number) => string; horizon: number }) {
+function Kpis({
+  r,
+  money,
+  otherMoney,
+  horizon,
+}: {
+  r: ForecastResult;
+  money: (n: number) => string;
+  otherMoney?: (n: number) => string;
+  horizon: number;
+}) {
   const be = r.breakEven;
   const acc = r.assumptions.revenue.accuracy;
   return (
@@ -251,24 +359,28 @@ function Kpis({ r, money, horizon }: { r: ForecastResult; money: (n: number) => 
       <Kpi
         label="Forecast revenue"
         value={money(r.totals.revenue)}
+        alt={otherMoney?.(r.totals.revenue)}
         tone={r.revenueChangeVsActual == null ? undefined : r.revenueChangeVsActual >= 0 ? "good" : "risk"}
         note={`${money(r.totals.revenue / horizon)} a month · ${fmtSignedPct(r.revenueChangeVsActual)} vs last ${r.actualAverage.months} months`}
       />
       <Kpi
         label="Forecast net profit"
         value={money(r.totals.netProfit)}
+        alt={otherMoney?.(r.totals.netProfit)}
         tone={r.totals.netProfit >= 0 ? "good" : "risk"}
         note={`Net margin ${fmtPct(r.totals.netMargin)} · ${r.lossMonths} loss month${r.lossMonths === 1 ? "" : "s"}`}
       />
       <Kpi
         label="Break-even revenue"
         value={be.monthlyRevenue != null ? `${money(be.monthlyRevenue)}/mo` : "—"}
+        alt={be.monthlyRevenue != null ? otherMoney?.(be.monthlyRevenue) : undefined}
         tone={be.marginOfSafety == null ? undefined : be.marginOfSafety >= 0.1 ? "good" : be.marginOfSafety >= 0 ? "watch" : "risk"}
         note={be.marginOfSafety != null ? `Margin of safety ${fmtPct(be.marginOfSafety)}` : "Cost of sales is higher than revenue"}
       />
       <Kpi
         label="Closing cash"
         value={r.cash.closing != null ? money(r.cash.closing) : "—"}
+        alt={r.cash.closing != null ? otherMoney?.(r.cash.closing) : undefined}
         tone={r.cash.closing == null ? undefined : r.cash.runOutMonth ? "risk" : r.cash.opening != null && r.cash.closing < r.cash.opening ? "watch" : "good"}
         note={
           r.cash.opening == null
@@ -440,10 +552,10 @@ function CashChart({ r, currency }: { r: ForecastResult; currency: string }) {
 
 /* ---------------- P&L statement ---------------- */
 
-function PnlTable({ r }: { r: ForecastResult }) {
+function PnlTable({ r, scale }: { r: ForecastResult; scale: number }) {
   const k = (n: number) => {
-    const v = Math.round(Math.abs(n) / 1000).toLocaleString("en");
-    return n < -0.5 ? `(${v})` : v;
+    const v = Math.round(Math.abs(n) / scale).toLocaleString("en");
+    return n < 0 && v !== "0" ? `(${v})` : v;
   };
   const pct = (n: number | null) => (n == null ? "—" : fmtPct(n));
   const act = r.actualAverage;
@@ -652,7 +764,7 @@ function Card({ title, hint, className = "", children }: { title: string; hint?:
   );
 }
 
-function Kpi({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "good" | "watch" | "risk" }) {
+function Kpi({ label, value, alt, note, tone }: { label: string; value: string; alt?: string; note: string; tone?: "good" | "watch" | "risk" }) {
   const ring = tone === "good" ? "border-emerald-300/30" : tone === "watch" ? "border-amber-300/30" : tone === "risk" ? "border-rose-300/30" : "border-white/10";
   const dot = tone === "good" ? "bg-emerald-300" : tone === "watch" ? "bg-amber-300" : tone === "risk" ? "bg-rose-300" : "bg-slate-300";
   return (
@@ -662,6 +774,7 @@ function Kpi({ label, value, note, tone }: { label: string; value: string; note:
         {label}
       </div>
       <div className="mt-2 text-2xl font-semibold tracking-tight text-white tabular-nums">{value}</div>
+      {alt ? <div className="text-xs font-medium text-slate-300 tabular-nums">{alt}</div> : null}
       <div className="mt-1 text-xs text-slate-400">{note}</div>
     </div>
   );
@@ -729,6 +842,38 @@ function Select({
         ))}
       </select>
     </label>
+  );
+}
+
+function RateNote({
+  fx,
+  pkrPerUsd,
+  home,
+  display,
+  converted,
+}: {
+  fx: FxState;
+  pkrPerUsd: number | null;
+  home: string;
+  display: DisplayCurrency;
+  converted: boolean;
+}) {
+  if (display === home && !pkrPerUsd) return null;
+  if (fx.status === "loading" && !pkrPerUsd) return <>Getting the market USD rate…</>;
+  if (!pkrPerUsd) {
+    return (
+      <span className="text-amber-300">
+        {fx.status === "error" ? "The market rate is not available. " : ""}Type the USD rate to show the figures in {display}. The figures show in {home} now.
+      </span>
+    );
+  }
+  const market = fx.status === "ok" && Math.abs(fx.rate - pkrPerUsd) < 0.005;
+  return (
+    <>
+      Rate: Rs {pkrPerUsd.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} = $1 ·{" "}
+      {market ? `market rate from ${fx.source}${fx.asOf ? `, ${fx.asOf}` : ""}` : "rate typed by you"}
+      {converted ? " · all months use this one rate (constant currency)" : ""}
+    </>
   );
 }
 

@@ -133,15 +133,16 @@ export function currencySymbol(currency: string) {
   return SYMBOLS[currency] ?? currency;
 }
 
-/** Compact money: Rs 1.25M, Rs 850K, Rs 900. */
+/** Compact money: Rs 1.25M, Rs 850K, $613K. */
 export function fmtMoney(n: number, currency = "PKR") {
   const sym = currencySymbol(currency);
-  const sign = n < 0 ? "-" : "";
+  // A word symbol (Rs, AED) takes a space; a sign symbol ($, €, £) does not.
+  const pre = `${n < 0 ? "-" : ""}${sym}${/^[A-Za-z]+$/.test(sym) ? " " : ""}`;
   const a = Math.abs(n);
-  if (a >= 1_000_000_000) return `${sign}${sym} ${(a / 1_000_000_000).toFixed(2)}B`;
-  if (a >= 1_000_000) return `${sign}${sym} ${(a / 1_000_000).toFixed(a >= 10_000_000 ? 1 : 2)}M`;
-  if (a >= 1_000) return `${sign}${sym} ${Math.round(a / 1_000).toLocaleString("en")}K`;
-  return `${sign}${sym} ${Math.round(a).toLocaleString("en")}`;
+  if (a >= 1_000_000_000) return `${pre}${(a / 1_000_000_000).toFixed(2)}B`;
+  if (a >= 1_000_000) return `${pre}${(a / 1_000_000).toFixed(a >= 10_000_000 ? 1 : 2)}M`;
+  if (a >= 1_000) return `${pre}${Math.round(a / 1_000).toLocaleString("en")}K`;
+  return `${pre}${Math.round(a).toLocaleString("en")}`;
 }
 
 export function fmtPct(n: number | null, digits = 1) {

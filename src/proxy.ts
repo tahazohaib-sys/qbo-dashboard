@@ -40,6 +40,7 @@ function isProtectedApi(pathname: string) {
   return (
     pathname === "/api/dashboard" ||
     pathname === "/api/forecast" ||
+    pathname === "/api/fx-rate" ||
     pathname === "/api/revenue-analytics" ||
     pathname.startsWith("/api/ai/") ||
     pathname.startsWith("/api/custom-fields/") ||
