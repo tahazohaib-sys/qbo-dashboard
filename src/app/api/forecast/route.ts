@@ -1,197 +1,127 @@
+// src/app/api/forecast/route.ts
+//
+// History for the Financial Forecast: the P&L lines of each complete month in
+// the base period, plus the bank balance at the end of that period (the
+// opening cash of the forecast). The forecast itself is calculated in the
+// browser (src/lib/forecast.ts), so the forecast filters update at once.
 import { NextResponse } from "next/server";
+import { qboFetch } from "@/lib/metrics";
+import { toNum } from "@/lib/retained-earning";
+import { MIN_BASE_MONTHS, addMonths, type HistoryMonth } from "@/lib/forecast";
 
-type SeriesPoint = {
-  month: string;
-  revenue: number;
-  expenses: number;
-};
+export const dynamic = "force-dynamic";
 
-function safeNum(x: any) {
-  const n = Number(x);
-  return Number.isFinite(n) ? n : 0;
-}
+const MAX_BASE_MONTHS = 36;
 
-function averageMoMGrowth(values: number[]) {
-  if (!values || values.length < 2) return 0;
-  let sum = 0;
-  let cnt = 0;
-  for (let i = 1; i < values.length; i++) {
-    const prev = values[i - 1];
-    const curr = values[i];
-    if (!Number.isFinite(prev) || !Number.isFinite(curr) || prev === 0) continue;
-    sum += (curr - prev) / prev;
-    cnt++;
-  }
-  return cnt ? sum / cnt : 0;
-}
+/** P&L section groups that the forecast uses. */
+const GROUPS = ["Income", "COGS", "Expenses", "OtherIncome", "OtherExpenses", "NetIncome"] as const;
+type Group = (typeof GROUPS)[number];
 
-function clampGrowth(g: number) {
-  return Math.max(-0.5, Math.min(0.5, g));
-}
+type QboCell = { value?: string };
+type QboRow = { type?: string; group?: string; Summary?: { ColData?: QboCell[] }; Rows?: { Row?: QboRow[] } };
 
-function addMonths(ym: string, add: number) {
-  const [y, m] = ym.split("-").map(Number);
-  if (!y || !m) return `${ym}+${add}m`;
-  const d = new Date(y, m - 1 + add, 1);
+function ym(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-export async function POST(req: Request) {
+function lastDayOf(month: string) {
+  const [y, m] = month.split("-").map(Number);
+  return `${month}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+}
+
+/** Summary cells of each section group (searched in all levels of the report). */
+function sectionCells(rows: { Row?: QboRow[] } | undefined, out = new Map<string, QboCell[]>()) {
+  for (const r of rows?.Row ?? []) {
+    if (r.type === "Section" && r.group && !out.has(r.group)) out.set(r.group, r.Summary?.ColData ?? []);
+    if (r.Rows) sectionCells(r.Rows, out);
+  }
+  return out;
+}
+
+/** Bank balance (home currency) from the Balance Sheet on a date. null when not available. */
+async function fetchBankBalance(asOf: string, method: string): Promise<number | null> {
+  const rep = await qboFetch(
+    `reports/BalanceSheet?start_date=${asOf}&end_date=${asOf}` +
+      `&accounting_method=${encodeURIComponent(method)}&summarize_column_by=Total`
+  );
+  const cells = sectionCells(rep?.Rows).get("BankAccounts");
+  return cells?.length ? toNum(cells[cells.length - 1]?.value) : null;
+}
+
+export async function GET(req: Request) {
   try {
-    const body = await req.json();
-    const seriesRaw: SeriesPoint[] = Array.isArray(body?.series) ? body.series : [];
-    const horizon = body?.horizon === 12 ? 12 : 6;
-    const currentCash: number | null =
-      typeof body?.currentCash === "number" ? safeNum(body.currentCash) : null;
+    const url = new URL(req.url);
+    const method = url.searchParams.get("accounting_method") === "Cash" ? "Cash" : "Accrual";
+    const monthsQ = Number(url.searchParams.get("months") ?? 12);
+    const months = Math.min(MAX_BASE_MONTHS, Math.max(MIN_BASE_MONTHS, Number.isFinite(monthsQ) ? Math.round(monthsQ) : 12));
 
-    if (!seriesRaw.length) {
-      return NextResponse.json({ ok: false, error: "No data in selected range" });
+    // The base period ends with the last COMPLETE month: a month that is not finished
+    // shows too little revenue and expense and makes the trend incorrect.
+    const now = new Date();
+    const currentMonth = ym(now);
+    const lastComplete = ym(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+    const requested = url.searchParams.get("end_month") ?? "";
+    let end = /^\d{4}-\d{2}$/.test(requested) ? requested : lastComplete;
+    let excludedPartialMonth: string | null = null;
+    if (end >= currentMonth) {
+      excludedPartialMonth = currentMonth;
+      end = lastComplete;
     }
+    const start = addMonths(end, -(months - 1));
+    const startDate = `${start}-01`;
+    const endDate = lastDayOf(end);
 
-    const series = seriesRaw.map((x) => ({
-      month: String(x.month),
-      revenue: safeNum(x.revenue),
-      expenses: safeNum(x.expenses),
-    }));
+    const [pnl, bank] = await Promise.all([
+      qboFetch(
+        `reports/ProfitAndLoss?start_date=${startDate}&end_date=${endDate}` +
+          `&accounting_method=${method}&summarize_column_by=Month`
+      ),
+      fetchBankBalance(endDate, method).catch(() => null),
+    ]);
 
-    const monthsUsed = series.length;
-    const revenues = series.map((x) => x.revenue);
-    const expenses = series.map((x) => x.expenses);
+    // Column index -> YYYY-MM (the "Total" column has no StartDate and is skipped)
+    const cols: Array<{ MetaData?: Array<{ Name?: string; Value?: string }> }> = pnl?.Columns?.Column ?? [];
+    const monthOfCol = cols.map((c) => {
+      const sd = c?.MetaData?.find((x) => x?.Name === "StartDate")?.Value;
+      return typeof sd === "string" && /^\d{4}-\d{2}/.test(sd) ? sd.slice(0, 7) : null;
+    });
 
-    const avgRevenue = revenues.reduce((a, b) => a + b, 0) / monthsUsed;
-    const avgOpex = expenses.reduce((a, b) => a + b, 0) / monthsUsed;
-    const avgProfit = avgRevenue - avgOpex;
-    const avgNetMarginPct = avgRevenue > 0 ? avgProfit / avgRevenue : 0;
-    const expenseRatio = avgRevenue > 0 ? avgOpex / avgRevenue : null;
-
-    const gRev = clampGrowth(averageMoMGrowth(revenues));
-    const gExp = clampGrowth(averageMoMGrowth(expenses));
-
-    const last = series[series.length - 1];
-
-    // Fixed offset applied to the growth rates to define scenario spread.
-    // Using additive offsets (not multiplicative) so direction is always correct
-    // regardless of whether the baseline trend is positive or negative.
-    const SCENARIO_DELTA = 0.05; // 5 percentage points
-
-    // Scenario builder: takes the final growth rates directly
-    function buildScenario(
-      rGrowth: number,
-      eGrowth: number
-    ): Array<{
-      month: string;
-      revenue: number;
-      opex: number;
-      profit: number;
-      profitMarginPct: number;
-      cumulativeProfit: number;
-    }> {
-      let cumProfit = 0;
-      return Array.from({ length: horizon }, (_, i) => {
-        const revenue = last.revenue * Math.pow(1 + clampGrowth(rGrowth), i + 1);
-        const opex = last.expenses * Math.pow(1 + clampGrowth(eGrowth), i + 1);
-        const profit = revenue - opex;
-        cumProfit += profit;
-        return {
-          month: addMonths(last.month, i + 1),
-          revenue,
-          opex,
-          profit,
-          profitMarginPct: revenue !== 0 ? profit / revenue : 0,
-          cumulativeProfit: cumProfit,
-        };
+    const sections = sectionCells(pnl?.Rows);
+    const byMonth = new Map<string, Record<Group, number>>();
+    for (let i = 0; i < months; i++) {
+      byMonth.set(addMonths(start, i), { Income: 0, COGS: 0, Expenses: 0, OtherIncome: 0, OtherExpenses: 0, NetIncome: 0 });
+    }
+    let hasNetIncome = false;
+    for (const group of GROUPS) {
+      const cells = sections.get(group);
+      if (!cells) continue;
+      if (group === "NetIncome") hasNetIncome = true;
+      cells.forEach((cell, i) => {
+        const row = monthOfCol[i] ? byMonth.get(monthOfCol[i]!) : undefined;
+        if (row) row[group] += toNum(cell?.value);
       });
     }
 
-    // Pessimistic: revenue DELTA below base trend, expenses DELTA above base trend
-    // Optimistic:  revenue DELTA above base trend, expenses DELTA below base trend
-    // Additive offsets ensure the ordering (pessimistic < base < optimistic in
-    // profit terms) is preserved even when gRev or gExp is negative.
-    const baseForecast        = buildScenario(gRev,                  gExp);
-    const pessimisticForecast = buildScenario(gRev - SCENARIO_DELTA, gExp + SCENARIO_DELTA);
-    const optimisticForecast  = buildScenario(gRev + SCENARIO_DELTA, gExp - SCENARIO_DELTA);
-
-    const breakevenRevenue = avgOpex;
-    const revenueForMargin = (m: number) =>
-      m >= 1 ? 0 : breakevenRevenue / (1 - m);
-
-    // Months until base forecast first reaches break-even (profit >= 0)
-    const beProfitIdx = baseForecast.findIndex((p) => p.profit >= 0);
-    const monthsToBreakeven = beProfitIdx === -1 ? null : beProfitIdx + 1;
-
-    // Cash runway
-    const runwayMonths =
-      currentCash !== null && avgOpex > 0 ? currentCash / avgOpex : null;
-
-    // Summary metrics
-    const firstFc = baseForecast[0];
-    const lastFc = baseForecast[baseForecast.length - 1];
-    const totalCumulativeProfit = lastFc?.cumulativeProfit ?? 0;
-
-    const scenarioSummary = (rows: typeof baseForecast) => {
-      const last = rows[rows.length - 1];
-      return {
-        endRevenue: last?.revenue ?? 0,
-        endOpex: last?.opex ?? 0,
-        endProfit: last?.profit ?? 0,
-        totalProfit: last?.cumulativeProfit ?? 0,
-        endMarginPct: last?.profitMarginPct ?? 0,
-      };
-    };
+    const history: HistoryMonth[] = Array.from(byMonth.entries()).map(([month, g]) => ({
+      month,
+      revenue: g.Income,
+      cogs: g.COGS,
+      opex: g.Expenses,
+      otherIncome: g.OtherIncome,
+      otherExpenses: g.OtherExpenses,
+      netProfit: hasNetIncome ? g.NetIncome : g.Income - g.COGS - g.Expenses + g.OtherIncome - g.OtherExpenses,
+    }));
 
     return NextResponse.json({
       ok: true,
-      horizon,
-      meta: {
-        monthsUsed,
-        lastMonth: last.month,
-        ...(currentCash !== null ? { currentCash } : {}),
-      },
-      trends: {
-        revenueMoM: gRev,
-        expensesMoM: gExp,
-        revenueTrendLabel:
-          gRev > 0.01 ? "Increasing" : gRev < -0.01 ? "Decreasing" : "Stable",
-        expenseTrendLabel:
-          gExp > 0.01 ? "Increasing" : gExp < -0.01 ? "Decreasing" : "Stable",
-        expenseRatio,
-      },
-      averages: {
-        avgMonthlyRevenue: avgRevenue,
-        avgMonthlyOpex: avgOpex,
-        avgMonthlyProfit: avgProfit,
-        avgNetMarginPct,
-      },
-      benchmarks: {
-        breakevenRevenue,
-        margin10: revenueForMargin(0.1),
-        margin20: revenueForMargin(0.2),
-        margin30: revenueForMargin(0.3),
-        monthsToBreakeven,
-      },
-      summary: {
-        nextMonthRevenue: firstFc?.revenue ?? 0,
-        nextMonthOpex: firstFc?.opex ?? 0,
-        nextMonthProfit: firstFc?.profit ?? 0,
-        endRevenue: lastFc?.revenue ?? 0,
-        endOpex: lastFc?.opex ?? 0,
-        endProfit: lastFc?.profit ?? 0,
-        cumulativeProfit: totalCumulativeProfit,
-        runwayMonths,
-      },
-      forecast: baseForecast,
-      scenarios: {
-        pessimistic: pessimisticForecast,
-        base: baseForecast,
-        optimistic: optimisticForecast,
-        summary: {
-          pessimistic: scenarioSummary(pessimisticForecast),
-          base: scenarioSummary(baseForecast),
-          optimistic: scenarioSummary(optimisticForecast),
-        },
-      },
+      currency: pnl?.Header?.Currency ?? "PKR",
+      accounting_method: method,
+      period: { start, end, months },
+      excludedPartialMonth,
+      history,
+      cash: bank != null ? { balance: bank, asOf: endDate } : null,
     });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "Forecast error" });
+  } catch (e: unknown) {
+    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "Forecast error" }, { status: 500 });
   }
 }
