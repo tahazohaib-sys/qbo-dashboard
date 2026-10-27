@@ -33,12 +33,30 @@ export type RetainedData = {
     netInvestments: number;
   };
   retainedEarning?: number;
+  cashFlow?: CashFlow | null;
   monthly?: Array<{ month: string; label: string; netProfit: number; assets: number; netInvestments: number; retained: number; cumulativeRetained: number }>;
   monthlyCoverage?: { months: number; totalMonths: number; from: string | null; to: string | null; truncated: boolean };
   previous?: { start: string; end: string; netProfit: number; longTermAssetsMovement: number; netInvestments: number; retainedEarning: number } | null;
   ratios?: { retentionRatio: number | null; reinvestmentRatio: number | null; assetsShare: number | null; investmentsShare: number | null; positiveMonths: number; months: number };
   verdict?: { status: "healthy" | "balanced" | "watch" | "risk"; label: string; headline: string };
   insights?: Insight[];
+};
+
+type CashLine = { key: string; label: string; activity: "operating" | "investing"; total: number; average: number; note: string };
+
+type CashFlow = {
+  months: number;
+  basis: "Cash";
+  inflows: CashLine[];
+  outflows: CashLine[];
+  totalInflow: number;
+  totalOutflow: number;
+  avgInflow: number;
+  avgOutflow: number;
+  netCashFlow: number;
+  avgNetCashFlow: number;
+  coverage: number | null;
+  nonCashExcluded: number;
 };
 
 /* ---------------- colours & format ---------------- */
@@ -50,6 +68,9 @@ const C = {
   retained: "#34d399",
   retainedNeg: "#fb7185",
   cumulative: "#fbbf24",
+  // Cash in / out pair (validated for colour-blind separation on the dark surface)
+  cashIn: "#3987e5",
+  cashOut: "#d95926",
 };
 
 function fmt(n: number) {
@@ -138,6 +159,16 @@ export default function RetainedEarningPanel({ data, loading }: { data: Retained
           <Allocation profit={profit} assets={assets} netInvestments={inv.netInvestments} retained={retained} />
         </Card>
       </div>
+
+      {/* Cash inflow vs outflow */}
+      {data.cashFlow ? (
+        <Card
+          title="Average monthly cash inflow and outflow"
+          hint={`${data.cashFlow.months} month${data.cashFlow.months === 1 ? "" : "s"} · cash basis`}
+        >
+          <CashFlowView cf={data.cashFlow} />
+        </Card>
+      ) : null}
 
       {/* Monthly trend */}
       {monthly.length > 0 ? (
@@ -524,6 +555,342 @@ function MonthTip({ active, payload }: { active?: boolean; payload?: Array<{ pay
       {row("Retained", m.retained, m.retained >= 0 ? C.retained : C.retainedNeg)}
       {row("Running total", m.cumulativeRetained, C.cumulative)}
     </div>
+  );
+}
+
+/* ---------------- cash inflow / outflow ---------------- */
+
+// Simple line icons (24px viewBox) for each cash line.
+const CASH_ICON: Record<string, string> = {
+  income: "M3 17l6-6 4 4 8-8M15 7h6v6",
+  otherIncome: "M12 5v14M5 12h14",
+  disposals: "M20.6 13.4L13.4 20.6a2 2 0 01-2.8 0L3 13V3h10l7.6 7.6a2 2 0 010 2.8zM7.5 7.5h.01",
+  contributions: "M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6",
+  cogs: "M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8",
+  expenses: "M6 2h12v20l-3-2-3 2-3-2-3 2V2zM9 7h6M9 11h6M9 15h4",
+  otherExpenses: "M5 12h.01M12 12h.01M19 12h.01",
+  assets: "M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6",
+  investments: "M3 3v18h18M7 15l4-4 3 3 5-6",
+};
+
+function CashFlowView({ cf }: { cf: CashFlow }) {
+  const net = cf.avgNetCashFlow;
+  const surplus = net >= 0;
+  const [showTable, setShowTable] = React.useState(false);
+
+  return (
+    <div className="space-y-6">
+      {/* Headline: cash in, cash out, net + coverage ring */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_1.25fr]">
+        <BigStat icon="in" label="Cash in" sub="average per month" value={cf.avgInflow} color={C.cashIn} />
+        <BigStat icon="out" label="Cash out" sub="average per month" value={cf.avgOutflow} color={C.cashOut} />
+        <div
+          className={`relative flex items-center gap-4 overflow-hidden rounded-2xl border p-4 ${
+            surplus ? "border-emerald-400/25 bg-emerald-500/[0.08]" : "border-rose-400/25 bg-rose-500/[0.08]"
+          }`}
+        >
+          <CoverageRing ratio={cf.coverage} good={surplus} />
+          <div className="min-w-0">
+            <span
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${
+                surplus ? STATUS.healthy.chip : STATUS.risk.chip
+              }`}
+            >
+              <StatusIcon status={surplus ? "healthy" : "risk"} />
+              {surplus ? "Cash surplus" : "Cash shortfall"}
+            </span>
+            <div className={`mt-1.5 text-2xl font-semibold tabular-nums md:text-3xl ${surplus ? "text-emerald-200" : "text-rose-200"}`} title={fmtFull(net)}>
+              {surplus ? "+" : "−"}
+              {fmt(Math.abs(net))}
+            </div>
+            <div className="text-[11px] text-slate-400">net per month</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Cash in vs cash out on one scale */}
+      <CompareBars avgIn={cf.avgInflow} avgOut={cf.avgOutflow} />
+
+      {/* Where cash comes from / goes */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <SourceList title="Where cash comes from" lines={cf.inflows} total={cf.avgInflow} color={C.cashIn} />
+        <SourceList title="Where cash goes" lines={cf.outflows} total={cf.avgOutflow} color={C.cashOut} />
+      </div>
+
+      {/* Full table for accountants */}
+      <div className="border-t border-white/10 pt-4">
+        <button
+          type="button"
+          onClick={() => setShowTable((v) => !v)}
+          aria-expanded={showTable}
+          className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
+        >
+          <svg className={`h-3.5 w-3.5 transition-transform ${showTable ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
+          </svg>
+          {showTable ? "Hide full table" : "Show full table and method"}
+        </button>
+        {showTable ? <CashTable cf={cf} /> : null}
+      </div>
+    </div>
+  );
+}
+
+function BigStat({ icon, label, sub, value, color }: { icon: "in" | "out"; label: string; sub: string; value: number; color: string }) {
+  return (
+    <div className="relative flex items-center gap-4 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+      <span className="absolute inset-y-0 left-0 w-1" style={{ background: color }} />
+      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl" style={{ background: `${color}26`, color }}>
+        <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d={icon === "in" ? "M12 4v12m0 0l-5-5m5 5l5-5M5 20h14" : "M12 20V8m0 0l-5 5m5-5l5 5M5 4h14"} />
+        </svg>
+      </span>
+      <div className="min-w-0">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</div>
+        <div className="mt-1 text-2xl font-semibold tabular-nums text-white md:text-3xl" title={fmtFull(value)}>
+          {fmt(value)}
+        </div>
+        <div className="text-[11px] text-slate-500">{sub}</div>
+      </div>
+    </div>
+  );
+}
+
+function CoverageRing({ ratio, good }: { ratio: number | null; good: boolean }) {
+  const size = 76;
+  const stroke = 8;
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const clamped = ratio == null ? 0 : Math.max(0, Math.min(1, ratio));
+  const color = good ? C.retained : C.retainedNeg;
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }} title="Cash in as a share of cash out">
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={stroke} />
+        <circle
+          className="re-gauge"
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={circ * (1 - clamped)}
+          style={{ ["--re-circ" as string]: `${circ}`, filter: `drop-shadow(0 0 6px ${color}66)` }}
+        />
+      </svg>
+      <div className="absolute inset-0 grid place-items-center text-center">
+        <div>
+          <div className="text-sm font-semibold tabular-nums text-white">{ratio == null ? "—" : `${Math.round(ratio * 100)}%`}</div>
+          <div className="text-[8px] uppercase tracking-[0.1em] text-slate-400">covered</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Cash in and cash out on one scale; the gap shows as a hatched shortfall or surplus. */
+function CompareBars({ avgIn, avgOut }: { avgIn: number; avgOut: number }) {
+  const max = Math.max(avgIn, avgOut, 1);
+  const gap = Math.abs(avgIn - avgOut);
+  const surplus = avgIn >= avgOut;
+  const rows = [
+    { label: "Cash in", value: avgIn, color: C.cashIn, short: !surplus },
+    { label: "Cash out", value: avgOut, color: C.cashOut, short: surplus },
+  ];
+  const gapColor = surplus ? C.retained : C.retainedNeg;
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Cash in vs cash out · per month</div>
+      <div className="space-y-3">
+        {rows.map((r, i) => (
+          <div key={r.label} className="grid grid-cols-[64px_1fr] items-center gap-3 sm:grid-cols-[80px_1fr]">
+            <span className="text-xs font-medium text-slate-300">{r.label}</span>
+            <div className="flex h-9 w-full items-center">
+              <div
+                className="re-grow flex h-full items-center justify-end rounded-l-lg px-2 text-xs font-semibold tabular-nums text-white"
+                style={{
+                  width: `${(r.value / max) * 100}%`,
+                  background: `linear-gradient(90deg, ${r.color}99, ${r.color})`,
+                  borderRadius: r.short && gap > 0 ? "8px 0 0 8px" : 8,
+                  animationDelay: `${i * 120}ms`,
+                }}
+                title={fmtFull(r.value)}
+              >
+                {r.value / max > 0.18 ? fmt(r.value) : null}
+              </div>
+              {r.short && gap > 0 ? (
+                <div
+                  className="re-grow h-full rounded-r-lg border border-dashed"
+                  style={{
+                    width: `${(gap / max) * 100}%`,
+                    borderColor: gapColor,
+                    background: `repeating-linear-gradient(135deg, ${gapColor}40 0 6px, transparent 6px 12px)`,
+                    animationDelay: "360ms",
+                  }}
+                  title={`${surplus ? "Surplus" : "Shortfall"}: ${fmtFull(gap)}`}
+                />
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+        {gap === 0 ? (
+          "Cash in and cash out were equal."
+        ) : surplus ? (
+          <>
+            The <span className="font-semibold text-emerald-200">hatched part</span> is cash kept: {fmt(gap)} per month more came in than went out.
+          </>
+        ) : (
+          <>
+            The <span className="font-semibold text-rose-200">hatched part</span> is the shortfall: {fmt(gap)} per month more went out than came in. It was paid from
+            existing cash.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
+function SourceList({ title, lines, total, color }: { title: string; lines: CashLine[]; total: number; color: string }) {
+  const sorted = [...lines].sort((a, b) => b.average - a.average);
+  const max = Math.max(1, ...sorted.map((l) => Math.abs(l.average)));
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-300">{title}</span>
+      </div>
+      {sorted.length ? (
+        <div className="space-y-3.5">
+          {sorted.map((l, i) => {
+            const share = total > 0 ? l.average / total : 0;
+            return (
+              <div key={l.key} title={`${l.label}: ${fmtFull(l.average)} per month · ${fmtFull(l.total)} in the period`}>
+                <div className="flex items-center gap-3">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl" style={{ background: `${color}1f`, color }}>
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" d={CASH_ICON[l.key] ?? CASH_ICON.otherIncome} />
+                    </svg>
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="min-w-0 text-sm leading-snug text-slate-200">{l.label}</span>
+                      <span className="shrink-0 text-sm font-semibold tabular-nums text-white">{fmt(l.average)}</span>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/5">
+                        <div
+                          className="re-grow h-full rounded-full"
+                          style={{ width: `${(Math.abs(l.average) / max) * 100}%`, background: color, animationDelay: `${i * 80}ms` }}
+                        />
+                      </div>
+                      <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-slate-500">{Math.round(share * 100)}%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="py-3 text-sm text-slate-400">None in this period.</div>
+      )}
+    </div>
+  );
+}
+
+function CashTable({ cf }: { cf: CashFlow }) {
+  const net = cf.avgNetCashFlow;
+  return (
+    <div className="re-in mt-4">
+      <table className="w-full table-fixed text-sm">
+        <thead>
+          <tr className="border-b border-white/10 text-[11px] uppercase tracking-[0.12em] text-slate-500">
+            <th className="pb-2 text-left font-medium">Cash flow</th>
+            <th className="w-[24%] pb-2 text-right font-medium">Avg / month</th>
+            <th className="w-[24%] pb-2 text-right font-medium">Period total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <CashSection title="Cash inflows" lines={cf.inflows} color={C.cashIn} />
+          <CashTotal label="Total cash inflow" average={cf.avgInflow} total={cf.totalInflow} />
+          <CashSection title="Cash outflows" lines={cf.outflows} color={C.cashOut} />
+          <CashTotal label="Total cash outflow" average={cf.avgOutflow} total={cf.totalOutflow} />
+          <tr className="border-t-2 border-white/20">
+            <td className="pt-3 font-semibold text-white">Net cash flow</td>
+            <td className={`pt-3 text-right font-semibold tabular-nums ${net >= 0 ? "text-emerald-200" : "text-rose-200"}`} title={fmtFull(net)}>
+              {fmt(net)}
+            </td>
+            <td className={`pt-3 text-right font-semibold tabular-nums ${cf.netCashFlow >= 0 ? "text-emerald-200" : "text-rose-200"}`} title={fmtFull(cf.netCashFlow)}>
+              {fmt(cf.netCashFlow)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <ul className="mt-4 space-y-1 text-[11px] leading-relaxed text-slate-500">
+        <li>Income and expenses come from the P&L on cash basis (money received and paid), whatever basis is selected above.</li>
+        {cf.nonCashExcluded !== 0 ? <li>Depreciation and amortization ({fmt(cf.nonCashExcluded)}) are not included: they are non-cash charges.</li> : null}
+        <li>Fixed assets and investments use balance movements: purchases bought on credit show here before they are paid.</li>
+        <li>
+          Average = period total ÷ {cf.months} calendar month{cf.months === 1 ? "" : "s"}.
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+function CashSection({ title, lines, color }: { title: string; lines: CashLine[]; color: string }) {
+  return (
+    <>
+      <tr>
+        <td colSpan={3} className="pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-300">
+          <span className="mr-2 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: color }} />
+          {title}
+        </td>
+      </tr>
+      {lines.length ? (
+        lines.map((l) => (
+          <tr key={l.key} className="border-b border-white/5">
+            <td className="py-1.5 pr-2">
+              <div className="text-slate-200">{l.label}</div>
+              <div className="text-[10px] text-slate-500">
+                {l.activity === "operating" ? "Operating" : "Investing"} · {l.note}
+              </div>
+            </td>
+            <td className="py-1.5 text-right tabular-nums text-slate-200" title={fmtFull(l.average)}>
+              {fmt(l.average)}
+            </td>
+            <td className="py-1.5 text-right tabular-nums text-slate-400" title={fmtFull(l.total)}>
+              {fmt(l.total)}
+            </td>
+          </tr>
+        ))
+      ) : (
+        <tr>
+          <td colSpan={3} className="py-1.5 text-slate-500">
+            None in this period
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function CashTotal({ label, average, total }: { label: string; average: number; total: number }) {
+  return (
+    <tr>
+      <td className="py-2 font-semibold text-slate-200">{label}</td>
+      <td className="py-2 text-right font-semibold tabular-nums text-white" title={fmtFull(average)}>
+        {fmt(average)}
+      </td>
+      <td className="py-2 text-right font-semibold tabular-nums text-slate-300" title={fmtFull(total)}>
+        {fmt(total)}
+      </td>
+    </tr>
   );
 }
 

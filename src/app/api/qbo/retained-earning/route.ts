@@ -3,12 +3,15 @@ import { qboFetch } from "@/lib/metrics";
 import {
   buildInsights,
   buildVerdict,
+  computeCashFlow,
   computeComponents,
   computeRatios,
   flattenRows,
   isDepreciationAccount,
   netIncomeRow,
+  pnlTotals,
   toNum,
+  type PnlTotals,
   type FixedAssetFilter,
   type FlatRow,
   type MonthPoint,
@@ -85,6 +88,17 @@ async function fetchNetProfit(start: string, end: string, method: string): Promi
   );
   const row = netIncomeRow(flattenRows(pnl?.Rows));
   return row ? toNum(row.cols?.[1]?.value) : 0;
+}
+
+/** P&L section totals on cash basis: the cash view uses money received and paid, not billed. */
+async function fetchCashPnlTotals(start: string, end: string): Promise<PnlTotals> {
+  const pnl = await qboFetch(
+    `reports/ProfitAndLoss?start_date=${encodeURIComponent(start)}` +
+      `&end_date=${encodeURIComponent(end)}` +
+      `&accounting_method=Cash` +
+      `&summarize_column_by=Total`
+  );
+  return pnlTotals(pnl?.Rows);
 }
 
 /** Net profit per month (key YYYY-MM) from one P&L summarized by month. */
@@ -173,13 +187,16 @@ export async function GET(req: Request) {
     const prev = previousPeriod(start, monthWindows(start, end).length);
 
     // Period snapshots + P&L (same calculation as before)
-    const [endRows, priorRows, netProfit, fixedAssets] = await Promise.all([
+    const [endRows, priorRows, netProfit, fixedAssets, cashPnl] = await Promise.all([
       fetchBalanceSheetRows(end, method),
       fetchBalanceSheetRows(prior, method),
       fetchNetProfit(start, end, method),
       fetchFixedAssetFilter(),
+      fetchCashPnlTotals(start, end).catch(() => null),
     ]);
     const c = computeComponents(endRows, priorRows, netProfit, fixedAssets);
+    // Average over all calendar months of the period (not only the months in the monthly view).
+    const cashFlow = cashPnl ? computeCashFlow(cashPnl, c, allWindows.length) : null;
 
     /* -------- Monthly breakdown (best effort) -------- */
     let monthly: MonthPoint[] = [];
@@ -277,6 +294,7 @@ export async function GET(req: Request) {
       },
 
       retainedEarning: c.retainedEarning,
+      cashFlow,
       charts,
 
       monthly,

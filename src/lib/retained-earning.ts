@@ -29,6 +29,7 @@ export function norm(s: unknown) {
 type QboCell = { value?: string; id?: string };
 type QboRow = {
   type?: string;
+  group?: string;
   Header?: { ColData?: QboCell[] };
   Summary?: { ColData?: QboCell[] };
   ColData?: QboCell[];
@@ -213,6 +214,139 @@ export function computeComponents(
     contribution,
     netInvestments,
     retainedEarning: netProfit - longTermAssetsMovement - netInvestments,
+  };
+}
+
+/* ---------------- cash inflow / outflow ---------------- */
+
+/**
+ * P&L section totals (QBO "group" of each top-level Section).
+ * nonCash: depreciation / amortization inside the expense sections. These
+ * reduce profit but no cash leaves the company, so the cash view adds them back.
+ */
+export type PnlTotals = {
+  income: number;
+  otherIncome: number;
+  cogs: number;
+  expenses: number;
+  otherExpenses: number;
+  nonCash: { cogs: number; expenses: number; otherExpenses: number };
+};
+
+const PNL_GROUPS = { Income: "income", OtherIncome: "otherIncome", COGS: "cogs", Expenses: "expenses", OtherExpenses: "otherExpenses" } as const;
+
+/** Depreciation / amortization total of one P&L section (a matching sub-section counts once). */
+function nonCashOf(rows: QboRows): number {
+  let sum = 0;
+  for (const r of rows?.Row ?? []) {
+    if (r.type === "Section") {
+      const header = r.Header?.ColData?.[0]?.value ?? "";
+      if (isDepreciationAccount(header)) sum += toNum(r.Summary?.ColData?.[1]?.value);
+      else sum += nonCashOf(r.Rows);
+      continue;
+    }
+    const label = r.ColData?.[0]?.value ?? "";
+    if (isDepreciationAccount(label)) sum += toNum(r.ColData?.[1]?.value);
+  }
+  return sum;
+}
+
+/** Section totals of a "Total only" P&L report. */
+export function pnlTotals(rows: QboRows): PnlTotals {
+  const out: PnlTotals = { income: 0, otherIncome: 0, cogs: 0, expenses: 0, otherExpenses: 0, nonCash: { cogs: 0, expenses: 0, otherExpenses: 0 } };
+  const walk = (rs: QboRows) => {
+    for (const r of rs?.Row ?? []) {
+      const key = r.group ? PNL_GROUPS[r.group as keyof typeof PNL_GROUPS] : undefined;
+      if (r.type === "Section" && key) {
+        out[key] += toNum(r.Summary?.ColData?.[1]?.value);
+        if (key === "cogs" || key === "expenses" || key === "otherExpenses") out.nonCash[key] += nonCashOf(r.Rows);
+        continue;
+      }
+      if (r.type === "Section") walk(r.Rows);
+    }
+  };
+  walk(rows);
+  return out;
+}
+
+export type CashLine = {
+  key: string;
+  label: string;
+  activity: "operating" | "investing";
+  total: number;
+  average: number;
+  note: string;
+};
+
+export type CashFlow = {
+  months: number;
+  basis: "Cash";
+  inflows: CashLine[];
+  outflows: CashLine[];
+  totalInflow: number;
+  totalOutflow: number;
+  avgInflow: number;
+  avgOutflow: number;
+  netCashFlow: number;
+  avgNetCashFlow: number;
+  /** Inflow / outflow (null when there is no outflow) */
+  coverage: number | null;
+  nonCashExcluded: number;
+};
+
+/**
+ * Gross cash inflows and outflows for the period, and the monthly average.
+ * Follows the IAS 7 layout: operating (cash-basis P&L, without non-cash
+ * charges) and investing (fixed assets, investments, contributions received).
+ * Inflows and outflows are shown gross, not netted against each other.
+ */
+export function computeCashFlow(pnl: PnlTotals, c: Pick<Components, "ltDetail" | "totalInvestments" | "contribution">, months: number): CashFlow {
+  const m = Math.max(1, months);
+  const line = (key: string, label: string, activity: CashLine["activity"], total: number, note: string): CashLine => ({
+    key,
+    label,
+    activity,
+    total,
+    average: total / m,
+    note,
+  });
+
+  // Fixed assets per account: an increase is a purchase, a decrease (without depreciation) is a disposal.
+  const purchases = c.ltDetail.reduce((s, d) => s + Math.max(0, d.movement), 0);
+  const disposals = c.ltDetail.reduce((s, d) => s + Math.max(0, -d.movement), 0);
+
+  const inflows = [
+    line("income", "Income received", "operating", pnl.income, "P&L income (cash basis)"),
+    line("otherIncome", "Other income received", "operating", pnl.otherIncome, "P&L other income (cash basis)"),
+    line("disposals", "Fixed assets sold / disposed", "investing", disposals, "Decrease in fixed-asset accounts"),
+    line("contributions", "Contributions received from investments", "investing", c.contribution, "Equity contribution accounts"),
+  ];
+  const outflows = [
+    line("cogs", "Cost of sales paid", "operating", pnl.cogs - pnl.nonCash.cogs, "P&L cost of sales (cash basis)"),
+    line("expenses", "Operating expenses paid", "operating", pnl.expenses - pnl.nonCash.expenses, "P&L expenses, without depreciation / amortization"),
+    line("otherExpenses", "Other expenses paid", "operating", pnl.otherExpenses - pnl.nonCash.otherExpenses, "P&L other expenses, without depreciation / amortization"),
+    line("assets", "Fixed assets purchased", "investing", purchases, "Increase in fixed-asset accounts"),
+    line("investments", "Investments made", "investing", c.totalInvestments, "Equity investment accounts"),
+  ];
+
+  const sum = (ls: CashLine[]) => ls.reduce((s, l) => s + l.total, 0);
+  const totalInflow = sum(inflows);
+  const totalOutflow = sum(outflows);
+  const keep = (l: CashLine) => Math.abs(l.total) >= 0.005;
+
+  return {
+    months: m,
+    basis: "Cash",
+    inflows: inflows.filter(keep),
+    outflows: outflows.filter(keep),
+    totalInflow,
+    totalOutflow,
+    avgInflow: totalInflow / m,
+    avgOutflow: totalOutflow / m,
+    netCashFlow: totalInflow - totalOutflow,
+    avgNetCashFlow: (totalInflow - totalOutflow) / m,
+    coverage: totalOutflow > 0 ? totalInflow / totalOutflow : null,
+    nonCashExcluded: pnl.nonCash.cogs + pnl.nonCash.expenses + pnl.nonCash.otherExpenses,
   };
 }
 
