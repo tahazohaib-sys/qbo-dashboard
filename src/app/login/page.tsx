@@ -1,58 +1,198 @@
 "use client";
 
-import { FormEvent, ReactNode, Suspense, useEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  ReactNode,
+  RefObject,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 
 /**
- * Login as one slideshow workflow: each slide is one step of the real setup.
+ * Login as one slide per step:
  *   0 Email -> 1 Password -> 2 Code (first login only) -> 3 Done
- * A returning user goes from Password straight to Done; the Code step then
- * shows as skipped in the step bar.
+ * A returning user goes from Password straight to Done.
+ * Slides move left or right by their order, and the card height follows the active slide.
  */
 
-const STEPS = [
-  { title: "Email", hint: "Approved email" },
-  { title: "Password", hint: "New on first login" },
-  { title: "Code", hint: "First login only" },
-  { title: "Done", hint: "Open dashboard" },
-];
+const STEP_COUNT = 4;
+const RESEND_SECONDS = 30;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const fieldClass =
-  "field mt-2 h-14 w-full rounded-2xl border border-white/10 bg-black/34 px-4 text-base font-medium text-white outline-none placeholder:text-slate-600 focus:border-cyan-200/60 focus:bg-black/42";
+function Spinner() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-[18px] w-[18px] animate-spin" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeOpacity=".25" strokeWidth="2.5" />
+      <path d="M21 12a9 9 0 00-9-9" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
-function PrimaryButton({ children, disabled }: { children: ReactNode; disabled?: boolean }) {
+function SubmitButton({ children, loading }: { children: ReactNode; loading?: boolean }) {
   return (
     <button
       type="submit"
-      disabled={disabled}
-      className="shine-btn relative h-14 w-full overflow-hidden rounded-2xl border border-cyan-200/25 bg-gradient-to-r from-cyan-500/30 via-emerald-400/22 to-cyan-500/30 px-5 text-base font-black text-white shadow-[0_18px_44px_rgba(8,145,178,.28)] transition duration-300 hover:-translate-y-0.5 hover:border-cyan-100/45 hover:shadow-[0_22px_54px_rgba(8,145,178,.4)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
+      disabled={loading}
+      className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-white text-[15px] font-semibold text-[#0b0f17] transition duration-200 hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-400/30 active:scale-[.985] disabled:cursor-default disabled:bg-white/80"
     >
-      <span className="shine" />
-      <span className="relative">{children}</span>
+      {loading ? <Spinner /> : children}
     </button>
   );
 }
 
-function SlideHead({ icon, title, text }: { icon: ReactNode; title: string; text: ReactNode }) {
+function FieldError({ children }: { children: ReactNode }) {
   return (
-    <div className="flex items-start gap-4">
-      <div className="step-icon relative grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-cyan-200/20 bg-[radial-gradient(circle_at_30%_25%,rgba(34,211,238,.28),rgba(16,185,129,.1)_60%,rgba(255,255,255,.02))] text-cyan-100 shadow-[0_0_30px_rgba(34,211,238,.16)]">
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <h2 className="text-2xl font-black tracking-tight text-white">{title}</h2>
-        <p className="mt-1.5 text-sm leading-6 text-slate-300/90">{text}</p>
-      </div>
+    <p role="alert" className="field-error mt-2 flex items-start gap-1.5 text-[13px] leading-5 text-rose-300">
+      <svg viewBox="0 0 20 20" className="mt-[2px] h-4 w-4 shrink-0" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 4a.9.9 0 01.9.9v3.6a.9.9 0 01-1.8 0V6.9A.9.9 0 0110 6zm0 8.4a1.05 1.05 0 110-2.1 1.05 1.05 0 010 2.1z"
+        />
+      </svg>
+      <span>{children}</span>
+    </p>
+  );
+}
+
+function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[.06] px-4 py-3 text-[13px] leading-5 text-cyan-50/90">
+      {children}
     </div>
   );
 }
 
-function Icon({ d, className = "" }: { d: string; className?: string }) {
+function TextField({
+  id,
+  label,
+  type,
+  value,
+  onChange,
+  inputRef,
+  invalid,
+  autoComplete,
+  trailing,
+}: {
+  id: string;
+  label: string;
+  type: string;
+  value: string;
+  onChange: (value: string) => void;
+  inputRef: RefObject<HTMLInputElement | null>;
+  invalid?: boolean;
+  autoComplete: string;
+  trailing?: ReactNode;
+}) {
   return (
-    <svg viewBox="0 0 24 24" className={`h-7 w-7 ${className}`} aria-hidden="true">
-      <path d={d} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <div className="relative">
+      <input
+        id={id}
+        ref={inputRef}
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete={autoComplete}
+        spellCheck={false}
+        autoCapitalize="none"
+        placeholder=" "
+        aria-invalid={invalid || undefined}
+        className={`login-input peer h-14 w-full rounded-xl border bg-white/[.03] px-4 pb-2 pt-6 text-base text-white outline-none transition duration-200 focus:bg-white/[.05] focus:ring-4 ${
+          trailing ? "pr-12" : ""
+        } ${
+          invalid
+            ? "border-rose-400/70 focus:border-rose-400 focus:ring-rose-400/15"
+            : "border-white/[.12] hover:border-white/25 focus:border-cyan-300/80 focus:ring-cyan-300/15"
+        }`}
+      />
+      <label
+        htmlFor={id}
+        className={`pointer-events-none absolute left-4 top-1/2 origin-left -translate-y-1/2 text-base transition-all duration-200 ease-out peer-focus:top-[17px] peer-focus:scale-[.8] peer-autofill:top-[17px] peer-autofill:scale-[.8] peer-[:not(:placeholder-shown)]:top-[17px] peer-[:not(:placeholder-shown)]:scale-[.8] ${
+          invalid ? "text-rose-300/90" : "text-slate-400 peer-focus:text-cyan-200"
+        }`}
+      >
+        {label}
+      </label>
+      {trailing}
+    </div>
+  );
+}
+
+function AccountChip({ email, onClick }: { email: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Use another email"
+      className="mx-auto mt-4 flex max-w-full items-center gap-2 rounded-full border border-white/[.12] py-1 pl-1 pr-3 text-sm text-slate-200 transition hover:border-white/25 hover:bg-white/[.04] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-300/20"
+    >
+      <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-emerald-400 text-xs font-bold uppercase text-[#0b0f17]">
+        {email.charAt(0) || "?"}
+      </span>
+      <span className="truncate">{email}</span>
+      <svg viewBox="0 0 20 20" className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true">
+        <path d="M6 8l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
+function CodeInput({
+  value,
+  onChange,
+  inputRef,
+  invalid,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  inputRef: RefObject<HTMLInputElement | null>;
+  invalid?: boolean;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 6))}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        type="text"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={6}
+        aria-label="Verification code"
+        aria-invalid={invalid || undefined}
+        className="code-input absolute inset-0 z-10 h-full w-full cursor-text bg-transparent text-base text-transparent caret-transparent outline-none"
+      />
+      <div className="grid grid-cols-6 gap-2 sm:gap-2.5" aria-hidden="true">
+        {Array.from({ length: 6 }, (_, i) => {
+          const digit = value[i] ?? "";
+          const active = focused && (i === value.length || (i === 5 && value.length === 6));
+          return (
+            <div
+              key={i}
+              className={`relative grid h-14 place-items-center rounded-xl border bg-white/[.03] text-[22px] font-semibold text-white transition duration-200 ${
+                invalid
+                  ? "border-rose-400/70"
+                  : active
+                    ? "border-cyan-300/80 bg-white/[.05] ring-4 ring-cyan-300/15"
+                    : digit
+                      ? "border-white/25"
+                      : "border-white/[.12]"
+              }`}
+            >
+              {digit ? <span className="code-digit">{digit}</span> : null}
+              {active && !digit ? <span className="code-caret absolute h-6 w-[2px] rounded-full bg-cyan-200" /> : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -62,37 +202,72 @@ function LoginForm() {
   const next = searchParams.get("next") || "/dashboard";
   const approved = searchParams.get("approved") === "1";
   const initialEmail = searchParams.get("email") || "";
+  const reason = searchParams.get("reason");
 
   // With the email already known (link from the approval email), start at the password step.
   const [step, setStep] = useState(initialEmail ? 1 : 0);
   const [codeSkipped, setCodeSkipped] = useState(false);
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
   const [loading, setLoading] = useState(false);
-  const reason = searchParams.get("reason");
-  const [message, setMessage] = useState(
+  const [notice, setNotice] = useState(
     approved
-      ? "Your access is approved. Choose your password to continue."
+      ? "Your access is approved. Choose a password to continue."
       : reason === "idle"
-        ? "You were signed out after 2 hours with no activity. Sign in again to continue."
+        ? "You were signed out after 2 hours of inactivity."
         : reason === "expired"
-          ? "Your session expired. Sign in again to continue."
+          ? "Your session expired. Sign in again."
           : ""
   );
   const [devCode, setDevCode] = useState("");
   const [error, setError] = useState("");
+  // Changes on each new error so the error line animates in again.
+  const [errorKey, setErrorKey] = useState(0);
+  const [resendIn, setResendIn] = useState(0);
+  const [height, setHeight] = useState<number>();
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
+  const slideRefs = useRef<(HTMLElement | null)[]>([]);
 
-  // Move the focus to the field of the new slide when the slide changes.
+  // The card height follows the active slide, also when an error line comes or goes.
+  useLayoutEffect(() => {
+    const el = slideRefs.current[step];
+    if (!el) return;
+    const update = () => setHeight(el.offsetHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [step]);
+
+  // Move the focus to the field of the new slide after the slide comes in.
   useEffect(() => {
     const target = [emailRef, passwordRef, codeRef][step]?.current;
-    const t = window.setTimeout(() => target?.focus({ preventScroll: true }), 420);
+    const t = window.setTimeout(() => target?.focus({ preventScroll: true }), 380);
     return () => window.clearTimeout(t);
   }, [step]);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = window.setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => window.clearTimeout(t);
+  }, [resendIn]);
+
+  function fail(text: string) {
+    setError(text);
+    setErrorKey((k) => k + 1);
+    // Shake the field of the active slide; remove the class first so it plays again.
+    const el = slideRefs.current[step]?.querySelector<HTMLElement>("[data-shake]");
+    if (el) {
+      el.classList.remove("shake");
+      void el.offsetWidth;
+      el.classList.add("shake");
+    }
+  }
 
   function goTo(s: number) {
     setError("");
@@ -104,7 +279,7 @@ function LoginForm() {
     window.setTimeout(() => {
       router.push(next);
       router.refresh();
-    }, 1100);
+    }, 1400);
   }
 
   async function post(endpoint: string, payload: object) {
@@ -119,385 +294,378 @@ function LoginForm() {
   }
 
   async function run(action: () => Promise<void>) {
+    if (loading) return;
     setLoading(true);
     setError("");
-    setDevCode("");
     try {
       await action();
     } catch (err) {
-      setError((err instanceof Error && err.message) || "Something went wrong.");
+      fail((err instanceof Error && err.message) || "Something went wrong.");
     } finally {
       setLoading(false);
     }
   }
 
+  // Sends the email + password. A first login gets a code by email.
+  async function requestCode() {
+    const json = await post("/api/auth/login", { email, password });
+    if (json.needsCode === false) {
+      setCodeSkipped(true);
+      finish();
+      return false;
+    }
+    setCodeSkipped(false);
+    setDevCode(json.devVerificationCode || "");
+    setResendIn(RESEND_SECONDS);
+    return true;
+  }
+
   function submitEmail(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setMessage("");
+    const value = email.trim();
+    if (!EMAIL_PATTERN.test(value)) {
+      fail(value ? "Enter a valid email address." : "Enter your email.");
+      return;
+    }
+    setEmail(value);
     goTo(1);
   }
 
   function submitPassword(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setMessage("");
+    if (password.length < 8) {
+      fail(password ? "Use at least 8 characters." : "Enter your password.");
+      return;
+    }
     run(async () => {
-      const json = await post("/api/auth/login", { email, password });
-      // Returning user: email + password is enough.
-      if (json.needsCode === false) {
-        setCodeSkipped(true);
-        finish();
-        return;
+      if (await requestCode()) {
+        setNotice("");
+        setVerificationCode("");
+        goTo(2);
       }
-      setCodeSkipped(false);
-      setMessage(json.message || "");
-      if (json.devVerificationCode) {
-        setVerificationCode(json.devVerificationCode);
-        setDevCode(json.devVerificationCode);
-      }
-      goTo(2);
     });
   }
 
-  function submitCode(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function verify(code: string) {
+    if (code.length !== 6) {
+      fail("Enter the 6-digit code.");
+      return;
+    }
     run(async () => {
-      await post("/api/auth/verify-login", { email, code: verificationCode });
+      await post("/api/auth/verify-login", { email, code });
       finish();
+    });
+  }
+
+  function resend() {
+    run(async () => {
+      setVerificationCode("");
+      await requestCode();
+      codeRef.current?.focus();
     });
   }
 
   // The login API refuses unknown and not-yet-approved emails; then point to the request form.
   const needsAccess = /not approved|waiting for approval/i.test(error);
 
-  const alerts = (
-    <>
-      {error ? (
-        <div className="rounded-2xl border border-rose-300/30 bg-rose-500/12 p-3 text-sm font-medium text-rose-100">
-          {error}
-          {needsAccess ? (
-            <a href="/request-access" className="ml-1 font-bold text-rose-50 underline underline-offset-2">
+  const errorLine = (forStep: number) =>
+    error && step === forStep ? (
+      <FieldError key={errorKey}>
+        {error}
+        {needsAccess ? (
+          <>
+            {" "}
+            <a href="/request-access" className="font-semibold text-rose-100 underline underline-offset-2">
               Request access
             </a>
-          ) : null}
-        </div>
-      ) : null}
-      {message ? <div className="rounded-2xl border border-emerald-300/30 bg-emerald-500/12 p-3 text-sm font-medium text-emerald-100">{message}</div> : null}
-    </>
-  );
+          </>
+        ) : null}
+      </FieldError>
+    ) : null;
+
+  const slideProps = (i: number) => ({
+    ref: (el: HTMLElement | null) => {
+      slideRefs.current[i] = el;
+    },
+    inert: step !== i,
+    "aria-hidden": step !== i,
+    "data-pos": i < step ? "before" : i > step ? "after" : "current",
+  });
+  // Kept out of slideProps: styled-jsx drops a className that comes from a spread.
+  const slideClass = "login-slide px-6 pb-1 sm:px-10";
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[linear-gradient(160deg,#060b18_0%,#050914_46%,#04101c_100%)] px-4 py-10 text-slate-100">
+    <main className="login-page relative grid min-h-[100dvh] place-items-center overflow-hidden bg-[#0b0f17] px-4 py-10 text-slate-100">
       <style jsx global>{`
-        @keyframes aurora-a {
-          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(6%, 5%, 0) scale(1.18); }
-        }
-        @keyframes aurora-b {
-          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(-5%, -4%, 0) scale(1.12); }
-        }
-        @keyframes aurora-c {
-          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-          50% { transform: translate3d(-4%, 6%, 0) scale(1.22); }
-        }
-        @keyframes float-orb {
-          0%, 100% { transform: translateY(0) translateX(0); }
-          50% { transform: translateY(-22px) translateX(10px); }
-        }
-        @keyframes rise-in {
-          0% { opacity: 0; transform: translateY(22px) scale(.985); }
-          100% { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        @keyframes logo-float {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-6px); }
-        }
-        @keyframes halo-pulse {
-          0%, 100% { opacity: .55; transform: scale(1); }
-          50% { opacity: .9; transform: scale(1.08); }
-        }
-        @keyframes btn-shine {
-          0% { transform: translateX(-130%); }
-          100% { transform: translateX(130%); }
-        }
-        @keyframes icon-pop {
-          0% { opacity: 0; transform: scale(.6) rotate(-8deg); }
-          100% { opacity: 1; transform: scale(1) rotate(0); }
-        }
-        @keyframes check-draw { from { stroke-dashoffset: 40; } to { stroke-dashoffset: 0; } }
-        @keyframes ring-out {
-          0% { opacity: .75; transform: scale(1); }
-          100% { opacity: 0; transform: scale(1.6); }
+        .login-page {
+          font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
         }
 
-        .aurora {
+        @keyframes card-in {
+          from { opacity: 0; transform: translateY(12px); }
+          to { opacity: 1; transform: none; }
+        }
+        @keyframes item-in {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: none; }
+        }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          20% { transform: translateX(-6px); }
+          40% { transform: translateX(5px); }
+          60% { transform: translateX(-3px); }
+          80% { transform: translateX(2px); }
+        }
+        @keyframes indeterminate {
+          from { transform: translateX(-100%); }
+          to { transform: translateX(250%); }
+        }
+        @keyframes caret-blink { 50% { opacity: 0; } }
+        @keyframes digit-in {
+          from { opacity: 0; transform: translateY(4px) scale(.9); }
+          to { opacity: 1; transform: none; }
+        }
+        @keyframes badge-in {
+          0% { opacity: 0; transform: scale(.6); }
+          60% { opacity: 1; transform: scale(1.06); }
+          100% { transform: scale(1); }
+        }
+        @keyframes check-draw { from { stroke-dashoffset: 18; } to { stroke-dashoffset: 0; } }
+
+        .login-card { animation: card-in .7s cubic-bezier(.16, 1, .3, 1) both; }
+
+        .login-slides { transition: height .5s cubic-bezier(.32, .72, 0, 1); }
+        .login-slide {
           position: absolute;
-          border-radius: 9999px;
-          filter: blur(72px);
-          pointer-events: none;
-          z-index: 0;
-          will-change: transform;
+          inset: 0 0 auto 0;
+          transition: transform .55s cubic-bezier(.32, .72, 0, 1), opacity .3s ease, visibility 0s linear .55s;
         }
-        .aurora-1 {
-          top: -20%; left: -12%; width: 54vw; height: 54vw; opacity: .5;
-          background: radial-gradient(circle at 34% 34%, rgba(34, 211, 238, .55), rgba(34, 211, 238, 0) 70%);
-          animation: aurora-a 22s ease-in-out infinite;
+        .login-slide[data-pos="current"] {
+          position: relative;
+          transition: transform .55s cubic-bezier(.32, .72, 0, 1), opacity .45s ease .08s, visibility 0s;
         }
-        .aurora-2 {
-          bottom: -26%; right: -16%; width: 60vw; height: 60vw; opacity: .42;
-          background: radial-gradient(circle at 60% 40%, rgba(16, 185, 129, .48), rgba(16, 185, 129, 0) 70%);
-          animation: aurora-b 27s ease-in-out infinite;
-        }
-        .aurora-3 {
-          top: 16%; right: 8%; width: 42vw; height: 42vw; opacity: .38;
-          background: radial-gradient(circle at 50% 50%, rgba(79, 130, 246, .45), rgba(79, 130, 246, 0) 70%);
-          animation: aurora-c 31s ease-in-out infinite;
-        }
+        .login-slide[data-pos="before"] { opacity: 0; transform: translateX(-48px); visibility: hidden; }
+        .login-slide[data-pos="after"] { opacity: 0; transform: translateX(48px); visibility: hidden; }
+        .login-slide[data-pos="current"] .stagger > * { animation: item-in .5s cubic-bezier(.16, 1, .3, 1) both; }
+        .login-slide[data-pos="current"] .stagger > :nth-child(2) { animation-delay: .05s; }
+        .login-slide[data-pos="current"] .stagger > :nth-child(3) { animation-delay: .1s; }
+        .login-slide[data-pos="current"] .stagger > :nth-child(4) { animation-delay: .15s; }
+        .login-slide[data-pos="current"] .stagger > :nth-child(n + 5) { animation-delay: .2s; }
 
-        .orb {
-          position: absolute;
-          border-radius: 9999px;
-          pointer-events: none;
-          z-index: 0;
-          will-change: transform;
-        }
-        .orb-1 { top: 22%; left: 16%; width: 10px; height: 10px; background: rgba(103, 232, 249, .9); box-shadow: 0 0 22px 5px rgba(34, 211, 238, .5); animation: float-orb 9s ease-in-out infinite; }
-        .orb-2 { top: 68%; left: 30%; width: 7px; height: 7px; background: rgba(110, 231, 183, .9); box-shadow: 0 0 20px 4px rgba(16, 185, 129, .5); animation: float-orb 11s ease-in-out infinite 1.2s; }
-        .orb-3 { top: 34%; right: 22%; width: 8px; height: 8px; background: rgba(147, 197, 253, .9); box-shadow: 0 0 20px 5px rgba(59, 130, 246, .5); animation: float-orb 13s ease-in-out infinite .6s; }
-        .orb-4 { top: 80%; right: 30%; width: 6px; height: 6px; background: rgba(165, 243, 252, .85); box-shadow: 0 0 16px 4px rgba(34, 211, 238, .45); animation: float-orb 10s ease-in-out infinite 2s; }
+        .login-progress { transition: width .6s cubic-bezier(.32, .72, 0, 1), opacity .3s ease; }
+        .login-indeterminate { animation: indeterminate 1.1s cubic-bezier(.65, 0, .35, 1) infinite; }
 
-        .auth-rise { animation: rise-in .8s cubic-bezier(.22, 1, .36, 1) both; }
+        .field-error { animation: item-in .25s ease both; }
+        .shake { animation: shake .4s ease; }
 
-        .logo-float { animation: logo-float 6s ease-in-out infinite; }
-        .logo-halo {
-          position: absolute;
-          inset: -18% -6%;
-          border-radius: 9999px;
-          background: radial-gradient(60% 70% at 42% 50%, rgba(34, 211, 238, .28), rgba(16, 185, 129, .12) 55%, transparent 75%);
-          filter: blur(14px);
-          animation: halo-pulse 5s ease-in-out infinite;
-          pointer-events: none;
-          z-index: -1;
+        .login-input:-webkit-autofill,
+        .login-input:-webkit-autofill:hover,
+        .login-input:-webkit-autofill:focus {
+          -webkit-text-fill-color: #fff;
+          caret-color: #fff;
+          transition: background-color 600000s 0s, color 600000s 0s;
         }
+        .code-input::selection { background: transparent; }
+        .code-caret { animation: caret-blink 1s step-end infinite; }
+        .code-digit { animation: digit-in .18s ease-out both; }
 
-        .shine-btn > .shine {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          width: 45%;
-          background: linear-gradient(105deg, transparent, rgba(255, 255, 255, .28), transparent);
-          transform: translateX(-130%);
-          pointer-events: none;
-        }
-        .shine-btn:hover > .shine { animation: btn-shine 1.1s ease; }
-
-        .field {
-          transition: border-color .3s, background-color .3s, box-shadow .3s, transform .3s;
-        }
-        .field:focus {
-          box-shadow: 0 0 0 4px rgba(34, 211, 238, .12), 0 0 26px rgba(34, 211, 238, .18);
-        }
-
-        .wf-track { transition: transform .55s cubic-bezier(.22, 1, .36, 1); }
-        .wf-slide { transition: opacity .45s ease, filter .45s ease; }
-        .wf-slide[inert] { opacity: 0; filter: blur(3px); }
-        .wf-bar { transition: width .55s cubic-bezier(.22, 1, .36, 1); }
-        .wf-slide:not([inert]) .step-icon { animation: icon-pop .6s cubic-bezier(.34, 1.56, .64, 1) .15s both; }
-        .wf-ring { animation: ring-out 1.6s ease-out infinite; }
-        .wf-check { stroke-dasharray: 40; animation: check-draw .8s ease .25s both; }
+        .done-badge { animation: badge-in .6s cubic-bezier(.34, 1.56, .64, 1) .15s both; }
+        .done-check { stroke-dasharray: 18; animation: check-draw .45s ease-out .5s both; }
 
         @media (prefers-reduced-motion: reduce) {
-          .aurora, .orb, .logo-float, .logo-halo, .shine-btn:hover > .shine, .wf-ring { animation: none !important; }
-          .auth-rise { animation: none !important; opacity: 1 !important; transform: none !important; }
-          .wf-track, .wf-slide, .wf-bar { transition: none !important; }
-          .wf-slide:not([inert]) .step-icon, .wf-check { animation: none !important; }
+          .login-card, .login-slide .stagger > *, .field-error, .shake, .code-digit, .done-badge, .done-check {
+            animation: none !important;
+          }
+          .login-slides, .login-slide, .login-progress { transition: none !important; }
+          .login-slide[data-pos] { transform: none; }
         }
       `}</style>
 
-      {/* Animated aurora backdrop */}
-      <div className="aurora aurora-1" />
-      <div className="aurora aurora-2" />
-      <div className="aurora aurora-3" />
-      <div className="orb orb-1" />
-      <div className="orb orb-2" />
-      <div className="orb orb-3" />
-      <div className="orb orb-4" />
-      {/* Soft vignette to focus the center */}
-      <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(120%_120%_at_50%_-10%,transparent_38%,rgba(3,6,14,0.55)_100%)]" />
+      {/* One quiet light source behind the card */}
+      <div className="pointer-events-none absolute left-1/2 top-[-30%] h-[70vh] w-[90vw] max-w-[900px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(34,211,238,.10),transparent)]" />
 
-      <section className="relative z-10 mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-[540px] flex-col items-center justify-center">
-        <div className="auth-rise logo-float relative mb-8 inline-block">
-          <span className="logo-halo" />
-          <Image
-            src="/logo.png"
-            alt="RTC League"
-            width={264}
-            height={100}
-            priority
-            className="h-auto w-[180px] select-none drop-shadow-[0_10px_30px_rgba(34,211,238,0.25)] sm:w-[220px]"
-          />
+      <div className="login-card relative w-full max-w-[420px] overflow-hidden rounded-2xl border border-white/[.08] bg-[#10151f] shadow-[0_24px_80px_-12px_rgba(0,0,0,.6)]">
+        {/* Progress line: fills by step, runs while a request is open */}
+        <div className="absolute inset-x-0 top-0 h-[3px] overflow-hidden bg-white/[.04]" aria-hidden="true">
+          {loading ? (
+            <span className="login-indeterminate absolute inset-y-0 left-0 w-2/5 rounded-full bg-cyan-300" />
+          ) : (
+            <span
+              className="login-progress absolute inset-y-0 left-0 rounded-r-full bg-gradient-to-r from-cyan-300 to-emerald-300"
+              style={{ width: `${((step + 1) / STEP_COUNT) * 100}%` }}
+            />
+          )}
         </div>
 
-        <div className="auth-rise w-full overflow-hidden rounded-[32px] border border-white/12 bg-slate-950/60 shadow-[0_36px_120px_rgba(0,0,0,.55),inset_0_1px_0_rgba(255,255,255,.06)] backdrop-blur-2xl">
-          {/* Step bar */}
-          <ol className="relative grid grid-cols-4 gap-2 px-5 pt-6 sm:px-8 sm:pt-7" aria-label="Login steps">
-            {STEPS.map((s, i) => {
-              const skipped = i === 2 && codeSkipped && step === 3;
-              const done = i < step && !skipped;
-              const active = i === step;
-              return (
-                <li key={s.title} aria-current={active ? "step" : undefined} className="min-w-0">
-                  <div className="relative h-1.5 overflow-hidden rounded-full bg-white/10">
-                    <span
-                      className={`wf-bar absolute inset-y-0 left-0 rounded-full ${skipped ? "bg-white/25" : "bg-gradient-to-r from-cyan-300 to-emerald-300"}`}
-                      style={{ width: done || skipped ? "100%" : active ? "50%" : "0%" }}
-                    />
-                  </div>
-                  <div className={`mt-2.5 truncate text-[10px] font-black uppercase tracking-[0.08em] sm:text-[11px] sm:tracking-[0.16em] ${active ? "text-cyan-100" : done ? "text-emerald-200/80" : "text-slate-500"}`}>
-                    <span className="hidden sm:inline">{i + 1}. </span>
-                    {s.title}
-                  </div>
-                  <div className="hidden truncate text-[11px] text-slate-500 sm:block">{skipped ? "Not needed" : s.hint}</div>
-                </li>
-              );
-            })}
-          </ol>
+        <div className="pt-10 pb-8 sm:pt-12 sm:pb-10">
+          <div className="flex justify-center px-6">
+            <Image src="/logo.png" alt="RTC League" width={264} height={100} priority className="h-auto w-[120px] select-none" />
+          </div>
 
-          {/* Slides */}
-          <div className="wf-track flex" style={{ transform: `translateX(-${step * 100}%)` }}>
+          <div className="login-slides relative mt-8 overflow-hidden" style={height ? { height } : undefined}>
             {/* 1. Email */}
-            <form onSubmit={submitEmail} inert={step !== 0} className="wf-slide flex w-full shrink-0 flex-col justify-center space-y-5 p-5 sm:p-8">
-              <SlideHead
-                icon={<Icon d="M4 6h16v12H4zM4.5 6.5l7.5 6 7.5-6" />}
-                title="Enter your email"
-                text="Use the email that the admin approved for dashboard access."
-              />
-              <div>
-                <label htmlFor="login-email" className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">Email address</label>
-                <input
-                  id="login-email"
-                  ref={emailRef}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  type="email"
-                  autoComplete="email"
-                  required
-                  placeholder="approved@email.com"
-                  className={fieldClass}
-                />
+            <form {...slideProps(0)} className={slideClass} onSubmit={submitEmail} noValidate>
+              <div className="stagger space-y-6">
+                <h1 className="text-center text-[26px] font-semibold tracking-tight text-white">Sign in</h1>
+                {notice && step === 0 ? <Notice>{notice}</Notice> : null}
+                <div data-shake>
+                  <TextField
+                    id="login-email"
+                    label="Email"
+                    type="email"
+                    value={email}
+                    onChange={(v) => {
+                      setEmail(v);
+                      if (error) setError("");
+                    }}
+                    inputRef={emailRef}
+                    invalid={!!error && step === 0}
+                    autoComplete="username"
+                  />
+                  {errorLine(0)}
+                </div>
+                <SubmitButton>Continue</SubmitButton>
+                <p className="text-center text-sm text-slate-400">
+                  New here?{" "}
+                  <a href="/request-access" className="font-medium text-cyan-200 transition hover:text-cyan-100">
+                    Request access
+                  </a>
+                </p>
               </div>
-              {step === 0 ? alerts : null}
-              <PrimaryButton>Continue</PrimaryButton>
-              <p className="text-center text-sm text-slate-400">
-                No access yet?{" "}
-                <a href="/request-access" className="font-bold text-emerald-200 transition hover:text-emerald-100">
-                  Request access →
-                </a>
-              </p>
             </form>
 
             {/* 2. Password */}
-            <form onSubmit={submitPassword} inert={step !== 1} className="wf-slide flex w-full shrink-0 flex-col justify-center space-y-5 p-5 sm:p-8">
-              <SlideHead
-                icon={<Icon d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 017 0v3" />}
-                title="Enter your password"
-                text="First login: choose a new password. After that, use the same password every time."
-              />
-              <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
-                <span className="truncate text-sm font-semibold text-slate-200">{email || "—"}</span>
-                <button type="button" onClick={() => goTo(0)} className="shrink-0 text-xs font-black uppercase tracking-[0.16em] text-cyan-200 hover:text-cyan-100">
-                  Change
-                </button>
+            <form {...slideProps(1)} className={slideClass} onSubmit={submitPassword} noValidate>
+              <div className="stagger space-y-6">
+                <div>
+                  <h1 className="text-center text-[26px] font-semibold tracking-tight text-white">Enter password</h1>
+                  <AccountChip email={email} onClick={() => goTo(0)} />
+                </div>
+                {notice && step === 1 ? <Notice>{notice}</Notice> : null}
+                {/* Lets password managers save the email together with the password. */}
+                <input type="email" name="username" autoComplete="username" value={email} readOnly tabIndex={-1} aria-hidden="true" className="hidden" />
+                <div data-shake>
+                  <TextField
+                    id="login-password"
+                    label="Password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(v) => {
+                      setPassword(v);
+                      if (error) setError("");
+                    }}
+                    inputRef={passwordRef}
+                    invalid={!!error && step === 1}
+                    autoComplete="current-password"
+                    trailing={
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((s) => !s)}
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                        className="absolute right-2 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-slate-400 transition hover:bg-white/[.06] hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                          <path
+                            d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.7"
+                            strokeLinejoin="round"
+                          />
+                          <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                          {showPassword ? null : <path d="M4 4l16 16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />}
+                        </svg>
+                      </button>
+                    }
+                  />
+                  {errorLine(1)}
+                </div>
+                <SubmitButton loading={loading && step === 1}>Continue</SubmitButton>
               </div>
-              <div>
-                <label htmlFor="login-password" className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">Password</label>
-                <input
-                  id="login-password"
-                  ref={passwordRef}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  minLength={8}
-                  placeholder="Minimum 8 characters"
-                  className={fieldClass}
-                />
-              </div>
-              {step === 1 ? alerts : null}
-              <PrimaryButton disabled={loading}>{loading ? "Working..." : "Sign in"}</PrimaryButton>
             </form>
 
             {/* 3. Code (first login only) */}
-            <form onSubmit={submitCode} inert={step !== 2} className="wf-slide flex w-full shrink-0 flex-col justify-center space-y-5 p-5 sm:p-8">
-              <SlideHead
-                icon={<Icon d="M12 3l7 3v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6l7-3zM9 12l2 2 4-4" />}
-                title="Confirm your email"
-                text={
-                  <>
-                    We sent a 6-digit code to <span className="font-semibold text-slate-100">{email}</span>. You need it on the first login only.
-                  </>
-                }
-              />
-              <div>
-                <label htmlFor="login-code" className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">Verification code</label>
-                <input
-                  id="login-code"
-                  ref={codeRef}
-                  value={verificationCode}
-                  onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  required
-                  minLength={6}
-                  maxLength={6}
-                  className="field mt-2 h-14 w-full rounded-2xl border border-white/10 bg-black/34 px-4 text-center text-xl font-black tracking-[0.46em] text-white outline-none focus:border-cyan-200/60 focus:bg-black/42"
-                />
-              </div>
-              {step === 2 ? alerts : null}
-              {devCode ? (
-                <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-sm font-semibold text-cyan-100">
-                  Development login code: <span className="tracking-[0.28em]">{devCode}</span>
+            <form
+              {...slideProps(2)}
+              className={slideClass}
+              onSubmit={(e) => {
+                e.preventDefault();
+                verify(verificationCode);
+              }}
+              noValidate
+            >
+              <div className="stagger space-y-6">
+                <div>
+                  <h1 className="text-center text-[26px] font-semibold tracking-tight text-white">Check your email</h1>
+                  <AccountChip email={email} onClick={() => goTo(0)} />
                 </div>
-              ) : null}
-              <PrimaryButton disabled={loading}>{loading ? "Working..." : "Verify and sign in"}</PrimaryButton>
-              <button type="button" onClick={() => goTo(1)} className="block w-full text-center text-sm font-semibold text-slate-400 hover:text-slate-200">
-                ← Back to password
-              </button>
+                <div data-shake>
+                  <CodeInput
+                    value={verificationCode}
+                    onChange={(v) => {
+                      setVerificationCode(v);
+                      if (error) setError("");
+                      if (v.length === 6) verify(v);
+                    }}
+                    inputRef={codeRef}
+                    invalid={!!error && step === 2}
+                  />
+                  {errorLine(2)}
+                </div>
+                {devCode ? (
+                  <Notice>
+                    Development code: <span className="font-semibold tracking-[0.2em]">{devCode}</span>
+                  </Notice>
+                ) : null}
+                <SubmitButton loading={loading && step === 2}>Verify</SubmitButton>
+                <div className="text-center text-sm">
+                  {resendIn > 0 ? (
+                    <span className="tabular-nums text-slate-500">Resend code in {resendIn}s</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={resend}
+                      disabled={loading}
+                      className="font-medium text-cyan-200 transition hover:text-cyan-100 disabled:opacity-60"
+                    >
+                      Resend code
+                    </button>
+                  )}
+                </div>
+              </div>
             </form>
 
             {/* 4. Done */}
-            <div inert={step !== 3} className="wf-slide flex w-full shrink-0 flex-col items-center justify-center p-5 text-center sm:p-8">
-              <div className="relative grid h-24 w-24 place-items-center rounded-full border border-emerald-200/30 bg-emerald-400/12 text-emerald-200 shadow-[0_0_44px_rgba(16,185,129,.28)]">
-                <span className="wf-ring absolute inset-0 rounded-full border border-emerald-200/40" />
-                <svg viewBox="0 0 48 48" className="h-12 w-12" aria-hidden="true">
-                  {step === 3 ? (
-                    <path d="M14 24.5l6.5 6.5L34 17.5" className="wf-check" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
-                  ) : null}
-                </svg>
+            <div {...slideProps(3)} className={slideClass} role="status">
+              <div className="stagger flex flex-col items-center pb-2 pt-2 text-center">
+                {step === 3 ? (
+                  <div className="done-badge grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-cyan-300 to-emerald-300 text-[#0b0f17] shadow-[0_10px_40px_-6px_rgba(52,211,153,.5)]">
+                    <svg viewBox="0 0 24 24" className="h-8 w-8" aria-hidden="true">
+                      <path d="M6 12.5l4 4L18 8.5" className="done-check" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                ) : (
+                  <div className="h-16 w-16" />
+                )}
+                <h1 className="mt-6 text-[26px] font-semibold tracking-tight text-white">
+                  {codeSkipped ? "Welcome back" : "You're all set"}
+                </h1>
+                <div className="mt-6 flex items-center gap-2 text-sm text-slate-400">
+                  <Spinner />
+                  <span>Opening dashboard</span>
+                </div>
               </div>
-              <h2 className="mt-6 text-2xl font-black tracking-tight text-white">You are signed in</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-300/90">
-                {codeSkipped ? "Welcome back." : "Your password is saved. Next time, use your email and password only."} Opening the dashboard…
-              </p>
             </div>
           </div>
         </div>
-      </section>
+      </div>
     </main>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense
-      fallback={
-        <main className="grid min-h-screen place-items-center bg-[#050914] px-4 text-slate-100">
-          <div className="h-28 w-full max-w-md animate-pulse rounded-[28px] border border-white/10 bg-white/5" />
-        </main>
-      }
-    >
+    <Suspense fallback={<main className="min-h-[100dvh] bg-[#0b0f17]" />}>
       <LoginForm />
     </Suspense>
   );
