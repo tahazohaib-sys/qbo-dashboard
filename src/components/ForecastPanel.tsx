@@ -30,6 +30,8 @@ import {
   type Method,
   type Scenario,
 } from "@/lib/forecast";
+import { conversionFactor } from "@/lib/currency";
+import { CurrencyFields, RateNote, type CurrencyFilterState } from "@/components/CurrencyFilter";
 
 /* ---------------- API shape (/api/forecast) ---------------- */
 
@@ -43,21 +45,6 @@ export type ForecastHistoryResp = {
   cash: { balance: number; asOf: string } | null;
   error?: string;
 };
-
-type DisplayCurrency = "PKR" | "USD";
-type FxState =
-  | { status: "idle" | "loading" }
-  | { status: "ok"; rate: number; source: string; asOf: string }
-  | { status: "error"; error: string };
-
-/** Factor that converts an amount in the home currency to the display currency. null = no rate yet. */
-function conversionFactor(home: string, display: DisplayCurrency, pkrPerUsd: number | null) {
-  if (home === display) return 1;
-  if (!pkrPerUsd) return null;
-  if (home === "PKR" && display === "USD") return 1 / pkrPerUsd;
-  if (home === "USD" && display === "PKR") return pkrPerUsd;
-  return null;
-}
 
 /* ---------------- colours (validated for colour-blind separation on the dark surface) ---------------- */
 
@@ -106,44 +93,25 @@ export default function ForecastPanel({
   loading,
   baseMonths,
   onBaseMonthsChange,
+  currencyFilter,
 }: {
   data: ForecastHistoryResp | null;
   loading: boolean;
   baseMonths: number;
   onBaseMonthsChange: (months: number) => void;
+  /** Shared with the other modules, so the currency stays the same on all tabs. */
+  currencyFilter: CurrencyFilterState;
 }) {
   const [opts, setOpts] = useState<ForecastOptions>(DEFAULTS);
   const set = <K extends keyof ForecastOptions>(k: K, v: ForecastOptions[K]) => setOpts((o) => ({ ...o, [k]: v }));
 
   // Currency: amounts come in the QuickBooks home currency and are converted at one market rate.
   const homeCurrency = data?.currency ?? "PKR";
-  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("PKR");
-  const [fx, setFx] = useState<FxState>({ status: "idle" });
-  const [rateInput, setRateInput] = useState("");
-  const typedRate = Number(rateInput);
-  const pkrPerUsd = Number.isFinite(typedRate) && typedRate > 0 ? typedRate : null;
+  const { display: displayCurrency, pkrPerUsd } = currencyFilter;
   const factor = conversionFactor(homeCurrency, displayCurrency, pkrPerUsd);
   const currency = factor != null ? displayCurrency : homeCurrency;
-  const otherCurrency: DisplayCurrency = currency === "USD" ? "PKR" : "USD";
+  const otherCurrency = currency === "USD" ? "PKR" : "USD";
   const otherFactor = conversionFactor(currency, otherCurrency, pkrPerUsd);
-
-  async function loadMarketRate() {
-    setFx({ status: "loading" });
-    try {
-      const res = await fetch("/api/fx-rate", { cache: "no-store" });
-      const json = await res.json();
-      if (!json?.ok) throw new Error(json?.error || "No market rate");
-      setFx({ status: "ok", rate: json.rate, source: json.source, asOf: json.asOf });
-      setRateInput(Number(json.rate).toFixed(2));
-    } catch (e: unknown) {
-      setFx({ status: "error", error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-
-  function changeCurrency(next: DisplayCurrency) {
-    setDisplayCurrency(next);
-    if (next !== homeCurrency && fx.status === "idle") loadMarketRate();
-  }
 
   const history = useMemo(() => {
     const rows = data?.history ?? [];
@@ -186,39 +154,7 @@ export default function ForecastPanel({
       {/* Filters */}
       <Card title="Forecast options" hint="The forecast updates when you change an option">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
-          <Select
-            label="Currency"
-            value={displayCurrency}
-            onChange={(v) => changeCurrency(v as DisplayCurrency)}
-            options={[
-              { v: "PKR", label: "PKR (Rs)" },
-              { v: "USD", label: "USD ($)" },
-            ]}
-          />
-          <label className="block" title="PKR for 1 USD. The market rate is filled in; you can type a different rate.">
-            <span className="text-[11px] uppercase tracking-[0.12em] text-slate-300">USD rate (Rs per $1)</span>
-            <div className="mt-1 flex gap-1.5">
-              <input
-                type="number"
-                inputMode="decimal"
-                min="0"
-                step="0.01"
-                value={rateInput}
-                placeholder={fx.status === "loading" ? "Loading…" : "e.g. 280.00"}
-                onChange={(e) => setRateInput(e.target.value)}
-                className="w-full min-w-0 rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm tabular-nums outline-none transition focus:border-cyan-300/40"
-              />
-              <button
-                type="button"
-                onClick={loadMarketRate}
-                disabled={fx.status === "loading"}
-                title="Get the market rate again"
-                className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-2.5 text-xs text-slate-200 hover:bg-white/10 disabled:opacity-50"
-              >
-                {fx.status === "loading" ? "…" : "Market"}
-              </button>
-            </div>
-          </label>
+          <CurrencyFields state={currencyFilter} />
           <Select
             label="Base period"
             value={baseMonths}
@@ -270,7 +206,7 @@ export default function ForecastPanel({
                 }`
               : "The base period ends with the “To” month of the date filter above."}
             <span className="block">
-              <RateNote fx={fx} pkrPerUsd={pkrPerUsd} home={homeCurrency} display={displayCurrency} converted={factor != null && factor !== 1} />
+              <RateNote state={currencyFilter} home={homeCurrency} converted={factor != null && factor !== 1} />
             </span>
           </span>
           {!isDefault ? (
@@ -842,38 +778,6 @@ function Select({
         ))}
       </select>
     </label>
-  );
-}
-
-function RateNote({
-  fx,
-  pkrPerUsd,
-  home,
-  display,
-  converted,
-}: {
-  fx: FxState;
-  pkrPerUsd: number | null;
-  home: string;
-  display: DisplayCurrency;
-  converted: boolean;
-}) {
-  if (display === home && !pkrPerUsd) return null;
-  if (fx.status === "loading" && !pkrPerUsd) return <>Getting the market USD rate…</>;
-  if (!pkrPerUsd) {
-    return (
-      <span className="text-amber-300">
-        {fx.status === "error" ? "The market rate is not available. " : ""}Type the USD rate to show the figures in {display}. The figures show in {home} now.
-      </span>
-    );
-  }
-  const market = fx.status === "ok" && Math.abs(fx.rate - pkrPerUsd) < 0.005;
-  return (
-    <>
-      Rate: Rs {pkrPerUsd.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} = $1 ·{" "}
-      {market ? `market rate from ${fx.source}${fx.asOf ? `, ${fx.asOf}` : ""}` : "rate typed by you"}
-      {converted ? " · all months use this one rate (constant currency)" : ""}
-    </>
   );
 }
 

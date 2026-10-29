@@ -6,6 +6,7 @@ import Link from "next/link";
 import ExpenseDrilldown from "@/components/ExpenseDrilldown";
 import RetainedEarningPanel from "@/components/RetainedEarningPanel";
 import ForecastPanel, { type ForecastHistoryResp } from "@/components/ForecastPanel";
+import { CurrencyFields, RateNote, currencyView, useCurrencyFilter } from "@/components/CurrencyFilter";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -459,8 +460,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
   });
 
   const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<DashboardResp | null>(null);
-  const [pnlBreakdown, setPnlBreakdown] = useState<{ name: string; value: number; accountIds: string[] }[]>([]);
+  const [pnlRaw, setData] = useState<DashboardResp | null>(null);
+  const [pnlBreakdownRaw, setPnlBreakdown] = useState<{ name: string; value: number; accountIds: string[] }[]>([]);
   const [selectedExpense, setSelectedExpense] = useState<string | null>(null);
   const expenseDrilldownRef = useRef<HTMLDivElement | null>(null);
   const [cashBanks, setCashBanks] = useState<CashBanksResp | null>(null);
@@ -479,16 +480,16 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
 
   // ✅ AR/AP
   const [arApLoading, setArApLoading] = useState(false);
-  const [arAp, setArAp] = useState<ArApResp | null>(null);
+  const [arApRaw, setArAp] = useState<ArApResp | null>(null);
   const [showManualAdjustments, setShowManualAdjustments] = useState(true);
-  const [monthlyArAp, setMonthlyArAp] = useState<
+  const [monthlyArApRaw, setMonthlyArAp] = useState<
     Array<{ month: string; asOf: string; payables: number; receivables: number; error?: boolean }>
   >([]);
 
   // ✅ AR/AP Custom Fields (As-Of specific)
   const [arApCustomLoading, setArApCustomLoading] = useState(false);
   const [arApCustomErr, setArApCustomErr] = useState("");
-  const [arApCustomRows, setArApCustomRows] = useState<ArApCustomRow[]>([]);
+  const [arApCustomRowsRaw, setArApCustomRows] = useState<ArApCustomRow[]>([]);
   const [customSection, setCustomSection] = useState<"payables" | "receivables">("receivables");
   const [customLabel, setCustomLabel] = useState("");
   const [customAmount, setCustomAmount] = useState<string>("");
@@ -864,6 +865,64 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forecastBaseMonths]);
 
+  // ✅ Currency (PKR / USD): QuickBooks gives the amounts in the home currency.
+  // Each module shows them in the selected currency at one USD rate.
+  const currencyFilter = useCurrencyFilter();
+  const pnlView = currencyView(currencyFilter, pnlRaw?.currency ?? "PKR");
+  const arApView = currencyView(currencyFilter, arApRaw?.currency ?? "PKR");
+  const retainedView = currencyView(currencyFilter, retained?.currency ?? "PKR");
+
+  const data = useMemo<DashboardResp | null>(() => {
+    const f = pnlView.factor;
+    if (!pnlRaw || f === 1) return pnlRaw;
+    const t = (x: { revenue: number; expenses: number; profit: number }) => ({ revenue: x.revenue * f, expenses: x.expenses * f, profit: x.profit * f });
+    return {
+      ...pnlRaw,
+      series: pnlRaw.series.map((r) => ({ month: r.month, ...t(r) })),
+      kpis: { mtd: pnlRaw.kpis?.mtd ? t(pnlRaw.kpis.mtd) : pnlRaw.kpis?.mtd, ytd: t(pnlRaw.kpis.ytd) },
+    };
+  }, [pnlRaw, pnlView.factor]);
+  const pnlBreakdown = useMemo(
+    () => (pnlView.factor === 1 ? pnlBreakdownRaw : pnlBreakdownRaw.map((b) => ({ ...b, value: b.value * pnlView.factor }))),
+    [pnlBreakdownRaw, pnlView.factor]
+  );
+  /** Compact P&L amount: "PKR 12.3M" in PKR (as before), "$44K" in USD. */
+  const pnlCompact = (n: number, withSign = false) =>
+    pnlView.currency === "PKR" ? formatPKRMillions(n, withSign) : `${withSign && n > 0 ? "+" : ""}${pnlView.short(n)}`;
+
+  const arAp = useMemo<ArApResp | null>(() => {
+    const f = arApView.factor;
+    if (!arApRaw || f === 1) return arApRaw;
+    const scale = <T extends object>(o: T): T =>
+      Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v === "number" ? v * f : v])) as T;
+    return {
+      ...arApRaw,
+      payables: {
+        current: scale(arApRaw.payables.current),
+        longTerm: scale(arApRaw.payables.longTerm),
+        totalPayables: arApRaw.payables.totalPayables * f,
+      },
+      receivables: scale(arApRaw.receivables),
+      apAging: { ...arApRaw.apAging, totalAP: arApRaw.apAging.totalAP * f, vendors: (arApRaw.apAging.vendors ?? []).map(scale) },
+    };
+  }, [arApRaw, arApView.factor]);
+  const monthlyArAp = useMemo(
+    () =>
+      arApView.factor === 1
+        ? monthlyArApRaw
+        : monthlyArApRaw.map((m) => ({ ...m, payables: m.payables * arApView.factor, receivables: m.receivables * arApView.factor })),
+    [monthlyArApRaw, arApView.factor]
+  );
+  // Manual adjustments are saved in PKR; they show in the selected currency.
+  const arApCustomRows = useMemo(
+    () => (arApView.factor === 1 ? arApCustomRowsRaw : arApCustomRowsRaw.map((r) => ({ ...r, amount: Number(r.amount ?? 0) * arApView.factor }))),
+    [arApCustomRowsRaw, arApView.factor]
+  );
+
+  // The currency filter in the filter bar is for these tabs (the forecast has it in its options).
+  const currencyTabHome = tab === "pnl" ? pnlView.home : tab === "arAp" ? arApView.home : tab === "retained" ? retainedView.home : null;
+  const currencyTabConverted = tab === "pnl" ? pnlView.converted : tab === "arAp" ? arApView.converted : retainedView.converted;
+
   const series = data?.series ?? [];
   const kpi = data?.kpis?.ytd ?? { revenue: 0, expenses: 0, profit: 0 };
   const netMargin = kpi.revenue !== 0 ? kpi.profit / kpi.revenue : 0;
@@ -875,10 +934,10 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
     : "shadow-[0_0_50px_rgba(244,63,94,0.35)]";
 
   const financialSummary = isProfit
-    ? `The selected period delivered a net profit of ${formatPKRMillions(
+    ? `The selected period delivered a net profit of ${pnlCompact(
         kpi.profit
       )}, supported by stronger earnings over operating costs. Keep momentum through disciplined expense control and faster invoice realization.`
-    : `The selected period resulted in a net loss of ${formatPKRMillions(
+    : `The selected period resulted in a net loss of ${pnlCompact(
         kpi.profit
       )}, with expenses exceeding revenue. Primary pressure remains in core fixed costs, so immediate focus should be on revenue realization and invoice coverage.`;
 
@@ -1170,6 +1229,17 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
             </button>
           </div>
 
+          {currencyTabHome ? (
+            <div className="mt-4 flex flex-col gap-3 border-t border-white/10 pt-4 md:flex-row md:items-end">
+              <div className="grid grid-cols-2 gap-3 md:w-[420px]">
+                <CurrencyFields state={currencyFilter} labelClassName="text-[12px] uppercase tracking-[0.14em] text-slate-300" />
+              </div>
+              <div className="text-[11px] text-slate-400 md:pb-2.5">
+                <RateNote state={currencyFilter} home={currencyTabHome} converted={currencyTabConverted} />
+              </div>
+            </div>
+          ) : null}
+
           {err ? (
             <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{err}</div>
           ) : null}
@@ -1234,7 +1304,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                     </div>
                     <div className="mt-0.5 text-sm opacity-80">
                       {overdueAP > 0
-                        ? `${overdueAPPct.toFixed(1)}% of AP (${formatPKRCompact(overdueAP)}) is overdue 61+ days · As of ${arAp.asOf}`
+                        ? `${overdueAPPct.toFixed(1)}% of AP (${arApView.full(overdueAP)}) is overdue 61+ days · As of ${arAp.asOf}`
                         : `No overdue payables beyond 60 days · As of ${arAp.asOf}`}
                     </div>
                   </div>
@@ -1244,8 +1314,9 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                 <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
                   <KpiCard
                     title="Total Payables"
+                    alt={arApView.alt}
                     numericValue={payablesAdjTotal}
-                    formatValue={formatPKRCompact}
+                    formatValue={arApView.full}
                     highlight="bad"
                     subtext={
                       payablesMoMPct !== null
@@ -1255,8 +1326,9 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                   />
                   <KpiCard
                     title="Total Receivables"
+                    alt={arApView.alt}
                     numericValue={receivablesAdjTotal}
-                    formatValue={formatPKRCompact}
+                    formatValue={arApView.full}
                     highlight="good"
                     subtext={
                       receivablesMoMPct !== null
@@ -1266,8 +1338,9 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                   />
                   <KpiCard
                     title="Net Position"
+                    alt={arApView.alt}
                     numericValue={receivablesAdjTotal - payablesAdjTotal}
-                    formatValue={formatPKRCompact}
+                    formatValue={arApView.full}
                     highlight={receivablesAdjTotal - payablesAdjTotal >= 0 ? "good" : "bad"}
                     subtext={
                       receivablesAdjTotal - payablesAdjTotal >= 0
@@ -1283,8 +1356,9 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                   />
                   <KpiCard
                     title="Overdue AP (61+ d)"
+                    alt={arApView.alt}
                     numericValue={overdueAP}
-                    formatValue={formatPKRCompact}
+                    formatValue={arApView.full}
                     highlight={overdueAP > 0 ? "bad" : undefined}
                     subtext={overdueAP > 0 ? `${overdueAPPct.toFixed(1)}% of total AP` : "No overdue AP"}
                   />
@@ -1303,7 +1377,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                     <div className="relative h-[280px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
-                          <Tooltip content={<MoneyTooltip pie />} />
+                          <Tooltip content={<MoneyTooltip pie fmt={arApView.full} />} />
                           <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
                           <Pie
                             data={[
@@ -1328,7 +1402,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                             receivablesAdjTotal - payablesAdjTotal >= 0 ? "text-emerald-300" : "text-rose-300"
                           }`}
                         >
-                          {formatPKRCompact(Math.abs(receivablesAdjTotal - payablesAdjTotal))}
+                          {arApView.full(Math.abs(receivablesAdjTotal - payablesAdjTotal))}
                         </div>
                         <div className="text-[10px] text-slate-500">
                           {receivablesAdjTotal - payablesAdjTotal >= 0 ? "surplus" : "deficit"}
@@ -1363,7 +1437,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                               tickLine={TICK_LINE}
                               width={90}
                             />
-                            <Tooltip content={<MoneyTooltip apAgingBar />} />
+                            <Tooltip content={<MoneyTooltip apAgingBar fmt={arApView.full} />} />
                             <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
                             <Bar dataKey="current" name="Current" stackId="a" fill="#22c55e" />
                             <Bar dataKey="1_30" name="1–30 d" stackId="a" fill="#22d3ee" />
@@ -1393,7 +1467,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                             tickLine={TICK_LINE}
                             tickFormatter={fmtAxisPKR}
                           />
-                          <Tooltip content={<MoneyTooltip single />} />
+                          <Tooltip content={<MoneyTooltip single fmt={arApView.full} />} />
                           <Line
                             type="monotone"
                             dataKey="payables"
@@ -1463,6 +1537,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 />
                                 <div className="mt-1 text-[11px] text-slate-400">
                                   Tip: enter a negative value to reduce totals.
+                                  {arApView.currency !== "PKR" ? " Type the amount in PKR; it shows in " + arApView.currency + " in the tables." : ""}
                                 </div>
                               </div>
                               <button
@@ -1513,7 +1588,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                         <td className="py-2 pr-3 capitalize text-slate-200">{r.section}</td>
                                         <td className="py-2 pr-3">{r.label}</td>
                                         <td className="py-2 text-right font-semibold">
-                                          {formatPKRCompact(Number(r.amount ?? 0))}
+                                          {arApView.full(Number(r.amount ?? 0))}
                                         </td>
                                         <td className="py-2 text-right">
                                           <button
@@ -1538,11 +1613,11 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                               <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                                 <div className="text-xs text-slate-300">Payables Adjustments</div>
-                                <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customPayablesSum)}</div>
+                                <div className="mt-1 text-lg font-semibold">{arApView.full(customPayablesSum)}</div>
                               </div>
                               <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                                 <div className="text-xs text-slate-300">Receivables Adjustments</div>
-                                <div className="mt-1 text-lg font-semibold">{formatPKRCompact(customReceivablesSum)}</div>
+                                <div className="mt-1 text-lg font-semibold">{arApView.full(customReceivablesSum)}</div>
                               </div>
                             </div>
                           </div>
@@ -1609,7 +1684,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 </div>
                               </td>
                               <td className="py-2 text-right">
-                                <div className="font-semibold">{formatPKRCompact(value)}</div>
+                                <div className="font-semibold">{arApView.full(value)}</div>
                                 <div className="text-[11px] text-slate-400">
                                   {payablesAdjTotal > 0
                                     ? ((value / payablesAdjTotal) * 100).toFixed(1)
@@ -1656,7 +1731,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 </div>
                               </td>
                               <td className="py-2 text-right">
-                                <div className="font-semibold">{formatPKRCompact(value)}</div>
+                                <div className="font-semibold">{arApView.full(value)}</div>
                                 <div className="text-[11px] text-slate-400">
                                   {payablesAdjTotal > 0
                                     ? ((value / payablesAdjTotal) * 100).toFixed(1)
@@ -1682,7 +1757,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 <tr key={r.id} className="border-t border-white/10">
                                   <td className="py-2 pr-3 text-slate-200">{r.label}</td>
                                   <td className="py-2 text-right font-semibold">
-                                    {formatPKRCompact(Number(r.amount ?? 0))}
+                                    {arApView.full(Number(r.amount ?? 0))}
                                   </td>
                                 </tr>
                               ))}
@@ -1692,7 +1767,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           <tr className="border-t-2 border-white/15 bg-rose-500/10">
                             <td className="py-2.5 pr-3 font-bold text-slate-100">Total Payables</td>
                             <td className="py-2.5 text-right font-bold text-slate-100">
-                              {formatPKRCompact(payablesAdjTotal)}
+                              {arApView.full(payablesAdjTotal)}
                             </td>
                           </tr>
                         </tbody>
@@ -1746,7 +1821,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 </div>
                               </td>
                               <td className="py-2 text-right">
-                                <div className="font-semibold">{formatPKRCompact(value)}</div>
+                                <div className="font-semibold">{arApView.full(value)}</div>
                                 <div className="text-[11px] text-slate-400">
                                   {receivablesAdjTotal > 0
                                     ? ((value / receivablesAdjTotal) * 100).toFixed(1)
@@ -1771,7 +1846,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 <tr key={r.id} className="border-t border-white/10">
                                   <td className="py-2 pr-3 text-slate-200">{r.label}</td>
                                   <td className="py-2 text-right font-semibold">
-                                    {formatPKRCompact(Number(r.amount ?? 0))}
+                                    {arApView.full(Number(r.amount ?? 0))}
                                   </td>
                                 </tr>
                               ))}
@@ -1781,7 +1856,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           <tr className="border-t-2 border-white/15 bg-emerald-500/10">
                             <td className="py-2.5 pr-3 font-bold text-slate-100">Total Receivables</td>
                             <td className="py-2.5 text-right font-bold text-slate-100">
-                              {formatPKRCompact(receivablesAdjTotal)}
+                              {arApView.full(receivablesAdjTotal)}
                             </td>
                           </tr>
                         </tbody>
@@ -1815,7 +1890,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                 <tr key={i} className="border-t border-white/10">
                                   <td className="py-2 pr-3 font-medium text-slate-200">{v.vendor}</td>
                                   <td className="py-2 text-right font-semibold text-slate-200">
-                                    {formatPKRCompact(v.current)}
+                                    {arApView.full(v.current)}
                                   </td>
                                   <td className="py-2 text-right font-semibold">
                                     <span
@@ -1825,7 +1900,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                           : "text-slate-500"
                                       }
                                     >
-                                      {formatPKRCompact(v["1_30"])}
+                                      {arApView.full(v["1_30"])}
                                     </span>
                                   </td>
                                   <td className="py-2 text-right font-semibold">
@@ -1836,7 +1911,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                           : "text-slate-500"
                                       }
                                     >
-                                      {formatPKRCompact(v["31_60"])}
+                                      {arApView.full(v["31_60"])}
                                     </span>
                                   </td>
                                   <td className="py-2 text-right font-semibold">
@@ -1847,7 +1922,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                           : "text-slate-500"
                                       }
                                     >
-                                      {formatPKRCompact(v["61_90"])}
+                                      {arApView.full(v["61_90"])}
                                     </span>
                                   </td>
                                   <td className="py-2 text-right font-semibold">
@@ -1858,7 +1933,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                           : "text-slate-500"
                                       }
                                     >
-                                      {formatPKRCompact(v["91_plus"])}
+                                      {arApView.full(v["91_plus"])}
                                     </span>
                                   </td>
                                   <td className="py-2 text-right text-slate-400">
@@ -1867,7 +1942,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                       : "—"}
                                   </td>
                                   <td className="py-2 text-right font-semibold text-slate-100">
-                                    {formatPKRCompact(v.total)}
+                                    {arApView.full(v.total)}
                                   </td>
                                 </tr>
                               ))}
@@ -1881,7 +1956,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                                   {overdueAPPct.toFixed(1)}%
                                 </td>
                                 <td className="py-2 text-right font-bold text-rose-300">
-                                  {formatPKRCompact(overdueAP)}
+                                  {arApView.full(overdueAP)}
                                 </td>
                               </tr>
                             )}
@@ -1889,7 +1964,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                               <td className="py-2.5 pr-3 font-bold text-slate-100">Total AP</td>
                               <td colSpan={6}></td>
                               <td className="py-2.5 text-right font-bold text-slate-100">
-                                {formatPKRCompact(arAp.apAging.totalAP)}
+                                {arApView.full(arAp.apAging.totalAP)}
                               </td>
                             </tr>
                           </>
@@ -1922,7 +1997,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                   </svg>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Income</span>
                 </div>
-                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.revenue)}</div>
+                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{pnlView.full(kpi.revenue)}</div>
+                {pnlView.alt ? <div className="text-xs font-medium text-slate-300">{pnlView.alt(kpi.revenue)}</div> : null}
                 <div className="mt-2 flex items-center gap-1.5">
                   {momRevenue === null
                     ? <span className="text-[11px] text-slate-500">No prior data</span>
@@ -1942,7 +2018,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                   </svg>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total Expenses</span>
                 </div>
-                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{formatPKRCompact(kpi.expenses)}</div>
+                <div className="mt-3 text-[26px] font-semibold tracking-tight text-white">{pnlView.full(kpi.expenses)}</div>
+                {pnlView.alt ? <div className="text-xs font-medium text-slate-300">{pnlView.alt(kpi.expenses)}</div> : null}
                 <div className="mt-2 flex items-center gap-1.5">
                   {momExpenses === null
                     ? <span className="text-[11px] text-slate-500">No prior data</span>
@@ -1962,7 +2039,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                   </svg>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Net Profit</span>
                 </div>
-                <div className={`mt-3 text-[26px] font-semibold tracking-tight ${kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatPKRCompact(kpi.profit)}</div>
+                <div className={`mt-3 text-[26px] font-semibold tracking-tight ${kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{pnlView.full(kpi.profit)}</div>
+                {pnlView.alt ? <div className="text-xs font-medium text-slate-300">{pnlView.alt(kpi.profit)}</div> : null}
                 <div className="mt-2 flex items-center gap-1.5">
                   {momProfit === null
                     ? <span className="text-[11px] text-slate-500">No prior data</span>
@@ -2029,7 +2107,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           <span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />
                           Revenue
                         </span>
-                        <span className="text-sm font-semibold text-white">{formatPKRMillions(kpi.revenue)}</span>
+                        <span className="text-sm font-semibold text-white">{pnlCompact(kpi.revenue)}</span>
                       </div>
                       <div className="h-2 w-full rounded-full bg-white/8">
                         <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-cyan-300" style={{ width: "100%" }} />
@@ -2043,7 +2121,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
                           Expenses
                         </span>
-                        <span className="text-sm font-semibold text-white">{formatPKRMillions(kpi.expenses)}</span>
+                        <span className="text-sm font-semibold text-white">{pnlCompact(kpi.expenses)}</span>
                       </div>
                       <div className="h-2 w-full rounded-full bg-white/8">
                         <div className="h-full rounded-full bg-gradient-to-r from-rose-600 to-rose-400 transition-all duration-700" style={{ width: `${kpi.revenue > 0 ? Math.min((kpi.expenses / kpi.revenue) * 100, 100) : 0}%` }} />
@@ -2057,7 +2135,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           <span className={`h-2.5 w-2.5 rounded-full ${kpi.profit >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} />
                           Net Profit
                         </span>
-                        <span className={`text-sm font-semibold ${kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatPKRMillions(kpi.profit, true)}</span>
+                        <span className={`text-sm font-semibold ${kpi.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{pnlCompact(kpi.profit, true)}</span>
                       </div>
                       <div className="h-2 w-full rounded-full bg-white/8">
                         <div className={`h-full rounded-full transition-all duration-700 ${kpi.profit >= 0 ? "bg-gradient-to-r from-emerald-600 to-emerald-400" : "bg-gradient-to-r from-rose-600 to-rose-400"}`} style={{ width: `${Math.min(kpi.revenue > 0 ? (Math.abs(kpi.profit) / kpi.revenue) * 100 : 0, 100)}%` }} />
@@ -2105,7 +2183,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                       <CartesianGrid {...GRID} />
                       <XAxis dataKey="month" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} />
                       <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={TICK_LINE} tickFormatter={fmtAxisPKR} />
-                      <Tooltip content={<MoneyTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                      <Tooltip content={<MoneyTooltip fmt={pnlView.full} />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
                       <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" strokeDasharray="4 4" />
                       <Bar dataKey="revenue" name="Revenue" fill="url(#incomeBars2)" radius={[6, 6, 0, 0]} style={{ filter: "drop-shadow(0 0 6px rgba(103,232,249,0.18))" }} />
                       <Bar dataKey="expenses" name="Expenses" fill="url(#expenseBars2)" radius={[6, 6, 0, 0]} style={{ filter: "drop-shadow(0 0 6px rgba(251,113,133,0.16))" }} />
@@ -2177,7 +2255,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                   <div className="h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Tooltip content={<MoneyTooltip pie />} />
+                        <Tooltip content={<MoneyTooltip pie fmt={pnlView.full} />} />
                         <Pie
                           data={expenseComposition}
                           dataKey="value"
@@ -2201,7 +2279,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                           ))}
                         </Pie>
                         <text x="50%" y="46%" textAnchor="middle" fill="rgba(148,163,184,0.8)" fontSize={10} letterSpacing="0.18em">TOTAL</text>
-                        <text x="50%" y="56%" textAnchor="middle" fill="#f1f5f9" fontSize={13} fontWeight={600}>{formatPKRCompact(expenseTotal)}</text>
+                        <text x="50%" y="56%" textAnchor="middle" fill="#f1f5f9" fontSize={13} fontWeight={600}>{pnlView.full(expenseTotal)}</text>
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
@@ -2230,7 +2308,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                               <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: EXPENSE_COLORS[item.colorIdx] }} />
                               {item.name}
                             </span>
-                            <span className="text-xs font-semibold text-slate-200">{pct.toFixed(1)}% &middot; {formatPKRCompact(item.value)}</span>
+                            <span className="text-xs font-semibold text-slate-200">{pct.toFixed(1)}% &middot; {pnlView.full(item.value)}</span>
                           </div>
                           <div className="h-1.5 w-full rounded-full bg-white/8">
                             <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: EXPENSE_COLORS[item.colorIdx] }} />
@@ -2258,6 +2336,8 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                     start={getNormalizedFilters(appliedFilters).start}
                     end={getNormalizedFilters(appliedFilters).end}
                     onClose={() => setSelectedExpense(null)}
+                    currency={pnlView.currency}
+                    factor={pnlView.factor}
                   />
                 ) : (
                   <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
@@ -2279,7 +2359,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
                 </div>
                 <div className="mt-3 text-xl font-bold text-white">{bestProfitMonth.month || "—"}</div>
                 <div className={`mt-1 text-sm font-semibold ${bestProfitMonth.profit >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
-                  {formatPKRCompact(bestProfitMonth.profit)}
+                  {pnlView.full(bestProfitMonth.profit)}
                 </div>
                 <div className="mt-1 text-[11px] text-slate-500">highest net profit in period</div>
               </div>
@@ -2429,7 +2509,15 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
         ) : null}
 
         {/* RETAINED TAB */}
-        {tab === "retained" ? <RetainedEarningPanel data={retained} loading={retainedLoading} /> : null}
+        {tab === "retained" ? (
+          <RetainedEarningPanel
+            data={retained}
+            loading={retainedLoading}
+            currency={retainedView.currency}
+            factor={retainedView.factor}
+            alt={retainedView.alt}
+          />
+        ) : null}
 
         {tab === "forecast" ? (
           <ForecastPanel
@@ -2437,6 +2525,7 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
             loading={forecastLoading}
             baseMonths={forecastBaseMonths}
             onBaseMonthsChange={setForecastBaseMonths}
+            currencyFilter={currencyFilter}
           />
         ) : null}
       </div>
@@ -2654,8 +2743,10 @@ function KpiCard({
   formatValue,
   highlight,
   subtext,
+  alt,
 }: {
   title: string;
+  alt?: (n: number) => string;
   value?: string;
   numericValue?: number;
   formatValue?: (n: number) => string;
@@ -2690,6 +2781,7 @@ function KpiCard({
         {title}
       </div>
       <div className="mt-3 text-[24px] font-semibold tracking-tight text-white">{resolvedValue}</div>
+      {alt && typeof numericValue === "number" ? <div className="text-xs font-medium text-slate-300">{alt(numericValue)}</div> : null}
       {subtext ? <div className="mt-1 text-xs text-slate-400">{subtext}</div> : null}
     </div>
   );
@@ -2709,7 +2801,7 @@ function LastPointPulseDot({ cx, cy, index, dataLength, color }: any) {
   );
 }
 
-function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd, apAgingBar }: any) {
+function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd, apAgingBar, fmt = formatPKRCompact }: any) {
   if (!active || !payload || payload.length === 0) return null;
 
   if (pie) {
@@ -2717,7 +2809,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd, apAgi
     return (
       <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">{p?.name ?? ""}</div>
-        <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
+        <div>{fmt(Number(p?.value ?? 0))}</div>
       </div>
     );
   }
@@ -2729,7 +2821,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd, apAgi
         {payload.map((p: any) => (
           <div key={p.dataKey} className="flex items-center justify-between gap-4">
             <span className="text-slate-300">{p.name}</span>
-            <span className="font-semibold">{formatPKRCompact(Number(p.value ?? 0))}</span>
+            <span className="font-semibold">{fmt(Number(p.value ?? 0))}</span>
           </div>
         ))}
       </div>
@@ -2746,12 +2838,12 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd, apAgi
       <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">As of {asOf || label}</div>
         <div className="flex items-center justify-between gap-4">
-          <span className="text-slate-300">Payables PKR</span>
-          <span className="font-semibold">{formatPKRCompact(payables)}</span>
+          <span className="text-slate-300">Payables</span>
+          <span className="font-semibold">{fmt(payables)}</span>
         </div>
         <div className="flex items-center justify-between gap-4">
-          <span className="text-slate-300">Receivables PKR</span>
-          <span className="font-semibold">{formatPKRCompact(receivables)}</span>
+          <span className="text-slate-300">Receivables</span>
+          <span className="font-semibold">{fmt(receivables)}</span>
         </div>
       </div>
     );
@@ -2762,7 +2854,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd, apAgi
     return (
       <div className="rounded-2xl border border-white/10 bg-[#070b1a]/90 px-3.5 py-2.5 text-sm text-slate-100 shadow-[0_18px_40px_rgba(2,6,23,0.65)] backdrop-blur-xl">
         <div className="font-semibold">{label}</div>
-        <div>{formatPKRCompact(Number(p?.value ?? 0))}</div>
+        <div>{fmt(Number(p?.value ?? 0))}</div>
       </div>
     );
   }
@@ -2773,7 +2865,7 @@ function MoneyTooltip({ active, payload, label, pie, single, arApMonthEnd, apAgi
       {payload.map((p: any) => (
         <div key={p.dataKey} className="flex items-center justify-between gap-4">
           <span className="text-slate-300">{p.name ?? p.dataKey}</span>
-          <span className="font-semibold">{formatPKRCompact(Number(p.value ?? 0))}</span>
+          <span className="font-semibold">{fmt(Number(p.value ?? 0))}</span>
         </div>
       ))}
     </div>
