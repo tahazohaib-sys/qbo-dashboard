@@ -409,8 +409,8 @@ export function computeRatios(c: Pick<Components, "netProfit" | "longTermAssetsM
   };
 }
 
-export function buildVerdict(c: Components, ratios: Ratios): Verdict {
-  const f = formatPKR;
+/** `f` formats an amount; the default is PKR. The dashboard gives a different one to show the text in USD. */
+export function buildVerdict(c: Components, ratios: Ratios, f: (n: number) => string = formatPKR): Verdict {
   if (c.netProfit <= 0) {
     return {
       status: "risk",
@@ -455,9 +455,9 @@ export function buildInsights(
   ratios: Ratios,
   monthly: MonthPoint[],
   previous: PeriodSummary | null,
-  monthlyTruncated = false
+  monthlyTruncated = false,
+  f: (n: number) => string = formatPKR
 ): Insight[] {
-  const f = formatPKR;
   const out: Insight[] = [];
   const p = c.netProfit;
 
@@ -466,10 +466,9 @@ export function buildInsights(
     out.push({
       tone: "info",
       title: "Where the profit went",
-      text: `Of every Rs 100 of profit, Rs ${Math.max(0, Math.round((ratios.retentionRatio ?? 0) * 100))} stayed in the company, Rs ${Math.max(
-        0,
-        Math.round((ratios.assetsShare ?? 0) * 100)
-      )} bought long-term assets and Rs ${Math.max(0, Math.round((ratios.investmentsShare ?? 0) * 100))} went into net investments.`,
+      text: `Of every ${f(100)} of profit, ${f(Math.max(0, Math.round((ratios.retentionRatio ?? 0) * 100)))} stayed in the company, ${f(
+        Math.max(0, Math.round((ratios.assetsShare ?? 0) * 100))
+      )} bought long-term assets and ${f(Math.max(0, Math.round((ratios.investmentsShare ?? 0) * 100)))} went into net investments.`,
     });
   }
 

@@ -14,6 +14,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { MoneyProvider, useMoneyCurrency } from "@/components/CurrencyFilter";
+import { moneyPrefix } from "@/lib/currency";
+import { buildInsights, buildVerdict, type Components } from "@/lib/retained-earning";
 
 /* ---------------- types (subset of /api/qbo/retained-earning) ---------------- */
 
@@ -73,16 +76,98 @@ const C = {
   cashOut: "#d95926",
 };
 
-function fmt(n: number) {
-  const sign = n < 0 ? "-" : "";
+function formatShort(n: number, currency: string) {
+  const pre = moneyPrefix(currency, n < 0);
   const a = Math.abs(n);
-  if (a >= 1_000_000) return `${sign}Rs ${(a / 1_000_000).toFixed(a >= 10_000_000 ? 1 : 2)}M`;
-  if (a >= 1_000) return `${sign}Rs ${Math.round(a / 1_000).toLocaleString("en")}K`;
-  return `${sign}Rs ${Math.round(a).toLocaleString("en")}`;
+  if (a >= 1_000_000) return `${pre}${(a / 1_000_000).toFixed(a >= 10_000_000 ? 1 : 2)}M`;
+  if (a >= 1_000) return `${pre}${Math.round(a / 1_000).toLocaleString("en")}K`;
+  return `${pre}${Math.round(a).toLocaleString("en")}`;
 }
 
-function fmtFull(n: number) {
-  return `${n < 0 ? "-" : ""}Rs ${Math.round(Math.abs(n)).toLocaleString("en")}`;
+function formatFull(n: number, currency: string) {
+  return `${moneyPrefix(currency, n < 0)}${Math.round(Math.abs(n)).toLocaleString("en")}`;
+}
+
+/** Formatters in the display currency of the panel (see MoneyProvider). */
+function useFmt() {
+  const { currency } = useMoneyCurrency();
+  return {
+    fmt: (n: number) => formatShort(n, currency),
+    fmtFull: (n: number) => formatFull(n, currency),
+    fmtAxis: (n: number) => formatShort(n, currency).replace(moneyPrefix(currency), ""),
+  };
+}
+
+/**
+ * The same data with all amounts multiplied by `f` (currency conversion).
+ * Ratios do not change. The verdict and insights have amounts in their text,
+ * so they are written again in the display currency.
+ */
+function convertRetained(d: RetainedData, f: number, currency: string): RetainedData {
+  const x = (n: number | undefined) => (n == null ? n : n * f) as number;
+  const cashLine = (l: CashLine): CashLine => ({ ...l, total: l.total * f, average: l.average * f });
+  const out: RetainedData = {
+    ...d,
+    netProfit: x(d.netProfit),
+    longTermAssetsMovement: x(d.longTermAssetsMovement),
+    longTermAssets: d.longTermAssets && {
+      end: d.longTermAssets.end * f,
+      prior: d.longTermAssets.prior * f,
+      detail: d.longTermAssets.detail?.map((r) => ({ ...r, end: r.end * f, prior: r.prior * f, movement: r.movement * f })),
+    },
+    investments: d.investments && {
+      items: d.investments.items?.map((it) => ({ ...it, amount: it.amount * f })),
+      contribution: d.investments.contribution * f,
+      totalInvestments: d.investments.totalInvestments * f,
+      netInvestments: d.investments.netInvestments * f,
+    },
+    retainedEarning: x(d.retainedEarning),
+    cashFlow: d.cashFlow && {
+      ...d.cashFlow,
+      inflows: d.cashFlow.inflows.map(cashLine),
+      outflows: d.cashFlow.outflows.map(cashLine),
+      totalInflow: d.cashFlow.totalInflow * f,
+      totalOutflow: d.cashFlow.totalOutflow * f,
+      avgInflow: d.cashFlow.avgInflow * f,
+      avgOutflow: d.cashFlow.avgOutflow * f,
+      netCashFlow: d.cashFlow.netCashFlow * f,
+      avgNetCashFlow: d.cashFlow.avgNetCashFlow * f,
+      nonCashExcluded: d.cashFlow.nonCashExcluded * f,
+    },
+    monthly: d.monthly?.map((m) => ({
+      ...m,
+      netProfit: m.netProfit * f,
+      assets: m.assets * f,
+      netInvestments: m.netInvestments * f,
+      retained: m.retained * f,
+      cumulativeRetained: m.cumulativeRetained * f,
+    })),
+    previous: d.previous && {
+      ...d.previous,
+      netProfit: d.previous.netProfit * f,
+      longTermAssetsMovement: d.previous.longTermAssetsMovement * f,
+      netInvestments: d.previous.netInvestments * f,
+      retainedEarning: d.previous.retainedEarning * f,
+    },
+  };
+  if (d.ratios && d.verdict) {
+    const money = (n: number) => formatShort(n, currency);
+    const c: Components = {
+      netProfit: out.netProfit ?? 0,
+      ltDetail: out.longTermAssets?.detail ?? [],
+      ltEnd: out.longTermAssets?.end ?? 0,
+      ltPrior: out.longTermAssets?.prior ?? 0,
+      longTermAssetsMovement: out.longTermAssetsMovement ?? 0,
+      items: out.investments?.items ?? [],
+      totalInvestments: out.investments?.totalInvestments ?? 0,
+      contribution: out.investments?.contribution ?? 0,
+      netInvestments: out.investments?.netInvestments ?? 0,
+      retainedEarning: out.retainedEarning ?? 0,
+    };
+    out.verdict = buildVerdict(c, d.ratios, money);
+    out.insights = buildInsights(c, d.ratios, out.monthly ?? [], out.previous ?? null, d.monthlyCoverage?.truncated ?? false, money);
+  }
+  return out;
 }
 
 const STATUS = {
@@ -94,11 +179,34 @@ const STATUS = {
 
 /* ---------------- main ---------------- */
 
-export default function RetainedEarningPanel({ data, loading }: { data: RetainedData | null; loading: boolean }) {
+export default function RetainedEarningPanel({
+  data,
+  loading,
+  currency = "PKR",
+  factor = 1,
+  alt,
+}: {
+  data: RetainedData | null;
+  loading: boolean;
+  /** Display currency, and the factor from the QuickBooks home currency to it. */
+  currency?: string;
+  factor?: number;
+  /** The same amount in the other currency ("≈ $4K"). */
+  alt?: (n: number) => string;
+}) {
   if (loading && !data) return <Skeleton />;
   if (!data) {
     return <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5 text-sm text-slate-300">No retained earning data for this period.</div>;
   }
+  return (
+    <MoneyProvider currency={currency}>
+      <RetainedBody data={factor !== 1 ? convertRetained(data, factor, currency) : data} alt={alt} />
+    </MoneyProvider>
+  );
+}
+
+function RetainedBody({ data, alt }: { data: RetainedData; alt?: (n: number) => string }) {
+  const { fmt, fmtFull } = useFmt();
 
   const profit = data.netProfit ?? 0;
   const assets = data.longTermAssetsMovement ?? 0;
@@ -126,6 +234,7 @@ export default function RetainedEarningPanel({ data, loading }: { data: Retained
             <div className={`mt-3 text-4xl font-semibold tracking-tight tabular-nums md:text-5xl ${retained >= 0 ? "text-white" : "text-rose-200"}`} title={fmtFull(retained)}>
               {fmt(retained)}
             </div>
+            {alt ? <div className="mt-1 text-sm font-medium tabular-nums text-slate-300">{alt(retained)}</div> : null}
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-300 md:text-base">{verdict.headline}</p>
             <div className="mt-3 text-[11px] text-slate-500">
               {data.start_date} → {data.end_date} · {data.accounting_method ?? "Accrual"} basis
@@ -138,16 +247,17 @@ export default function RetainedEarningPanel({ data, loading }: { data: Retained
 
       {/* KPI tiles with change vs previous period */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Kpi label="Net profit" value={profit} prev={prev?.netProfit} goodWhenUp accent={C.profit} note="Earned in the period (P&L)" />
-        <Kpi label="Asset purchases" value={assets} prev={prev?.longTermAssetsMovement} accent={C.deduct} note="Fixed assets, without depreciation" />
+        <Kpi label="Net profit" value={profit} alt={alt} prev={prev?.netProfit} goodWhenUp accent={C.profit} note="Earned in the period (P&L)" />
+        <Kpi label="Asset purchases" value={assets} alt={alt} prev={prev?.longTermAssetsMovement} accent={C.deduct} note="Fixed assets, without depreciation" />
         <Kpi
           label="Net investments"
           value={inv.netInvestments}
           prev={prev?.netInvestments}
+          alt={alt}
           accent={C.deduct}
           note={`Invested ${fmt(inv.totalInvestments)} · Received ${fmt(inv.contribution)}`}
         />
-        <Kpi label="Retained earning" value={retained} prev={prev?.retainedEarning} goodWhenUp accent={retained >= 0 ? C.retained : C.retainedNeg} note="What the company kept" emphasis />
+        <Kpi label="Retained earning" value={retained} alt={alt} prev={prev?.retainedEarning} goodWhenUp accent={retained >= 0 ? C.retained : C.retainedNeg} note="What the company kept" emphasis />
       </div>
 
       {/* Bridge + allocation */}
@@ -155,7 +265,7 @@ export default function RetainedEarningPanel({ data, loading }: { data: Retained
         <Card title="From profit to retained earning" className="xl:col-span-3" hint="How the profit becomes the retained amount, step by step">
           <Bridge profit={profit} assets={assets} invested={inv.totalInvestments} contributions={inv.contribution} retained={retained} />
         </Card>
-        <Card title="Where every Rs 100 of profit went" className="xl:col-span-2">
+        <Card title={`Where every ${fmt(100)} of profit went`} className="xl:col-span-2">
           <Allocation profit={profit} assets={assets} netInvestments={inv.netInvestments} retained={retained} />
         </Card>
       </div>
@@ -318,15 +428,18 @@ function Kpi({
   accent,
   goodWhenUp,
   emphasis,
+  alt,
 }: {
   label: string;
   value: number;
+  alt?: (n: number) => string;
   prev?: number;
   note: string;
   accent: string;
   goodWhenUp?: boolean;
   emphasis?: boolean;
 }) {
+  const { fmt, fmtFull } = useFmt();
   const hasPrev = prev !== undefined && prev !== null;
   const diff = hasPrev ? value - (prev as number) : 0;
   const pctChange = hasPrev && prev !== 0 ? diff / Math.abs(prev as number) : null;
@@ -340,6 +453,7 @@ function Kpi({
       <div className="mt-2 text-2xl font-semibold tabular-nums text-white" title={fmtFull(value)}>
         {fmt(value)}
       </div>
+      {alt ? <div className="text-xs font-medium tabular-nums text-slate-300">{alt(value)}</div> : null}
       <div className="mt-1 truncate text-[11px] text-slate-500">{note}</div>
       {hasPrev ? (
         <div className={`mt-2 flex items-center gap-1 text-[11px] font-medium ${tone}`}>
@@ -356,6 +470,7 @@ function Kpi({
 type Step = { name: string; title: string; range: [number, number]; value: number; color: string; kind: "total" | "minus" | "plus" };
 
 function Bridge({ profit, assets, invested, contributions, retained }: { profit: number; assets: number; invested: number; contributions: number; retained: number }) {
+  const { fmt, fmtAxis } = useFmt();
   const steps: Step[] = [];
   let run = 0;
   const push = (name: string, title: string, delta: number, kind: Step["kind"], color: string) => {
@@ -376,7 +491,7 @@ function Bridge({ profit, assets, invested, contributions, retained }: { profit:
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={steps} margin={{ top: 28, right: 8, left: 0, bottom: 0 }} barCategoryGap="22%">
             <XAxis dataKey="name" tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 11 }} axisLine={false} tickLine={false} interval={0} />
-            <YAxis tickFormatter={(v: number) => fmt(v).replace("Rs ", "")} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} width={56} />
+            <YAxis tickFormatter={(v: number) => fmtAxis(v)} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} width={56} />
             <ReferenceLine y={0} stroke="rgba(255,255,255,0.25)" />
             <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} content={<BridgeTip />} />
             <Bar dataKey="range" radius={[4, 4, 4, 4]} animationDuration={900}>
@@ -429,6 +544,7 @@ function Bridge({ profit, assets, invested, contributions, retained }: { profit:
 }
 
 function BridgeTip({ active, payload }: { active?: boolean; payload?: Array<{ payload: Step }> }) {
+  const { fmtFull } = useFmt();
   if (!active || !payload?.length) return null;
   const s = payload[0].payload;
   const explain: Record<string, string> = {
@@ -450,6 +566,7 @@ function BridgeTip({ active, payload }: { active?: boolean; payload?: Array<{ pa
 /* ---------------- allocation ---------------- */
 
 function Allocation({ profit, assets, netInvestments, retained }: { profit: number; assets: number; netInvestments: number; retained: number }) {
+  const { fmt, fmtFull } = useFmt();
   if (profit <= 0) {
     return <div className="py-6 text-sm text-slate-400">There was no profit in this period, so there is nothing to split.</div>;
   }
@@ -484,7 +601,7 @@ function Allocation({ profit, assets, netInvestments, retained }: { profit: numb
                 {p.label}
               </div>
               <div className="text-right">
-                <div className="text-sm font-semibold tabular-nums text-white">Rs {Math.round(share * 100)}</div>
+                <div className="text-sm font-semibold tabular-nums text-white">{fmt(Math.round(share * 100))}</div>
                 <div className="text-[11px] tabular-nums text-slate-500">{fmt(p.value)}</div>
               </div>
             </div>
@@ -496,7 +613,7 @@ function Allocation({ profit, assets, netInvestments, retained }: { profit: numb
           Assets and investments were {fmt(-retained)} more than the profit. That part was paid from existing reserves.
         </div>
       ) : (
-        <p className="mt-4 text-[11px] text-slate-500">Read as: for every Rs 100 of profit, this is where the money went.</p>
+        <p className="mt-4 text-[11px] text-slate-500">Read as: for every {fmt(100)} of profit, this is where the money went.</p>
       )}
     </div>
   );
@@ -505,13 +622,14 @@ function Allocation({ profit, assets, netInvestments, retained }: { profit: numb
 /* ---------------- monthly ---------------- */
 
 function MonthlyTrend({ monthly }: { monthly: NonNullable<RetainedData["monthly"]> }) {
+  const { fmtAxis } = useFmt();
   return (
     <div>
       <div className="h-[300px]">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={monthly} margin={{ top: 12, right: 8, left: 0, bottom: 0 }} barGap={2}>
             <XAxis dataKey="label" tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis tickFormatter={(v: number) => fmt(v).replace("Rs ", "")} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} width={56} />
+            <YAxis tickFormatter={(v: number) => fmtAxis(v)} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} width={56} />
             <ReferenceLine y={0} stroke="rgba(255,255,255,0.25)" />
             <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} content={<MonthTip />} />
             <Bar dataKey="netProfit" name="Net profit" fill={C.profit} fillOpacity={0.35} radius={[4, 4, 0, 0]} maxBarSize={28} />
@@ -535,6 +653,7 @@ function MonthlyTrend({ monthly }: { monthly: NonNullable<RetainedData["monthly"
 }
 
 function MonthTip({ active, payload }: { active?: boolean; payload?: Array<{ payload: NonNullable<RetainedData["monthly"]>[number] }> }) {
+  const { fmtFull } = useFmt();
   if (!active || !payload?.length) return null;
   const m = payload[0].payload;
   const row = (l: string, v: number, c?: string) => (
@@ -574,6 +693,7 @@ const CASH_ICON: Record<string, string> = {
 };
 
 function CashFlowView({ cf }: { cf: CashFlow }) {
+  const { fmt, fmtFull } = useFmt();
   const net = cf.avgNetCashFlow;
   const surplus = net >= 0;
   const [showTable, setShowTable] = React.useState(false);
@@ -637,6 +757,7 @@ function CashFlowView({ cf }: { cf: CashFlow }) {
 }
 
 function BigStat({ icon, label, sub, value, color }: { icon: "in" | "out"; label: string; sub: string; value: number; color: string }) {
+  const { fmt, fmtFull } = useFmt();
   return (
     <div className="relative flex items-center gap-4 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] p-4">
       <span className="absolute inset-y-0 left-0 w-1" style={{ background: color }} />
@@ -693,6 +814,7 @@ function CoverageRing({ ratio, good }: { ratio: number | null; good: boolean }) 
 
 /** Cash in and cash out on one scale; the gap shows as a hatched shortfall or surplus. */
 function CompareBars({ avgIn, avgOut }: { avgIn: number; avgOut: number }) {
+  const { fmt, fmtFull } = useFmt();
   const max = Math.max(avgIn, avgOut, 1);
   const gap = Math.abs(avgIn - avgOut);
   const surplus = avgIn >= avgOut;
@@ -756,6 +878,7 @@ function CompareBars({ avgIn, avgOut }: { avgIn: number; avgOut: number }) {
 }
 
 function SourceList({ title, lines, total, color }: { title: string; lines: CashLine[]; total: number; color: string }) {
+  const { fmt, fmtFull } = useFmt();
   const sorted = [...lines].sort((a, b) => b.average - a.average);
   const max = Math.max(1, ...sorted.map((l) => Math.abs(l.average)));
   return (
@@ -804,6 +927,7 @@ function SourceList({ title, lines, total, color }: { title: string; lines: Cash
 }
 
 function CashTable({ cf }: { cf: CashFlow }) {
+  const { fmt, fmtFull } = useFmt();
   const net = cf.avgNetCashFlow;
   return (
     <div className="re-in mt-4">
@@ -844,6 +968,7 @@ function CashTable({ cf }: { cf: CashFlow }) {
 }
 
 function CashSection({ title, lines, color }: { title: string; lines: CashLine[]; color: string }) {
+  const { fmt, fmtFull } = useFmt();
   return (
     <>
       <tr>
@@ -881,6 +1006,7 @@ function CashSection({ title, lines, color }: { title: string; lines: CashLine[]
 }
 
 function CashTotal({ label, average, total }: { label: string; average: number; total: number }) {
+  const { fmt, fmtFull } = useFmt();
   return (
     <tr>
       <td className="py-2 font-semibold text-slate-200">{label}</td>
@@ -924,6 +1050,7 @@ function InsightCard({ insight, delay }: { insight: Insight; delay: number }) {
 /* ---------------- detail tables ---------------- */
 
 function AssetsDetail({ detail, total }: { detail: Array<{ label: string; end: number; prior: number; movement: number }>; total: number }) {
+  const { fmt } = useFmt();
   if (!detail.length) return <div className="py-3 text-sm text-slate-400">No long-term asset movement.</div>;
   const max = Math.max(1, ...detail.map((d) => Math.abs(d.movement)));
   return (
@@ -956,6 +1083,7 @@ function AssetsDetail({ detail, total }: { detail: Array<{ label: string; end: n
 }
 
 function InvestmentsDetail({ items, net }: { items: Array<{ label: string; amount: number; type: "investment" | "contribution" }>; net: number }) {
+  const { fmt } = useFmt();
   const shown = items.filter((x) => x.amount !== 0);
   if (!shown.length) return <div className="py-3 text-sm text-slate-400">No investment or contribution movement.</div>;
   return (

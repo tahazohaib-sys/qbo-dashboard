@@ -2,6 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { MoneyProvider, useMoneyCurrency } from "@/components/CurrencyFilter";
+import { moneyPrefix } from "@/lib/currency";
 
 /* ---------------- types ---------------- */
 
@@ -36,17 +38,47 @@ type Row = {
 
 /* ---------------- formatting ---------------- */
 
-function fmtFull(n: number) {
-  const sign = n < 0 ? "-" : "";
-  return `${sign}Rs ${Math.round(Math.abs(n)).toLocaleString("en")}`;
+function formatFull(n: number, currency: string) {
+  return `${moneyPrefix(currency, n < 0)}${Math.round(Math.abs(n)).toLocaleString("en")}`;
 }
 
-function fmtShort(n: number) {
-  const sign = n < 0 ? "-" : "";
+function formatShort(n: number, currency: string) {
+  const pre = moneyPrefix(currency, n < 0);
   const a = Math.abs(n);
-  if (a >= 1_000_000) return `${sign}Rs ${(a / 1_000_000).toFixed(a >= 10_000_000 ? 1 : 2)}M`;
-  if (a >= 1_000) return `${sign}Rs ${(a / 1_000).toFixed(a >= 100_000 ? 0 : 1)}K`;
-  return `${sign}Rs ${Math.round(a).toLocaleString("en")}`;
+  if (a >= 1_000_000) return `${pre}${(a / 1_000_000).toFixed(a >= 10_000_000 ? 1 : 2)}M`;
+  if (a >= 1_000) return `${pre}${(a / 1_000).toFixed(a >= 100_000 ? 0 : 1)}K`;
+  return `${pre}${Math.round(a).toLocaleString("en")}`;
+}
+
+/** Formatters in the display currency of the panel (see MoneyProvider). */
+function useFmt() {
+  const { currency } = useMoneyCurrency();
+  return {
+    fmtFull: (n: number) => formatFull(n, currency),
+    fmtShort: (n: number) => formatShort(n, currency),
+    fmtAxis: (n: number) => formatShort(n, currency).replace(moneyPrefix(currency), ""),
+  };
+}
+
+/** The same breakdown with all amounts multiplied by `f` (currency conversion). */
+function scaleBreakdown(d: OkResp, f: number): OkResp {
+  const m = (a: number[]) => a.map((v) => v * f);
+  return {
+    ...d,
+    monthly: m(d.monthly),
+    total: d.total * f,
+    accounts: d.accounts.map((a) => ({
+      ...a,
+      monthly: m(a.monthly),
+      total: a.total * f,
+      items: a.items.map((it) => ({
+        ...it,
+        monthly: m(it.monthly),
+        total: it.total * f,
+        entries: it.entries.map((e) => ({ ...e, amount: e.amount * f })),
+      })),
+    })),
+  };
 }
 
 /** Change from the previous month. null = no previous month to compare. */
@@ -81,13 +113,19 @@ export default function ExpenseDrilldown({
   start,
   end,
   onClose,
+  currency = "PKR",
+  factor = 1,
 }: {
   category: ExpenseCategory;
   start: string;
   end: string;
   onClose: () => void;
+  /** Display currency, and the factor from the QuickBooks home currency to it. */
+  currency?: string;
+  factor?: number;
 }) {
   const [result, setResult] = useState<{ ok: true; data: OkResp } | { ok: false; error: string } | null>(null);
+  const shown = useMemo(() => (result?.ok && factor !== 1 ? { ok: true as const, data: scaleBreakdown(result.data, factor) } : result), [result, factor]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,6 +151,7 @@ export default function ExpenseDrilldown({
   }, [category.accountIds, start, end]);
 
   return (
+    <MoneyProvider currency={currency}>
     <div className="xd-enter mt-6 overflow-hidden rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.92),rgba(3,7,18,0.86))] shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
       {/* colour band of the selected category */}
       <div className="h-1 w-full" style={{ background: `linear-gradient(90deg, ${category.color}, transparent)` }} />
@@ -125,9 +164,9 @@ export default function ExpenseDrilldown({
               <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: category.color, boxShadow: `0 0 14px ${category.color}` }} />
               <h3 className="truncate text-xl font-semibold tracking-tight text-white md:text-2xl">{category.name}</h3>
             </div>
-            {result?.ok ? (
+            {shown?.ok ? (
               <div className="mt-1 text-xs text-slate-400">
-                Month by month · {result.data.months[0]?.label} – {result.data.months[result.data.months.length - 1]?.label}
+                Month by month · {shown.data.months[0]?.label} – {shown.data.months[shown.data.months.length - 1]?.label}
                 {category.accountIds.length > 1 ? ` · ${category.accountIds.length} expense accounts` : ""}
               </div>
             ) : null}
@@ -144,12 +183,12 @@ export default function ExpenseDrilldown({
           </button>
         </div>
 
-        {!result ? (
+        {!shown ? (
           <LoadingState />
-        ) : !result.ok ? (
-          <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{result.error}</div>
+        ) : !shown.ok ? (
+          <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{shown.error}</div>
         ) : (
-          <Analysis data={result.data} category={category} />
+          <Analysis data={shown.data} category={category} />
         )}
       </div>
 
@@ -269,12 +308,14 @@ export default function ExpenseDrilldown({
         }
       `}</style>
     </div>
+    </MoneyProvider>
   );
 }
 
 /* ---------------- analysis body ---------------- */
 
 function Analysis({ data, category }: { data: OkResp; category: ExpenseCategory }) {
+  const { fmtFull, fmtShort, fmtAxis } = useFmt();
   const { months, monthly, total } = data;
   const n = months.length;
   const avg = n > 0 ? total / n : 0;
@@ -377,7 +418,7 @@ function Analysis({ data, category }: { data: OkResp; category: ExpenseCategory 
               </defs>
               <XAxis dataKey="label" tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis
-                tickFormatter={(v: number) => fmtShort(v).replace("Rs ", "")}
+                tickFormatter={(v: number) => fmtAxis(v)}
                 tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }}
                 axisLine={false}
                 tickLine={false}
@@ -427,6 +468,7 @@ function DetailMatrix({
   color: string;
   rowsLabel: string;
 }) {
+  const { fmtShort, fmtFull } = useFmt();
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const max = Math.max(1, ...rows.flatMap((r) => r.monthly));
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
@@ -542,6 +584,7 @@ function DetailMatrix({
 }
 
 function EntriesTable({ entries, more }: { entries: Entry[]; more: number }) {
+  const { fmtFull } = useFmt();
   return (
     <div className="max-h-72 overflow-y-auto">
       <table className="w-full text-[11px]">
@@ -644,6 +687,7 @@ function BarTip({
   changes: Change[];
   months: Array<{ key: string; label: string }>;
 }) {
+  const { fmtFull } = useFmt();
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   const c = changes[p.idx];
