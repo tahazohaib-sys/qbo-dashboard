@@ -19,6 +19,12 @@ export type DashboardAccessUser = DashboardUser & {
   updated_at: Date;
 };
 
+/**
+ * A new approval (from any status other than approved) clears the saved password, so the
+ * first login after approval sets a password again and must verify the emailed code.
+ */
+const RESET_PASSWORD_ON_APPROVAL = `case when $2 = 'approved' and dashboard_users.status <> 'approved' then null else dashboard_users.password_hash end`;
+
 let authTablesReady: Promise<void> | null = null;
 
 /** Creates / updates the auth tables once per server instance. */
@@ -126,6 +132,7 @@ export async function setDashboardUserStatus(userId: string, status: DashboardUs
     `
       update dashboard_users
       set status = $2,
+          password_hash = ${RESET_PASSWORD_ON_APPROVAL},
           approved_at = case when $2 = 'approved' then now() else approved_at end,
           rejected_at = case when $2 = 'rejected' then now() else null end,
           updated_at = now()
@@ -268,6 +275,7 @@ export async function decideUserApproval(userId: string, decision: "approve" | "
     `
       update dashboard_users
       set status = $2,
+          password_hash = ${RESET_PASSWORD_ON_APPROVAL},
           approved_at = case when $2 = 'approved' then now() else approved_at end,
           rejected_at = case when $2 = 'rejected' then now() else null end,
           updated_at = now()
