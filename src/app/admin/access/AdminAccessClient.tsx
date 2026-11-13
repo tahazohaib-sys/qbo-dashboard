@@ -8,6 +8,7 @@ type AccessUser = {
   status: "approval_pending" | "approved" | "rejected";
   isAdmin: boolean;
   hasPassword: boolean;
+  accessLevel: AccessLevel;
   createdAt: string;
   updatedAt: string;
   approvedAt: string | null;
@@ -15,6 +16,14 @@ type AccessUser = {
 };
 
 type Filter = "all" | AccessUser["status"];
+
+type AccessLevel = "all" | "all_costing" | "costing_only";
+
+const ACCESS_LEVELS: Array<{ value: AccessLevel; label: string; hint: string }> = [
+  { value: "all", label: "All modules", hint: "All dashboard modules. No Project Costing." },
+  { value: "all_costing", label: "All modules + Project Costing entry", hint: "All dashboard modules and Project Costing data entry." },
+  { value: "costing_only", label: "Project Costing entry only", hint: "Only the Project Costing data entry screen. No other module, no salaries, no reports." },
+];
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -56,7 +65,7 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
 
   const visibleUsers = filter === "all" ? users : users.filter((user) => user.status === filter);
 
-  async function runAction(userId: string, action: "approve" | "revoke" | "reject") {
+  async function runAction(userId: string, action: "approve" | "revoke" | "reject" | "set_access", level?: AccessLevel) {
     setBusyId(userId);
     setError("");
 
@@ -64,13 +73,13 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
       const res = await fetch("/api/admin/access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, action }),
+        body: JSON.stringify({ userId, action, level }),
       });
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Could not update access.");
       setUsers(json.users || []);
-    } catch (err: any) {
-      setError(err?.message || "Could not update access.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not update access.");
     } finally {
       setBusyId("");
     }
@@ -86,7 +95,7 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
           <p className="mt-3 text-xs font-black uppercase tracking-[0.3em] text-cyan-200/80">Admin Console</p>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Access Management</h1>
           <p className="mt-2 max-w-xl text-sm text-slate-400">
-            Every email that asked for access. Revoke removes dashboard access at once; Approve gives it back.
+            Every email that asked for access. Revoke removes dashboard access at once; Approve gives it back. Access level sets what an approved user can open.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -117,7 +126,7 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
       <div className="mt-5 space-y-3">
         {visibleUsers.length ? (
           visibleUsers.map((user) => (
-            <div key={user.id} className="grid gap-4 rounded-3xl border border-white/10 bg-white/[0.045] p-4 lg:grid-cols-[1.2fr_.7fr_.7fr_auto] lg:items-center">
+            <div key={user.id} className="grid gap-4 rounded-3xl border border-white/10 bg-white/[0.045] p-4 lg:grid-cols-[1.1fr_.5fr_.6fr_1fr_auto] lg:items-center">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="truncate text-base font-black text-white">{user.email}</div>
@@ -135,6 +144,37 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
               <div className="text-sm font-semibold text-slate-300">
                 <div>{user.hasPassword ? "Password set" : "No password yet"}</div>
                 <div className="mt-1 text-xs text-slate-500">Updated {formatDate(user.updatedAt)}</div>
+              </div>
+
+              <div>
+                {user.isAdmin ? (
+                  <div className="text-xs font-bold text-cyan-100">Full access + Project Costing reports</div>
+                ) : user.status === "approved" ? (
+                  <label className="block">
+                    <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Access level</span>
+                    <select
+                      value={user.accessLevel}
+                      disabled={busyId === user.id}
+                      onChange={(e) => runAction(user.id, "set_access", e.target.value as AccessLevel)}
+                      className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm font-semibold outline-none transition disabled:opacity-60 ${
+                        user.accessLevel === "costing_only"
+                          ? "border-violet-300/30 bg-violet-500/15 text-violet-50"
+                          : user.accessLevel === "all_costing"
+                            ? "border-sky-300/30 bg-sky-500/12 text-sky-50"
+                            : "border-white/10 bg-black/35 text-slate-100"
+                      }`}
+                    >
+                      {ACCESS_LEVELS.map((l) => (
+                        <option key={l.value} value={l.value} className="bg-slate-900 text-slate-100">
+                          {l.label}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="mt-1 block text-[11px] text-slate-500">{ACCESS_LEVELS.find((l) => l.value === user.accessLevel)?.hint}</span>
+                  </label>
+                ) : (
+                  <div className="text-xs text-slate-500">Approve first to set access</div>
+                )}
               </div>
 
               <div className="flex flex-wrap gap-2 lg:justify-end">

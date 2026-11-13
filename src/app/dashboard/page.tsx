@@ -23,5 +23,7 @@ export default async function DashboardPage() {
   const user = session ? await findUserById(session.sub) : null;
   const isAdmin = Boolean(user?.status === "approved" && isAdminEmail(user.email));
 
-  return <DashboardPageClient isAdmin={isAdmin} />;
+  const canProjectCosting = Boolean(user?.status === "approved" && (isAdmin || user.project_costing_access || user.access_scope === "costing_only"));
+
+  return <DashboardPageClient isAdmin={isAdmin} canProjectCosting={canProjectCosting} />;
 }

@@ -88,3 +88,33 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Project Costing
+
+Page: `/dashboard/project-costing` (tab "Project Costing" on the dashboard).
+
+- **Data entry users** see Month, Employee name, Project name and Percentage. The admin sets the **Access level** of each approved user on **Manage Access**:
+  - *All modules*: all dashboard modules, no Project Costing.
+  - *All modules + Project Costing entry*: all dashboard modules and Project Costing data entry.
+  - *Project Costing entry only*: only the Project Costing data entry screen. Every other page redirects to it, and every other API returns 403. The user never gets salaries or reports.
+- **The admin** sees the data entry table and the report: project revenue (USD converted to PKR at the current market rate), salary allocation per employee, total direct cost, contribution and contribution margin %.
+
+Data sources:
+
+- **Employees** come from the Google Sheet named `RTC League Salary Sheet <Mon> <YYYY>` (for example `RTC League Salary Sheet Oct 2026`), tab `Employees`, columns `Employee Name`, `Designation`, `Department`, `Gross Salary`. Only employees with Department = `Technical` are used. The app finds the sheet of the selected month by its name in Google Drive.
+- **History:** each time a month's salary sheet is read, a copy is saved in the table `project_cost_salary_snapshots`. When the sheet is changed or deleted later, the saved copy is used. The History tab shows all months that have allocations, at one USD → PKR rate.
+- **Projects** are the `Team` values of the Revenue Analytics sheet for the selected month.
+- **Allocations** are kept in the table `project_cost_allocations` (made automatically).
+
+Setup:
+
+1. Share each monthly salary sheet (or the folder that holds them) with the service account in `GSHEETS_SA_CLIENT_EMAIL` as Viewer. A link-shared file is not enough: Drive search finds only files shared with the service account.
+2. Enable the **Google Drive API** in the Google Cloud project of the service account.
+3. Optional environment variables:
+
+```bash
+SALARY_SHEET_NAME_PREFIX="RTC League Salary Sheet"   # name before "<Mon> <YYYY>"
+SALARY_SHEET_TAB_NAME="Employees"                     # tab with the employee list
+SALARY_SHEET_FOLDER_ID="..."                          # search only in this Drive folder
+SALARY_SHEET_DEPARTMENT="Technical"                   # department allocated to projects
+```
