@@ -164,6 +164,16 @@ function htmlToPlainText(html: string) {
     .trim();
 }
 
+/** Base64 in lines of 76 characters (RFC 2045), so no line is too long for SMTP. */
+function base64Lines(value: string) {
+  return (Buffer.from(value, "utf8").toString("base64").match(/.{1,76}/g) || []).join("\r\n");
+}
+
+/** A header value with non-ASCII characters is encoded (RFC 2047). */
+function encodeHeader(value: string) {
+  return /^[\x20-\x7e]*$/.test(value) ? value : `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
+}
+
 async function sendSmtpEmail({
   host,
   port,
@@ -174,6 +184,7 @@ async function sendSmtpEmail({
   subject,
   html,
   text,
+  replyTo,
 }: {
   host: string;
   port: number;
@@ -184,6 +195,7 @@ async function sendSmtpEmail({
   subject: string;
   html: string;
   text: string;
+  replyTo?: string;
 }) {
   await new Promise<void>((resolve, reject) => {
     const socket = tls.connect({ host, port, servername: host });
@@ -244,21 +256,27 @@ async function sendSmtpEmail({
             [
               `From: ${from}`,
               `To: ${to}`,
-              `Subject: ${subject}`,
+              ...(replyTo ? [`Reply-To: ${replyTo}`] : []),
+              `Subject: ${encodeHeader(subject)}`,
               `Date: ${new Date().toUTCString()}`,
               `Message-Id: ${messageId}`,
               "MIME-Version: 1.0",
+              // Marks the email as sent by a system (one-to-one), not by a person or a mailing list.
+              "Auto-Submitted: auto-generated",
+              "X-Auto-Response-Suppress: All",
               `Content-Type: multipart/alternative; boundary="${boundary}"`,
               "",
               `--${boundary}`,
               "Content-Type: text/plain; charset=UTF-8",
+              "Content-Transfer-Encoding: base64",
               "",
-              text,
+              base64Lines(text),
               "",
               `--${boundary}`,
               "Content-Type: text/html; charset=UTF-8",
+              "Content-Transfer-Encoding: base64",
               "",
-              html,
+              base64Lines(html),
               "",
               `--${boundary}--`,
             ].join("\r\n")
@@ -279,10 +297,15 @@ export async function sendAuthEmail({
   to,
   subject,
   html,
+  text: textOverride,
+  replyTo = ADMIN_APPROVER_EMAIL,
 }: {
   to: string;
   subject: string;
   html: string;
+  /** Plain-text version. Made from the HTML when not given. */
+  text?: string;
+  replyTo?: string;
 }) {
   const apiKey = process.env.RESEND_API_KEY;
   const smtpHost = process.env.SMTP_HOST;
@@ -290,7 +313,7 @@ export async function sendAuthEmail({
   const smtpPass = process.env.SMTP_PASS;
   const smtpPort = Number(process.env.SMTP_PORT || 465);
   const from = process.env.AUTH_EMAIL_FROM || smtpUser || "QBO Dashboard <onboarding@resend.dev>";
-  const text = htmlToPlainText(html);
+  const text = textOverride || htmlToPlainText(html);
 
   if (apiKey) {
     const res = await fetch("https://api.resend.com/emails", {
@@ -299,7 +322,15 @@ export async function sendAuthEmail({
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ from, to, subject, html, text }),
+      body: JSON.stringify({
+        from,
+        to,
+        subject,
+        html,
+        text,
+        reply_to: replyTo,
+        headers: { "Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All" },
+      }),
     });
 
     if (!res.ok) {
@@ -321,6 +352,7 @@ export async function sendAuthEmail({
       subject,
       html,
       text,
+      replyTo,
     });
 
     return { sent: true };

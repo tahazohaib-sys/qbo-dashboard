@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 
 type AccessUser = {
   id: string;
@@ -52,6 +52,36 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
   const [filter, setFilter] = useState<Filter>("all");
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  /** Access level chosen for a user who is not approved yet; used when the admin clicks Approve. */
+  const [pendingLevel, setPendingLevel] = useState<Record<string, AccessLevel>>({});
+  const [newEmail, setNewEmail] = useState("");
+  const [newLevel, setNewLevel] = useState<AccessLevel>("all");
+  const [adding, setAdding] = useState(false);
+
+  async function addUser(e: React.FormEvent) {
+    e.preventDefault();
+    setAdding(true);
+    setError("");
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add_user", email: newEmail, level: newLevel }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) throw new Error(json?.error || "Could not add this user.");
+      setUsers(json.users || []);
+      if (json.emailNotice) setNotice({ ok: Boolean(json.emailSent), text: json.emailNotice });
+      setNewEmail("");
+      setNewLevel("all");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not add this user.");
+    } finally {
+      setAdding(false);
+    }
+  }
 
   const counts = useMemo(
     () => ({
@@ -68,6 +98,7 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
   async function runAction(userId: string, action: "approve" | "revoke" | "reject" | "set_access", level?: AccessLevel) {
     setBusyId(userId);
     setError("");
+    setNotice(null);
 
     try {
       const res = await fetch("/api/admin/access", {
@@ -78,6 +109,7 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Could not update access.");
       setUsers(json.users || []);
+      if (json.emailNotice) setNotice({ ok: Boolean(json.emailSent), text: json.emailNotice });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not update access.");
     } finally {
@@ -95,7 +127,7 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
           <p className="mt-3 text-xs font-black uppercase tracking-[0.3em] text-cyan-200/80">Admin Console</p>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Access Management</h1>
           <p className="mt-2 max-w-xl text-sm text-slate-400">
-            Every email that asked for access. Revoke removes dashboard access at once; Approve gives it back. Access level sets what an approved user can open.
+            Every email that asked for access. Revoke removes dashboard access at once; Approve gives it back. Access level sets what an approved user can open. The user gets an email when you approve, reject, remove or change access.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -122,6 +154,63 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
       </div>
 
       {error ? <div className="mt-5 rounded-2xl border border-rose-300/30 bg-rose-500/12 p-3 text-sm font-medium text-rose-100">{error}</div> : null}
+      {notice ? (
+        <div
+          className={`mt-5 flex items-center gap-2 rounded-2xl border p-3 text-sm font-medium ${
+            notice.ok ? "border-emerald-300/30 bg-emerald-500/12 text-emerald-100" : "border-amber-300/30 bg-amber-500/12 text-amber-100"
+          }`}
+        >
+          <span>{notice.ok ? "✉" : "⚠"}</span>
+          <span>{notice.text}</span>
+        </div>
+      ) : null}
+
+      <form
+        onSubmit={addUser}
+        className="mt-5 rounded-3xl border border-cyan-300/15 bg-[linear-gradient(135deg,rgba(8,145,178,0.12),rgba(16,185,129,0.06))] p-4"
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div className="text-sm font-black text-white">Add user</div>
+          <div className="text-xs text-slate-400">The user is approved at once and gets an email with the modules and a login button.</div>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-[1.3fr_1fr_auto] md:items-end">
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-400">Email</span>
+            <input
+              type="email"
+              required
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              placeholder="name@company.com"
+              disabled={adding}
+              className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40 disabled:opacity-60"
+            />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-400">Access level</span>
+            <select
+              value={newLevel}
+              onChange={(e) => setNewLevel(e.target.value as AccessLevel)}
+              disabled={adding}
+              className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm font-semibold text-slate-100 outline-none transition disabled:opacity-60"
+            >
+              {ACCESS_LEVELS.map((l) => (
+                <option key={l.value} value={l.value} className="bg-slate-900 text-slate-100">
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            disabled={adding || !newEmail.trim()}
+            className="h-[38px] rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-5 text-sm font-black text-white shadow-[0_10px_28px_rgba(16,185,129,0.3)] transition hover:brightness-110 disabled:opacity-50"
+          >
+            {adding ? "Adding…" : "Give access"}
+          </button>
+        </div>
+        <div className="mt-2 text-[11px] text-slate-500">{ACCESS_LEVELS.find((l) => l.value === newLevel)?.hint}</div>
+      </form>
 
       <div className="mt-5 space-y-3">
         {visibleUsers.length ? (
@@ -173,7 +262,22 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
                     <span className="mt-1 block text-[11px] text-slate-500">{ACCESS_LEVELS.find((l) => l.value === user.accessLevel)?.hint}</span>
                   </label>
                 ) : (
-                  <div className="text-xs text-slate-500">Approve first to set access</div>
+                  <label className="block">
+                    <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Access after approval</span>
+                    <select
+                      value={pendingLevel[user.id] ?? "all"}
+                      disabled={busyId === user.id}
+                      onChange={(e) => setPendingLevel((p) => ({ ...p, [user.id]: e.target.value as AccessLevel }))}
+                      className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm font-semibold text-slate-100 outline-none transition disabled:opacity-60"
+                    >
+                      {ACCESS_LEVELS.map((l) => (
+                        <option key={l.value} value={l.value} className="bg-slate-900 text-slate-100">
+                          {l.label}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="mt-1 block text-[11px] text-slate-500">The approval email lists these modules.</span>
+                  </label>
                 )}
               </div>
 
@@ -182,7 +286,7 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
                   <button
                     type="button"
                     disabled={busyId === user.id}
-                    onClick={() => runAction(user.id, "approve")}
+                    onClick={() => runAction(user.id, "approve", pendingLevel[user.id] ?? "all")}
                     className="rounded-2xl border border-emerald-300/25 bg-emerald-400/12 px-4 py-2 text-sm font-black text-emerald-100 transition hover:bg-emerald-400/18 disabled:opacity-60"
                   >
                     Approve
