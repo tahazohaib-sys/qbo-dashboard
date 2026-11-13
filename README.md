@@ -123,6 +123,8 @@ SALARY_SHEET_DEPARTMENT="Technical"                   # department allocated to 
 
 The user gets an email when the admin approves, rejects or removes access (on **Manage Access** or with the links in the request email), and when the admin changes the access level. The approval email lists the modules of the user's access level and has a **Log in to QBO Dashboard** button. On Manage Access, select the access level before you click Approve.
 
+To give access without a request, use **Add user** on Manage Access: enter the email and select the access level. The user is approved at once and gets the approval email. The user then logs in, chooses a password and enters the six-digit code, as after an approved request.
+
 Inbox placement (Primary, not Spam) depends mostly on the sender setup, not on the email text:
 
 - **Gmail SMTP** (`SMTP_HOST=smtp.gmail.com`): set `AUTH_EMAIL_FROM` to the same Gmail address as `SMTP_USER`. Google then signs the email (DKIM) and it passes SPF and DMARC.

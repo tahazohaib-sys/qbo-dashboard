@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 
 type AccessUser = {
   id: string;
@@ -55,6 +55,33 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   /** Access level chosen for a user who is not approved yet; used when the admin clicks Approve. */
   const [pendingLevel, setPendingLevel] = useState<Record<string, AccessLevel>>({});
+  const [newEmail, setNewEmail] = useState("");
+  const [newLevel, setNewLevel] = useState<AccessLevel>("all");
+  const [adding, setAdding] = useState(false);
+
+  async function addUser(e: React.FormEvent) {
+    e.preventDefault();
+    setAdding(true);
+    setError("");
+    setNotice(null);
+    try {
+      const res = await fetch("/api/admin/access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add_user", email: newEmail, level: newLevel }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) throw new Error(json?.error || "Could not add this user.");
+      setUsers(json.users || []);
+      if (json.emailNotice) setNotice({ ok: Boolean(json.emailSent), text: json.emailNotice });
+      setNewEmail("");
+      setNewLevel("all");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not add this user.");
+    } finally {
+      setAdding(false);
+    }
+  }
 
   const counts = useMemo(
     () => ({
@@ -137,6 +164,53 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
           <span>{notice.text}</span>
         </div>
       ) : null}
+
+      <form
+        onSubmit={addUser}
+        className="mt-5 rounded-3xl border border-cyan-300/15 bg-[linear-gradient(135deg,rgba(8,145,178,0.12),rgba(16,185,129,0.06))] p-4"
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div className="text-sm font-black text-white">Add user</div>
+          <div className="text-xs text-slate-400">The user is approved at once and gets an email with the modules and a login button.</div>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-[1.3fr_1fr_auto] md:items-end">
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-400">Email</span>
+            <input
+              type="email"
+              required
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              placeholder="name@company.com"
+              disabled={adding}
+              className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm font-semibold text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40 disabled:opacity-60"
+            />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-400">Access level</span>
+            <select
+              value={newLevel}
+              onChange={(e) => setNewLevel(e.target.value as AccessLevel)}
+              disabled={adding}
+              className="mt-1 w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2 text-sm font-semibold text-slate-100 outline-none transition disabled:opacity-60"
+            >
+              {ACCESS_LEVELS.map((l) => (
+                <option key={l.value} value={l.value} className="bg-slate-900 text-slate-100">
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            disabled={adding || !newEmail.trim()}
+            className="h-[38px] rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-5 text-sm font-black text-white shadow-[0_10px_28px_rgba(16,185,129,0.3)] transition hover:brightness-110 disabled:opacity-50"
+          >
+            {adding ? "Adding…" : "Give access"}
+          </button>
+        </div>
+        <div className="mt-2 text-[11px] text-slate-500">{ACCESS_LEVELS.find((l) => l.value === newLevel)?.hint}</div>
+      </form>
 
       <div className="mt-5 space-y-3">
         {visibleUsers.length ? (

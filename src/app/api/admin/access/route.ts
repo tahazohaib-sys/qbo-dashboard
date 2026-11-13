@@ -1,7 +1,16 @@
 import { NextResponse } from "next/server";
-import { getBaseUrl, getCurrentSession, isAdminEmail } from "@/lib/auth";
+import { getBaseUrl, getCurrentSession, isAdminEmail, normalizeEmail } from "@/lib/auth";
 import { sendAccessEmail } from "@/lib/access-emails";
-import { accessLevelOf, findUserById, listDashboardAccessUsers, setDashboardUserStatus, setUserAccessLevel, type AccessLevel } from "@/lib/auth-db";
+import {
+  accessLevelOf,
+  findUserByEmail,
+  findUserById,
+  listDashboardAccessUsers,
+  setDashboardUserStatus,
+  setUserAccessLevel,
+  upsertAccessRequest,
+  type AccessLevel,
+} from "@/lib/auth-db";
 
 async function requireAdmin() {
   const session = await getCurrentSession();
@@ -44,6 +53,42 @@ export async function POST(req: Request) {
     const body = await req.json();
     const userId = String(body?.userId ?? "");
     const action = String(body?.action ?? "");
+
+    // Admin gives access to an email directly: the user is approved at once with the chosen level,
+    // and gets the same approval email (modules + login button) as after an approved request.
+    if (action === "add_user") {
+      const email = normalizeEmail(String(body?.email ?? ""));
+      const level = body?.level;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return NextResponse.json({ ok: false, error: "Enter a valid email address." }, { status: 400 });
+      if (level !== "all" && level !== "all_costing" && level !== "costing_only") {
+        return NextResponse.json({ ok: false, error: "Select an access level." }, { status: 400 });
+      }
+      if (isAdminEmail(email)) return NextResponse.json({ ok: false, error: "This is the admin email. It already has full access." }, { status: 400 });
+
+      const existing = await findUserByEmail(email);
+      const user = existing ?? (await upsertAccessRequest(email));
+      if (!user) return NextResponse.json({ ok: false, error: "Could not add this user." }, { status: 500 });
+      const levelChanged = existing ? accessLevelOf(existing) !== level : true;
+      await setUserAccessLevel(user.id, level);
+      const wasApproved = existing?.status === "approved";
+      const updated = wasApproved ? await findUserById(user.id) : await setDashboardUserStatus(user.id, "approved");
+      if (!updated) return NextResponse.json({ ok: false, error: "Could not add this user." }, { status: 500 });
+
+      const email_ =
+        !wasApproved
+          ? await sendAccessEmail({ kind: "approved", email, level, baseUrl: getBaseUrl(req) })
+          : levelChanged
+            ? await sendAccessEmail({ kind: "updated", email, level, baseUrl: getBaseUrl(req) })
+            : undefined;
+      const nextUsers = await listDashboardAccessUsers();
+      const prefix = wasApproved ? `${email} already had access; access level ${levelChanged ? "updated" : "not changed"}.` : `${email} now has access.`;
+      const emailNotice = !email_
+        ? prefix
+        : email_.sent
+          ? `${prefix} Email sent to ${email}.`
+          : `${prefix} The email could not be sent: ${email_.error}`;
+      return NextResponse.json({ ok: true, users: nextUsers.map(serializeUser), emailSent: email_ ? email_.sent : true, emailNotice });
+    }
 
     const users = await listDashboardAccessUsers();
     const target = users.find((user) => user.id === userId);
