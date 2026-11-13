@@ -93,7 +93,10 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 Page: `/dashboard/project-costing` (tab "Project Costing" on the dashboard).
 
-- **Data entry users** see Month, Employee name, Project name and Percentage. The admin gives this access on **Manage Access** with the "Give Project Costing" button (approved users only).
+- **Data entry users** see Month, Employee name, Project name and Percentage. The admin sets the **Access level** of each approved user on **Manage Access**:
+  - *All modules*: all dashboard modules, no Project Costing.
+  - *All modules + Project Costing entry*: all dashboard modules and Project Costing data entry.
+  - *Project Costing entry only*: only the Project Costing data entry screen. Every other page redirects to it, and every other API returns 403. The user never gets salaries or reports.
 - **The admin** sees the data entry table and the report: project revenue (USD converted to PKR at the current market rate), salary allocation per employee, total direct cost, contribution and contribution margin %.
 
 Data sources:
