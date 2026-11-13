@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getCurrentSession, isAdminEmail } from "@/lib/auth";
+import { getBaseUrl, getCurrentSession, isAdminEmail } from "@/lib/auth";
+import { sendAccessEmail } from "@/lib/access-emails";
 import { accessLevelOf, findUserById, listDashboardAccessUsers, setDashboardUserStatus, setUserAccessLevel, type AccessLevel } from "@/lib/auth-db";
 
 async function requireAdmin() {
@@ -51,26 +52,50 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Admin access cannot be revoked here." }, { status: 400 });
     }
 
+    const baseUrl = getBaseUrl(req);
+    const isLevel = (v: unknown): v is AccessLevel => v === "all" || v === "all_costing" || v === "costing_only";
+    const reply = async (updated: NonNullable<Awaited<ReturnType<typeof setUserAccessLevel>>>, email?: { sent: boolean; error?: string }) => {
+      const nextUsers = await listDashboardAccessUsers();
+      const emailNotice = !email
+        ? undefined
+        : email.sent
+          ? `Email sent to ${updated.email}.`
+          : `Saved, but the email to ${updated.email} could not be sent: ${email.error}`;
+      return NextResponse.json({ ok: true, user: serializeUser(updated), users: nextUsers.map(serializeUser), emailSent: email?.sent, emailNotice });
+    };
+
     if (action === "set_access") {
-      const level = String(body?.level ?? "") as AccessLevel;
-      if (!["all", "all_costing", "costing_only"].includes(level)) {
-        return NextResponse.json({ ok: false, error: "Invalid access level." }, { status: 400 });
-      }
+      const level = body?.level;
+      if (!isLevel(level)) return NextResponse.json({ ok: false, error: "Invalid access level." }, { status: 400 });
+      const before = accessLevelOf(target);
       const updated = await setUserAccessLevel(userId, level);
       if (!updated) return NextResponse.json({ ok: false, error: "Could not update this user." }, { status: 500 });
-      const nextUsers = await listDashboardAccessUsers();
-      return NextResponse.json({ ok: true, user: serializeUser(updated), users: nextUsers.map(serializeUser) });
+      // Tell an approved user what they can open now.
+      const email =
+        updated.status === "approved" && before !== level
+          ? await sendAccessEmail({ kind: "updated", email: updated.email, level, baseUrl })
+          : undefined;
+      return reply(updated, email);
     }
 
     const nextStatus = action === "approve" ? "approved" : action === "revoke" || action === "reject" ? "rejected" : null;
     if (!nextStatus) return NextResponse.json({ ok: false, error: "Invalid admin action." }, { status: 400 });
 
+    // On approve, the admin can choose the access level at the same time, so the email names the right modules.
+    if (nextStatus === "approved" && isLevel(body?.level)) await setUserAccessLevel(userId, body.level);
+
+    const wasApproved = target.status === "approved";
     const updated = await setDashboardUserStatus(userId, nextStatus);
     if (!updated) return NextResponse.json({ ok: false, error: "Could not update this user." }, { status: 500 });
 
-    const nextUsers = await listDashboardAccessUsers();
-    return NextResponse.json({ ok: true, user: serializeUser(updated), users: nextUsers.map(serializeUser) });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Admin action failed." }, { status: 500 });
+    let email: { sent: boolean; error?: string } | undefined;
+    if (nextStatus === "approved" && !wasApproved) {
+      email = await sendAccessEmail({ kind: "approved", email: updated.email, level: accessLevelOf(updated), baseUrl });
+    } else if (nextStatus === "rejected" && target.status !== "rejected") {
+      email = await sendAccessEmail({ kind: wasApproved ? "revoked" : "rejected", email: updated.email, level: accessLevelOf(updated), baseUrl });
+    }
+    return reply(updated, email);
+  } catch (e: unknown) {
+    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "Admin action failed." }, { status: 500 });
   }
 }

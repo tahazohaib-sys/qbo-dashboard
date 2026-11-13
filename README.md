@@ -118,3 +118,15 @@ SALARY_SHEET_TAB_NAME="Employees"                     # tab with the employee li
 SALARY_SHEET_FOLDER_ID="..."                          # search only in this Drive folder
 SALARY_SHEET_DEPARTMENT="Technical"                   # department allocated to projects
 ```
+
+## Access emails
+
+The user gets an email when the admin approves, rejects or removes access (on **Manage Access** or with the links in the request email), and when the admin changes the access level. The approval email lists the modules of the user's access level and has a **Log in to QBO Dashboard** button. On Manage Access, select the access level before you click Approve.
+
+Inbox placement (Primary, not Spam) depends mostly on the sender setup, not on the email text:
+
+- **Gmail SMTP** (`SMTP_HOST=smtp.gmail.com`): set `AUTH_EMAIL_FROM` to the same Gmail address as `SMTP_USER`. Google then signs the email (DKIM) and it passes SPF and DMARC.
+- **Own domain** (for example `rtcleague.com`, with Google Workspace or Resend): publish SPF, DKIM and DMARC records for the domain, and send from an address of that domain.
+- Ask each new user to mark the first email as "Not spam", or to add the sender to their contacts. Gmail then keeps later emails in Primary.
+
+The emails are sent as one-to-one system emails: plain text and HTML versions, `Reply-To` the admin, `Auto-Submitted: auto-generated`, no images, no tracking, and one link.
