@@ -396,13 +396,26 @@ export async function listAllocations(month: string): Promise<Allocation[]> {
 export type AllocationInput = { id?: number; employeeName: string; projectName: string; percentage: number };
 
 export class AllocationError extends Error {}
+/** Another user changed the same rows after this user loaded them. */
+export class AllocationConflictError extends AllocationError {}
 
 /**
- * Saves the changes of one month in one transaction: deletes the removed rows,
- * updates the rows with an id and adds the new rows. When an employee has more
- * than 100% in total after the save, nothing is saved.
+ * Saves the changes of one month in one transaction.
+ *
+ * - versions: the updatedAt of each row id as the user loaded it. A row that
+ *   another user changed or deleted after that is a conflict, and nothing is saved.
+ * - Only rows that differ from the database are written, so a save does not
+ *   undo another user's changes to rows this user did not touch.
+ * - One lock for each month makes saves of the same month run one at a time,
+ *   so the "not more than 100%" check sees all committed rows.
  */
-export async function saveAllocations(month: string, rows: AllocationInput[], deletedIds: number[], user: string) {
+export async function saveAllocations(
+  month: string,
+  rows: AllocationInput[],
+  deletedIds: number[],
+  versions: Record<string, string>,
+  user: string
+) {
   await ensureTable();
 
   const seen = new Set<string>();
@@ -417,35 +430,63 @@ export async function saveAllocations(month: string, rows: AllocationInput[], de
   }
 
   await withTransaction(async (db) => {
+    await db.query(`select pg_advisory_xact_lock(hashtext('project_cost_allocations:' || $1))`, [month]);
+
+    const { rows: currentRows } = await db.query<AllocationRow>(
+      `select id, month, employee_name, project_name, percentage, updated_by, updated_at
+       from project_cost_allocations where month = $1`,
+      [month]
+    );
+    const current = new Map(currentRows.map((r) => [Number(r.id), toAllocation(r)]));
+
+    const stale = (id: number) => {
+      const row = current.get(id);
+      if (!row) return "deleted";
+      const loaded = versions[String(id)];
+      if (loaded && new Date(loaded).getTime() !== new Date(row.updatedAt).getTime()) return row.updatedBy || "another user";
+      return "";
+    };
+
+    // Rows with an id that this user changed; unchanged rows are not written.
+    const changed = rows.filter((r) => {
+      if (!r.id) return false;
+      const old = current.get(r.id);
+      return !old || old.employeeName !== r.employeeName || old.projectName !== r.projectName || old.percentage !== r.percentage;
+    });
+
+    for (const id of [...deletedIds, ...changed.map((r) => r.id!)]) {
+      const who = stale(id);
+      if (who === "deleted") {
+        if (deletedIds.includes(id)) continue; // Already deleted: nothing to do.
+        throw new AllocationConflictError("A row you changed was deleted by another user. Reload the month and enter your changes again.");
+      }
+      if (who) throw new AllocationConflictError(`${who} changed the same rows after you loaded the month. Reload the month and enter your changes again.`);
+    }
+
     if (deletedIds.length) {
       await db.query(`delete from project_cost_allocations where month = $1 and id = any($2::bigint[])`, [month, deletedIds]);
     }
     // Free the (employee, project) pairs of rows that change, so that two rows can swap values.
-    const changedIds = rows.filter((r) => r.id).map((r) => r.id!);
-    if (changedIds.length) {
+    if (changed.length) {
+      await db.query(`update project_cost_allocations set project_name = '__moving__' || id where month = $1 and id = any($2::bigint[])`, [
+        month,
+        changed.map((r) => r.id),
+      ]);
+    }
+    for (const r of changed) {
       await db.query(
-        `update project_cost_allocations set project_name = '__moving__' || id where month = $1 and id = any($2::bigint[])`,
-        [month, changedIds]
+        `update project_cost_allocations
+         set employee_name = $2, project_name = $3, percentage = $4, updated_by = $5, updated_at = now()
+         where month = $1 and id = $6`,
+        [month, r.employeeName, r.projectName, r.percentage, user, r.id]
       );
     }
-    for (const r of rows) {
-      const params = [month, r.employeeName, r.projectName, r.percentage, user];
-      if (r.id) {
-        const res = await db.query(
-          `update project_cost_allocations
-           set employee_name = $2, project_name = $3, percentage = $4, updated_by = $5, updated_at = now()
-           where month = $1 and id = $6`,
-          [...params, r.id]
-        );
-        if (res.rowCount) continue;
-        // Somebody else deleted the row: add it again.
-      }
+    // New rows. A pair that another user added in the meantime is a unique-key conflict (reported as 409).
+    for (const r of rows.filter((x) => !x.id)) {
       await db.query(
         `insert into project_cost_allocations (month, employee_name, project_name, percentage, updated_by)
-         values ($1, $2, $3, $4, $5)
-         on conflict (month, employee_name, project_name)
-         do update set percentage = excluded.percentage, updated_by = excluded.updated_by, updated_at = now()`,
-        params
+         values ($1, $2, $3, $4, $5)`,
+        [month, r.employeeName, r.projectName, r.percentage, user]
       );
     }
 

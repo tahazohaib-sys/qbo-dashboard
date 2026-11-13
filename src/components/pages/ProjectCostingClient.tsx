@@ -79,6 +79,8 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
   const [groups, setGroups] = useState<Group[]>([]);
   const [deletedIds, setDeletedIds] = useState<number[]>([]);
   const savedSnapshot = useRef("[]");
+  /** updatedAt of each saved row as loaded; the server uses it to detect changes by other users. */
+  const versions = useRef<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [find, setFind] = useState("");
@@ -112,6 +114,7 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
         setGroups(g);
         setDeletedIds([]);
         savedSnapshot.current = snapshot(g);
+        versions.current = Object.fromEntries(d.allocations.map((a) => [String(a.id), a.updatedAt]));
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Could not load Project Costing.");
       } finally {
@@ -210,7 +213,7 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
       const res = await fetch("/api/project-costing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, rows, deletedIds }),
+        body: JSON.stringify({ month, rows, deletedIds, versions: versions.current }),
       });
       const json = await res.json();
       if (!res.ok || !json?.ok) throw new Error(json?.error || "Could not save.");
@@ -221,6 +224,7 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
         setGroups(g);
         setDeletedIds([]);
         savedSnapshot.current = snapshot(g);
+        versions.current = Object.fromEntries((json.allocations as Allocation[]).map((a) => [String(a.id), a.updatedAt]));
       }
       setSaveMsg({ kind: "ok", text: `Saved for ${data?.monthLabel ?? month}.` });
     } catch (e: unknown) {

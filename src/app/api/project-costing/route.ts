@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getUsdPkrRate } from "@/lib/fx-rate";
 import { getProjectCostingAccess } from "@/lib/project-costing-access";
 import {
+  AllocationConflictError,
   AllocationError,
   isMonthKey,
   listAllocations,
@@ -143,9 +144,15 @@ export async function POST(req: Request) {
       }
     }
 
-    const allocations = await saveAllocations(month, rows, deletedIds, access.email);
+    const versions: Record<string, string> = {};
+    if (body?.versions && typeof body.versions === "object") {
+      for (const [k, v] of Object.entries(body.versions as Record<string, unknown>)) if (typeof v === "string") versions[k] = v;
+    }
+
+    const allocations = await saveAllocations(month, rows, deletedIds, versions, access.email);
     return NextResponse.json({ ok: true, allocations });
   } catch (e: unknown) {
+    if (e instanceof AllocationConflictError) return NextResponse.json({ ok: false, error: e.message }, { status: 409 });
     if (e instanceof AllocationError) return NextResponse.json({ ok: false, error: e.message }, { status: 400 });
     if ((e as { code?: string } | null)?.code === "23505") {
       return NextResponse.json(
