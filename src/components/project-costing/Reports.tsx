@@ -5,8 +5,8 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   PieChart,
   Pie,
   Cell,
@@ -17,7 +17,7 @@ import {
   ReferenceLine,
   LabelList,
 } from "recharts";
-import { C, Card, ChartTip, Kpi, LegendRow, StatusBadge, fmtPct, fmtPkr, fmtShort, fmtUsd, type TipProps } from "./ui";
+import { C, Card, ChartGradients, ChartTip, Kpi, LegendRow, StatusBadge, fmtPct, fmtPkr, fmtShort, fmtUsd, type TipProps } from "./ui";
 
 /* ------------------------------------------------------------------ */
 /* Types (same shape as the API)                                       */
@@ -137,8 +137,9 @@ export function Overview({
     <div className="space-y-5">
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Kpi label="Revenue" value={fmtShort(t.revenuePkr)} accent={C.revenue} sub={fmtUsd(t.revenueUsd)} delta={prevDelta(t.revenuePkr, "revenuePkr")} />
+        <Kpi icon="revenue" label="Revenue" value={fmtShort(t.revenuePkr)} accent={C.revenue} sub={fmtUsd(t.revenueUsd)} delta={prevDelta(t.revenuePkr, "revenuePkr")} />
         <Kpi
+          icon="cost"
           label="Direct cost"
           value={fmtShort(t.directCost)}
           accent={C.cost}
@@ -146,20 +147,22 @@ export function Overview({
           delta={prevDelta(t.directCost, "directCost")}
           deltaGoodWhenUp={false}
         />
-        <Kpi label="Contribution" value={fmtShort(t.contribution)} accent={C.contribution} sub="Revenue − direct cost" delta={prevDelta(t.contribution, "contribution")} />
+        <Kpi icon="contribution" label="Contribution" value={fmtShort(t.contribution)} accent={C.contribution} sub="Revenue − direct cost" delta={prevDelta(t.contribution, "contribution")} />
         <Kpi
+          icon="margin"
           label="Margin"
           value={fmtPct(t.marginPct)}
           accent={t.marginPct !== null && t.marginPct < 0 ? C.negative : C.contribution}
           sub="Contribution ÷ revenue"
           delta={previous && t.marginPct !== null && previous.marginPct !== null ? { value: t.marginPct - previous.marginPct, unit: "pts" } : null}
         />
-        <Kpi label="Utilization" value={fmtPct(t.utilizationPct, 0)} accent="#9085e9" sub={`${department} payroll on projects`}>
+        <Kpi icon="people" label="Utilization" value={fmtPct(t.utilizationPct, 0)} accent="#9085e9" sub={`${department} payroll on projects`}>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
             <div className="h-full rounded-full bg-[#9085e9]" style={{ width: `${Math.min(100, Math.max(0, t.utilizationPct ?? 0))}%` }} />
           </div>
         </Kpi>
         <Kpi
+          icon="bench"
           label="Bench cost"
           value={fmtShort(t.unallocatedPayroll)}
           accent={C.partial}
@@ -203,16 +206,17 @@ export function Overview({
             {barData.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={barData} barGap={2} barCategoryGap="22%" margin={{ top: 8, right: 8, left: 4, bottom: 8 }}>
+                  <ChartGradients />
                   <CartesianGrid vertical={false} stroke={C.grid} />
                   <XAxis dataKey="name" {...axisProps} interval={0} angle={barData.length > 6 ? -25 : 0} textAnchor={barData.length > 6 ? "end" : "middle"} height={barData.length > 6 ? 60 : 30} />
                   <YAxis {...axisProps} tickFormatter={(v: number) => fmtShort(v)} width={70} />
                   <ReferenceLine y={0} stroke="rgba(148,163,184,0.35)" />
                   <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} content={(p) => <ChartTip {...(p as unknown as TipProps)} />} />
-                  <Bar dataKey="revenue" name="Revenue" fill={C.revenue} radius={[4, 4, 0, 0]} maxBarSize={26} />
-                  <Bar dataKey="cost" name="Direct cost" fill={C.cost} radius={[4, 4, 0, 0]} maxBarSize={26} />
+                  <Bar dataKey="revenue" name="Revenue" fill="url(#pc-revenue-v)" radius={[4, 4, 0, 0]} maxBarSize={26} />
+                  <Bar dataKey="cost" name="Direct cost" fill="url(#pc-cost-v)" radius={[4, 4, 0, 0]} maxBarSize={26} />
                   <Bar dataKey="contribution" name="Contribution" fill={C.contribution} radius={[4, 4, 0, 0]} maxBarSize={26}>
                     {barData.map((d) => (
-                      <Cell key={d.name} fill={d.contribution < 0 ? C.negative : C.contribution} />
+                      <Cell key={d.name} fill={d.contribution < 0 ? "url(#pc-negative-v)" : "url(#pc-contribution-v)"} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -228,6 +232,7 @@ export function Overview({
             {marginData.length ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={marginData} layout="vertical" margin={{ top: 4, right: 48, left: 8, bottom: 4 }}>
+                  <ChartGradients />
                   <CartesianGrid horizontal={false} stroke={C.grid} />
                   <XAxis type="number" {...axisProps} tickFormatter={(v: number) => `${v}%`} domain={[marginAxis.lo, marginAxis.hi]} ticks={marginAxis.ticks} />
                   <YAxis type="category" dataKey="name" {...axisProps} width={120} />
@@ -238,7 +243,7 @@ export function Overview({
                   />
                   <Bar dataKey="margin" name="Margin" radius={4} maxBarSize={18}>
                     {marginData.map((d) => (
-                      <Cell key={d.name} fill={d.margin < 0 ? C.negative : C.contribution} />
+                      <Cell key={d.name} fill={d.margin < 0 ? "url(#pc-negative-h)" : "url(#pc-contribution-h)"} />
                     ))}
                     <LabelList dataKey="margin" content={MarginLabel} />
                   </Bar>
@@ -258,7 +263,7 @@ export function Overview({
               {t.techPayroll ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={donut} dataKey="value" nameKey="name" innerRadius="68%" outerRadius="92%" paddingAngle={2} stroke="none" startAngle={90} endAngle={-270}>
+                    <Pie data={donut} dataKey="value" nameKey="name" innerRadius="70%" outerRadius="92%" paddingAngle={2} cornerRadius={6} stroke="none" startAngle={90} endAngle={-270}>
                       {donut.map((d) => (
                         <Cell key={d.name} fill={d.color} />
                       ))}
@@ -369,7 +374,7 @@ function CostShare({ projects }: { projects: ReportProject[] }) {
             {p.project}
           </span>
           <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.06]">
-            <div className="h-full rounded-full" style={{ width: `${(p.directCost / max) * 100}%`, background: C.cost }} />
+            <div className="h-full rounded-full shadow-[0_0_12px_rgba(217,89,38,0.45)]" style={{ width: `${(p.directCost / max) * 100}%`, background: `linear-gradient(90deg, ${C.cost}99, ${C.cost})` }} />
           </div>
           <span className="w-[150px] text-right tabular-nums text-slate-100">
             {fmtShort(p.directCost)} <span className="text-slate-400">· {((p.directCost / total) * 100).toFixed(0)}%</span>
@@ -767,10 +772,10 @@ export function History({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <Kpi label="Months saved" value={String(months.length)} accent={C.revenue} sub={`${first.label} – ${last.label}`} />
-        <Kpi label="Total contribution" value={fmtShort(totalContribution)} accent={C.contribution} sub="All saved months" />
-        <Kpi label="Average margin" value={fmtPct(avgMargin)} accent={avgMargin < 0 ? C.negative : C.contribution} sub="Simple average of months" />
-        <Kpi label="Best month" value={best.label} accent="#9085e9" sub={`${fmtPkr(best.contribution)} contribution`} />
+        <Kpi icon="calendar" label="Months saved" value={String(months.length)} accent={C.revenue} sub={`${first.label} – ${last.label}`} />
+        <Kpi icon="contribution" label="Total contribution" value={fmtShort(totalContribution)} accent={C.contribution} sub="All saved months" />
+        <Kpi icon="margin" label="Average margin" value={fmtPct(avgMargin)} accent={avgMargin < 0 ? C.negative : C.contribution} sub="Simple average of months" />
+        <Kpi icon="trophy" label="Best month" value={best.label} accent="#9085e9" sub={`${fmtPkr(best.contribution)} contribution`} />
       </div>
 
       <Card
@@ -788,16 +793,17 @@ export function History({
       >
         <div className="h-[320px]">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 8, right: 16, left: 4, bottom: 4 }}>
+            <AreaChart data={data} margin={{ top: 8, right: 16, left: 4, bottom: 4 }}>
+              <ChartGradients />
               <CartesianGrid vertical={false} stroke={C.grid} />
               <XAxis dataKey="label" {...axisProps} />
               <YAxis {...axisProps} tickFormatter={(v: number) => fmtShort(v)} width={70} />
               <ReferenceLine y={0} stroke="rgba(148,163,184,0.35)" />
               <Tooltip cursor={{ stroke: "rgba(148,163,184,0.35)" }} content={(p) => <ChartTip {...(p as unknown as TipProps)} />} />
-              <Line type="monotone" dataKey="revenue" name="Revenue" stroke={C.revenue} strokeWidth={2} dot={{ r: 4, strokeWidth: 2, stroke: "#0b1224" }} activeDot={{ r: 6 }} />
-              <Line type="monotone" dataKey="cost" name="Direct cost" stroke={C.cost} strokeWidth={2} dot={{ r: 4, strokeWidth: 2, stroke: "#0b1224" }} activeDot={{ r: 6 }} />
-              <Line type="monotone" dataKey="contribution" name="Contribution" stroke={C.contribution} strokeWidth={2} dot={{ r: 4, strokeWidth: 2, stroke: "#0b1224" }} activeDot={{ r: 6 }} />
-            </LineChart>
+              <Area type="monotone" dataKey="revenue" name="Revenue" stroke={C.revenue} strokeWidth={2} fill="url(#pc-revenue-area)" dot={{ r: 4, strokeWidth: 2, stroke: "#0b1224", fill: C.revenue }} activeDot={{ r: 6 }} />
+              <Area type="monotone" dataKey="cost" name="Direct cost" stroke={C.cost} strokeWidth={2} fill="url(#pc-cost-area)" dot={{ r: 4, strokeWidth: 2, stroke: "#0b1224", fill: C.cost }} activeDot={{ r: 6 }} />
+              <Area type="monotone" dataKey="contribution" name="Contribution" stroke={C.contribution} strokeWidth={2} fill="url(#pc-contribution-area)" dot={{ r: 4, strokeWidth: 2, stroke: "#0b1224", fill: C.contribution }} activeDot={{ r: 6 }} />
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       </Card>
@@ -807,6 +813,7 @@ export function History({
           <div className="h-[260px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data} margin={{ top: 20, right: 8, left: 4, bottom: 4 }}>
+                <ChartGradients />
                 <CartesianGrid vertical={false} stroke={C.grid} />
                 <XAxis dataKey="label" {...axisProps} />
                 <YAxis {...axisProps} tickFormatter={(v: number) => `${v}%`} width={48} />
@@ -814,7 +821,7 @@ export function History({
                 <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} content={(p) => <ChartTip {...(p as unknown as TipProps)} format={(v) => `${v.toFixed(1)}%`} />} />
                 <Bar dataKey="margin" name="Margin" radius={[4, 4, 0, 0]} maxBarSize={36}>
                   {data.map((d) => (
-                    <Cell key={d.label} fill={(d.margin ?? 0) < 0 ? C.negative : C.contribution} />
+                    <Cell key={d.label} fill={(d.margin ?? 0) < 0 ? "url(#pc-negative-v)" : "url(#pc-contribution-v)"} />
                   ))}
                   <LabelList dataKey="margin" position="top" formatter={(v: unknown) => (v === null ? "" : `${Number(v).toFixed(0)}%`)} fill="#cbd5e1" fontSize={11} />
                 </Bar>
@@ -826,16 +833,17 @@ export function History({
         <Card title="Payroll utilization by month" subtitle="Share of Technical payroll charged to projects">
           <div className="h-[260px]">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 20, right: 16, left: 4, bottom: 4 }}>
+              <AreaChart data={data} margin={{ top: 20, right: 16, left: 4, bottom: 4 }}>
+                <ChartGradients />
                 <CartesianGrid vertical={false} stroke={C.grid} />
                 <XAxis dataKey="label" {...axisProps} />
                 <YAxis {...axisProps} domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} width={48} />
                 <ReferenceLine y={100} stroke="rgba(148,163,184,0.25)" strokeDasharray="4 4" />
                 <Tooltip cursor={{ stroke: "rgba(148,163,184,0.35)" }} content={(p) => <ChartTip {...(p as unknown as TipProps)} format={(v) => `${v.toFixed(1)}%`} />} />
-                <Line type="monotone" dataKey="utilization" name="Utilization" stroke="#9085e9" strokeWidth={2} dot={{ r: 4, strokeWidth: 2, stroke: "#0b1224" }} activeDot={{ r: 6 }}>
+                <Area type="monotone" dataKey="utilization" name="Utilization" stroke="#9085e9" strokeWidth={2} fill="url(#pc-violet-area)" dot={{ r: 4, strokeWidth: 2, stroke: "#0b1224", fill: "#9085e9" }} activeDot={{ r: 6 }}>
                   <LabelList dataKey="utilization" position="top" formatter={(v: unknown) => (v === null ? "" : `${Number(v).toFixed(0)}%`)} fill="#cbd5e1" fontSize={11} />
-                </Line>
-              </LineChart>
+                </Area>
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </Card>

@@ -261,9 +261,14 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
 
   return (
     <main className="min-h-screen bg-[#060a16] text-slate-100">
-      {/* Background */}
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(1000px_600px_at_0%_-10%,rgba(57,135,229,0.20),transparent_60%),radial-gradient(900px_520px_at_100%_0%,rgba(25,158,112,0.14),transparent_55%),radial-gradient(700px_500px_at_50%_120%,rgba(144,133,233,0.12),transparent_60%)]" />
-      <div className="pointer-events-none fixed inset-0 opacity-[0.035] [background-image:linear-gradient(rgba(255,255,255,0.8)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.8)_1px,transparent_1px)] [background-size:44px_44px]" />
+      {/* Background: soft color glows, no pattern */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,#070c1c_0%,#060a16_45%,#050812_100%)]" />
+        <div className="pc-glow absolute -left-40 -top-40 h-[560px] w-[560px] rounded-full bg-[#3987e5]/25 blur-[140px]" />
+        <div className="pc-glow-slow absolute -right-32 top-10 h-[480px] w-[480px] rounded-full bg-[#199e70]/20 blur-[140px]" />
+        <div className="pc-glow absolute bottom-[-220px] left-1/3 h-[520px] w-[620px] rounded-full bg-[#9085e9]/15 blur-[160px]" />
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/40 to-transparent" />
+      </div>
 
       <div className="relative mx-auto w-full max-w-[1440px] px-4 py-6 md:px-8">
         {/* Header */}
@@ -273,12 +278,17 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
               ← Back to Dashboard
             </Link>
             <div className="mt-3 flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-[#3987e5] to-[#199e70] text-lg font-bold text-white shadow-[0_10px_30px_rgba(57,135,229,0.35)]">
-                ₨
+              <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#3987e5] via-[#2a8fb8] to-[#199e70] text-white shadow-[0_12px_36px_rgba(57,135,229,0.45)] ring-1 ring-white/20">
+                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 3v18h18" />
+                  <path d="M7 15l4-4 3 3 5-6" />
+                </svg>
               </div>
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-sky-300/80">RTC League · Finance</p>
-                <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-white">Project Costing</h1>
+                <h1 className="bg-gradient-to-r from-white via-sky-100 to-emerald-200 bg-clip-text text-[30px] font-semibold leading-tight tracking-tight text-transparent">
+                  Project Costing
+                </h1>
               </div>
             </div>
             <p className="mt-2 max-w-2xl text-sm text-slate-400">
@@ -311,14 +321,16 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
         {/* Tabs + rate */}
         {isAdmin ? (
           <div className="mt-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <nav className="inline-flex w-fit rounded-2xl border border-white/10 bg-white/[0.04] p-1 backdrop-blur">
+            <nav className="inline-flex w-fit rounded-2xl border border-white/10 bg-white/[0.04] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
               {tabs.map((t) => (
                 <button
                   key={t.key}
                   type="button"
                   onClick={() => setView(t.key)}
                   className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                    view === t.key ? "bg-gradient-to-b from-white/20 to-white/10 text-white shadow-[0_6px_18px_rgba(0,0,0,0.35)]" : "text-slate-400 hover:text-white"
+                    view === t.key
+                      ? "bg-gradient-to-b from-[#3987e5] to-[#2a6fc4] text-white shadow-[0_8px_22px_rgba(57,135,229,0.45)]"
+                      : "text-slate-400 hover:text-white"
                   }`}
                 >
                   {t.label}
@@ -353,7 +365,7 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
           ) : null}
 
           {view === "entry" ? (
-            <section className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.06] to-white/[0.02] p-5 shadow-[0_20px_60px_rgba(2,6,23,0.45)] backdrop-blur-xl">
+            <section className="rounded-3xl border border-white/[0.09] bg-[linear-gradient(160deg,rgba(255,255,255,0.075),rgba(255,255,255,0.02)_40%,rgba(255,255,255,0.01))] p-5 shadow-[0_24px_70px_rgba(2,6,23,0.55),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <h2 className="text-lg font-semibold tracking-tight text-white">Time allocation · {data?.monthLabel ?? ""}</h2>
@@ -405,7 +417,7 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
                     .map((e) => ({ value: e.name, label: e.name, hint: e.designation }));
                   const designation = employeeInfo.get(g.employeeName)?.designation;
                   return (
-                    <div key={g.key} className="rounded-2xl border border-white/[0.08] bg-black/25 p-4 transition hover:border-white/15">
+                    <div key={g.key} className="rounded-2xl border border-white/[0.07] bg-[linear-gradient(135deg,rgba(15,23,42,0.75),rgba(8,12,26,0.6))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition hover:border-sky-300/20 hover:shadow-[0_10px_30px_rgba(57,135,229,0.12),inset_0_1px_0_rgba(255,255,255,0.06)]">
                       {g.items.map((item, idx) => (
                         <div
                           key={item.key}

@@ -49,8 +49,9 @@ export function Card({
 }) {
   return (
     <section
-      className={`relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.06] to-white/[0.02] p-5 shadow-[0_20px_60px_rgba(2,6,23,0.45)] backdrop-blur-xl ${className}`}
+      className={`relative overflow-hidden rounded-3xl border border-white/[0.09] bg-[linear-gradient(160deg,rgba(255,255,255,0.075),rgba(255,255,255,0.02)_40%,rgba(255,255,255,0.01))] p-5 shadow-[0_24px_70px_rgba(2,6,23,0.55),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl ${className}`}
     >
+      <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
       {title || right ? (
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -65,11 +66,49 @@ export function Card({
   );
 }
 
+const ICONS: Record<string, React.ReactNode> = {
+  revenue: <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />,
+  cost: (
+    <>
+      <rect x="3" y="6" width="18" height="13" rx="2" />
+      <path d="M3 10h18M16 15h2" />
+    </>
+  ),
+  contribution: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v10M9 10l3-3 3 3" />
+    </>
+  ),
+  margin: <path d="M19 5L5 19M7.5 6.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM19.5 17.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z" />,
+  people: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 20a6.5 6.5 0 0 0-2.5-5.1" />
+    </>
+  ),
+  bench: (
+    <>
+      <path d="M6 3h12M6 21h12M7 3c0 5 10 5 10 9s-10 4-10 9M17 3c0 5-10 5-10 9" />
+    </>
+  ),
+  calendar: (
+    <>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18M8 3v4M16 3v4" />
+    </>
+  ),
+  trophy: <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4" />,
+};
+
+export type KpiIcon = keyof typeof ICONS;
+
 export function Kpi({
   label,
   value,
   sub,
   accent,
+  icon,
   delta,
   deltaGoodWhenUp = true,
   children,
@@ -78,7 +117,8 @@ export function Kpi({
   value: string;
   sub?: React.ReactNode;
   accent: string;
-  /** Change from the previous month in %, or in points when deltaUnit is "pts". */
+  icon?: KpiIcon;
+  /** Change from the previous month in %, or in points. */
   delta?: { value: number; unit: "%" | "pts" } | null;
   deltaGoodWhenUp?: boolean;
   children?: React.ReactNode;
@@ -86,14 +126,24 @@ export function Kpi({
   const flat = delta ? Math.abs(delta.value) < 0.05 : false;
   const good = delta ? (delta.value >= 0) === deltaGoodWhenUp : true;
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-br from-white/[0.07] to-white/[0.015] p-4 shadow-[0_14px_40px_rgba(2,6,23,0.4)]">
-      <div className="absolute inset-x-0 top-0 h-[3px]" style={{ background: `linear-gradient(90deg, ${accent}, transparent)` }} />
-      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-        <span className="h-2 w-2 rounded-full" style={{ background: accent }} />
-        {label}
+    <div className="group relative overflow-hidden rounded-2xl border border-white/[0.09] bg-[linear-gradient(150deg,rgba(255,255,255,0.08),rgba(255,255,255,0.015))] p-4 shadow-[0_16px_44px_rgba(2,6,23,0.5),inset_0_1px_0_rgba(255,255,255,0.08)] transition duration-300 hover:-translate-y-0.5 hover:border-white/20">
+      <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full opacity-30 blur-2xl transition group-hover:opacity-50" style={{ background: accent }} />
+      <div className="absolute inset-x-0 top-0 h-[2px]" style={{ background: `linear-gradient(90deg, ${accent}, transparent 70%)` }} />
+      <div className="relative flex items-start justify-between gap-2">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</div>
+        {icon ? (
+          <span
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ring-1 ring-white/10"
+            style={{ background: `linear-gradient(135deg, ${accent}55, ${accent}18)`, color: "#fff", boxShadow: `0 6px 18px ${accent}40` }}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              {ICONS[icon]}
+            </svg>
+          </span>
+        ) : null}
       </div>
-      <div className="mt-2 text-[22px] font-semibold tracking-tight text-white tabular-nums">{value}</div>
-      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+      <div className="relative mt-1.5 text-[24px] font-semibold tracking-tight text-white tabular-nums">{value}</div>
+      <div className="relative mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
         {delta && Number.isFinite(delta.value) ? (
           <span
             className={`rounded-md px-1.5 py-0.5 font-semibold tabular-nums ${
@@ -106,8 +156,39 @@ export function Kpi({
         ) : null}
         {sub}
       </div>
-      {children}
+      {children ? <div className="relative">{children}</div> : null}
     </div>
+  );
+}
+
+/** SVG gradients for chart fills: url(#pc-<name>-v) vertical, url(#pc-<name>-h) horizontal. */
+export function ChartGradients() {
+  const list: Array<[string, string]> = [
+    ["revenue", C.revenue],
+    ["cost", C.cost],
+    ["contribution", C.contribution],
+    ["negative", C.negative],
+    ["violet", "#9085e9"],
+  ];
+  return (
+    <defs>
+      {list.map(([name, color]) => (
+        <React.Fragment key={name}>
+          <linearGradient id={`pc-${name}-v`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity={1} />
+            <stop offset="100%" stopColor={color} stopOpacity={0.55} />
+          </linearGradient>
+          <linearGradient id={`pc-${name}-h`} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={color} stopOpacity={0.55} />
+            <stop offset="100%" stopColor={color} stopOpacity={1} />
+          </linearGradient>
+          <linearGradient id={`pc-${name}-area`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity={0.28} />
+            <stop offset="100%" stopColor={color} stopOpacity={0} />
+          </linearGradient>
+        </React.Fragment>
+      ))}
+    </defs>
   );
 }
 

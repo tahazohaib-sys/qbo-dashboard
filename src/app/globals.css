@@ -24,3 +24,14 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Project Costing: slow movement of the background glows. */
+@keyframes pc-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(40px, -30px, 0) scale(1.08); }
+}
+.pc-glow { animation: pc-drift 18s ease-in-out infinite; will-change: transform; }
+.pc-glow-slow { animation: pc-drift 26s ease-in-out infinite reverse; will-change: transform; }
+@media (prefers-reduced-motion: reduce) {
+  .pc-glow, .pc-glow-slow { animation: none; }
+}
