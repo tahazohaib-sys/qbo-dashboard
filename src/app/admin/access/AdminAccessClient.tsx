@@ -8,6 +8,7 @@ type AccessUser = {
   status: "approval_pending" | "approved" | "rejected";
   isAdmin: boolean;
   hasPassword: boolean;
+  projectCostingAccess: boolean;
   createdAt: string;
   updatedAt: string;
   approvedAt: string | null;
@@ -56,7 +57,7 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
 
   const visibleUsers = filter === "all" ? users : users.filter((user) => user.status === filter);
 
-  async function runAction(userId: string, action: "approve" | "revoke" | "reject") {
+  async function runAction(userId: string, action: "approve" | "revoke" | "reject" | "grant_costing" | "remove_costing") {
     setBusyId(userId);
     setError("");
 
@@ -86,7 +87,7 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
           <p className="mt-3 text-xs font-black uppercase tracking-[0.3em] text-cyan-200/80">Admin Console</p>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Access Management</h1>
           <p className="mt-2 max-w-xl text-sm text-slate-400">
-            Every email that asked for access. Revoke removes dashboard access at once; Approve gives it back.
+            Every email that asked for access. Revoke removes dashboard access at once; Approve gives it back. Give Project Costing lets an approved user enter project allocations.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -134,6 +135,9 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
 
               <div className="text-sm font-semibold text-slate-300">
                 <div>{user.hasPassword ? "Password set" : "No password yet"}</div>
+                {user.projectCostingAccess && !user.isAdmin ? (
+                  <div className="mt-1 text-xs font-bold text-violet-200">Project Costing data entry</div>
+                ) : null}
                 <div className="mt-1 text-xs text-slate-500">Updated {formatDate(user.updatedAt)}</div>
               </div>
 
@@ -156,6 +160,20 @@ export default function AdminAccessClient({ initialUsers }: { initialUsers: Acce
                     className="rounded-2xl border border-rose-300/25 bg-rose-400/12 px-4 py-2 text-sm font-black text-rose-100 transition hover:bg-rose-400/18 disabled:opacity-60"
                   >
                     Revoke
+                  </button>
+                ) : null}
+                {user.status === "approved" && !user.isAdmin ? (
+                  <button
+                    type="button"
+                    disabled={busyId === user.id}
+                    onClick={() => runAction(user.id, user.projectCostingAccess ? "remove_costing" : "grant_costing")}
+                    className={`rounded-2xl border px-4 py-2 text-sm font-black transition disabled:opacity-60 ${
+                      user.projectCostingAccess
+                        ? "border-violet-300/25 bg-violet-400/12 text-violet-100 hover:bg-violet-400/18"
+                        : "border-white/10 bg-white/[0.055] text-slate-200 hover:text-white"
+                    }`}
+                  >
+                    {user.projectCostingAccess ? "Remove Project Costing" : "Give Project Costing"}
                   </button>
                 ) : null}
                 {user.status === "approval_pending" && !user.isAdmin ? (

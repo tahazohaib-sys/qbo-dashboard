@@ -10,6 +10,7 @@ export type DashboardUser = {
   password_hash: string | null;
   status: DashboardUserStatus;
   email_verified_at: Date | null;
+  project_costing_access: boolean;
 };
 
 export type DashboardAccessUser = DashboardUser & {
@@ -70,6 +71,8 @@ async function createAuthTables() {
   await query(`create index if not exists dashboard_auth_tokens_user_idx on dashboard_auth_tokens(user_id)`);
   // First password chosen at login; saved on the user only after the email code is verified.
   await query(`alter table dashboard_auth_tokens add column if not exists pending_password_hash text`);
+  // Admin gives this to the people who enter Project Costing data.
+  await query(`alter table dashboard_users add column if not exists project_costing_access boolean not null default false`);
 }
 
 export async function ensureAdminUser(email: string) {
@@ -87,7 +90,7 @@ export async function ensureAdminUser(email: string) {
         approved_at = coalesce(dashboard_users.approved_at, now()),
         rejected_at = null,
         updated_at = now()
-      returning id, email, password_hash, status, email_verified_at
+      returning id, email, password_hash, status, email_verified_at, project_costing_access
     `,
     [id, email]
   );
@@ -97,7 +100,7 @@ export async function ensureAdminUser(email: string) {
 export async function findUserByEmail(email: string): Promise<DashboardUser | null> {
   await ensureAuthTables();
   const { rows } = await query<DashboardUser>(
-    `select id, email, password_hash, status, email_verified_at from dashboard_users where lower(email) = lower($1) limit 1`,
+    `select id, email, password_hash, status, email_verified_at, project_costing_access from dashboard_users where lower(email) = lower($1) limit 1`,
     [email]
   );
   return rows[0] ?? null;
@@ -106,7 +109,7 @@ export async function findUserByEmail(email: string): Promise<DashboardUser | nu
 export async function findUserById(id: string): Promise<DashboardUser | null> {
   await ensureAuthTables();
   const { rows } = await query<DashboardUser>(
-    `select id, email, password_hash, status, email_verified_at from dashboard_users where id = $1 limit 1`,
+    `select id, email, password_hash, status, email_verified_at, project_costing_access from dashboard_users where id = $1 limit 1`,
     [id]
   );
   return rows[0] ?? null;
@@ -116,7 +119,7 @@ export async function listDashboardAccessUsers() {
   await ensureAuthTables();
   const { rows } = await query<DashboardAccessUser>(
     `
-      select id, email, password_hash, status, email_verified_at, approved_at, rejected_at, created_at, updated_at
+      select id, email, password_hash, status, email_verified_at, project_costing_access, approved_at, rejected_at, created_at, updated_at
       from dashboard_users
       order by
         case status when 'approval_pending' then 0 when 'approved' then 1 else 2 end,
@@ -137,9 +140,24 @@ export async function setDashboardUserStatus(userId: string, status: DashboardUs
           rejected_at = case when $2 = 'rejected' then now() else null end,
           updated_at = now()
       where id = $1
-      returning id, email, password_hash, status, email_verified_at, approved_at, rejected_at, created_at, updated_at
+      returning id, email, password_hash, status, email_verified_at, project_costing_access, approved_at, rejected_at, created_at, updated_at
     `,
     [userId, status]
+  );
+  return rows[0] ?? null;
+}
+
+export async function setProjectCostingAccess(userId: string, allowed: boolean) {
+  await ensureAuthTables();
+  const { rows } = await query<DashboardAccessUser>(
+    `
+      update dashboard_users
+      set project_costing_access = $2,
+          updated_at = now()
+      where id = $1
+      returning id, email, password_hash, status, email_verified_at, project_costing_access, approved_at, rejected_at, created_at, updated_at
+    `,
+    [userId, allowed]
   );
   return rows[0] ?? null;
 }
@@ -160,7 +178,7 @@ export async function upsertAccessRequest(email: string) {
         end,
         rejected_at = null,
         updated_at = now()
-      returning id, email, password_hash, status, email_verified_at
+      returning id, email, password_hash, status, email_verified_at, project_costing_access
     `,
     [id, email]
   );
@@ -175,7 +193,7 @@ export async function setUserPassword(userId: string, passwordHash: string) {
       set password_hash = $2,
           updated_at = now()
       where id = $1
-      returning id, email, password_hash, status, email_verified_at
+      returning id, email, password_hash, status, email_verified_at, project_costing_access
     `,
     [userId, passwordHash]
   );
@@ -280,7 +298,7 @@ export async function decideUserApproval(userId: string, decision: "approve" | "
           rejected_at = case when $2 = 'rejected' then now() else null end,
           updated_at = now()
       where id = $1
-      returning id, email, password_hash, status, email_verified_at
+      returning id, email, password_hash, status, email_verified_at, project_costing_access
     `,
     [userId, nextStatus]
   );

@@ -10,6 +10,7 @@ function serializeUser(user: Awaited<ReturnType<typeof listDashboardAccessUsers>
     status: user.status,
     isAdmin: isAdminEmail(user.email),
     hasPassword: Boolean(user.password_hash),
+    projectCostingAccess: Boolean(user.project_costing_access),
     emailVerifiedAt: user.email_verified_at?.toISOString() ?? null,
     approvedAt: user.approved_at?.toISOString() ?? null,
     rejectedAt: user.rejected_at?.toISOString() ?? null,

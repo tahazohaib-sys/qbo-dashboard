@@ -440,7 +440,13 @@ function WorldMapVideoBackground(): React.JSX.Element {
   );
 }
 
-export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }) {
+export default function DashboardPage({
+  isAdmin = false,
+  canProjectCosting = false,
+}: {
+  isAdmin?: boolean;
+  canProjectCosting?: boolean;
+}) {
   const years = useMemo(() => ymOptions(6), []);
   const now = new Date();
 
@@ -1141,6 +1147,12 @@ export default function DashboardPage({ isAdmin = false }: { isAdmin?: boolean }
           <TabLinkButton active={tab === "revenue"} href="/dashboard/revenue-analytics" prefetch={false} onActivate={() => setTab("revenue")}>
             Revenue Analytics
           </TabLinkButton>
+
+          {canProjectCosting ? (
+            <TabLinkButton active={false} href="/dashboard/project-costing" prefetch={false}>
+              Project Costing
+            </TabLinkButton>
+          ) : null}
         </div>
 
         {/* Filters */}
