@@ -160,8 +160,29 @@ export async function revenueByTeam(month: string) {
 /* Salary sheet                                                        */
 /* ------------------------------------------------------------------ */
 
-export type Employee = { name: string; designation: string; grossSalary: number };
-export type SalarySheet = { fileName: string; tabName: string; employees: Employee[] };
+export type Employee = { name: string; designation: string; department: string; grossSalary: number };
+export type SalarySheet = {
+  fileName: string;
+  tabName: string;
+  /** All employees in the sheet (all departments). */
+  employees: Employee[];
+  /** true when the sheet has a Department column. */
+  hasDepartment: boolean;
+  /** Set when the data comes from the copy saved in the database, not from Google Sheets. */
+  savedAt?: string;
+};
+
+/** The department whose employees are allocated to projects. */
+export function costingDepartment() {
+  return process.env.SALARY_SHEET_DEPARTMENT || "Technical";
+}
+
+/** Employees of the costing department (all employees when the sheet has no Department column). */
+export function technicalEmployees(sheet: SalarySheet) {
+  if (!sheet.hasDepartment) return sheet.employees;
+  const dep = costingDepartment().toLowerCase();
+  return sheet.employees.filter((e) => e.department.trim().toLowerCase() === dep);
+}
 
 const salaryCache = new Map<string, { at: number; value: SalarySheet }>();
 
@@ -205,7 +226,7 @@ async function findSalaryFile(month: string) {
   return files.find((f) => wanted.includes(norm(f.name || ""))) ?? null;
 }
 
-type ColumnMap = { name: number; designation: number; gross: number };
+type ColumnMap = { name: number; designation: number; department: number; gross: number };
 
 /** Finds the header cells for employee name, designation and gross salary. */
 function matchHeader(row: unknown[]): ColumnMap | null {
@@ -216,12 +237,13 @@ function matchHeader(row: unknown[]): ColumnMap | null {
   const designation = find((c) => c.includes("designation") || c === "title" || c === "job title" || c === "position");
   let name = find((c) => (c.includes("employee") && c.includes("name")) || c === "name" || c === "employee" || c === "full name");
   if (name < 0) name = find((c) => c.includes("name") && !c.includes("father") && !c.includes("bank") && !c.includes("account"));
+  const department = find((c) => c === "department" || c === "dept" || c.startsWith("department"));
   if (name < 0 || gross < 0) return null;
-  return { name, designation, gross };
+  return { name, designation, department, gross };
 }
 
 /** Reads the employees of one month from the salary sheet. Throws a clear message when the sheet is not found. */
-export async function readSalarySheet(month: string): Promise<SalarySheet> {
+async function readSalarySheetFromGoogle(month: string): Promise<SalarySheet> {
   const hit = salaryCache.get(month);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
 
@@ -266,9 +288,10 @@ export async function readSalarySheet(month: string): Promise<SalarySheet> {
       if (!name || /^(total|grand total|sub ?total)\b/i.test(name)) continue;
       const grossSalary = toNum(row[cols.gross]);
       const designation = cols.designation >= 0 ? String(row[cols.designation] ?? "").trim() : "";
+      const department = cols.department >= 0 ? String(row[cols.department] ?? "").trim() : "";
       if (!grossSalary && !designation) continue;
       // The same name twice: keep the first row (names are the key for allocations).
-      if (!byName.has(name.toLowerCase())) byName.set(name.toLowerCase(), { name, designation, grossSalary });
+      if (!byName.has(name.toLowerCase())) byName.set(name.toLowerCase(), { name, designation, department, grossSalary });
     }
     if (!byName.size) continue;
 
@@ -276,6 +299,7 @@ export async function readSalarySheet(month: string): Promise<SalarySheet> {
       fileName: file.name || "",
       tabName: tab,
       employees: Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      hasDepartment: cols.department >= 0,
     };
     salaryCache.set(month, { at: Date.now(), value });
     return value;
@@ -303,6 +327,20 @@ let tableReady: Promise<void> | null = null;
 function ensureTable() {
   if (!tableReady) {
     tableReady = query(`
+      create table if not exists project_cost_salary_snapshots (
+        month text not null,
+        employee_name text not null,
+        designation text not null default '',
+        department text not null default '',
+        gross_salary numeric(14, 2) not null default 0,
+        file_name text not null default '',
+        tab_name text not null default '',
+        has_department boolean not null default true,
+        saved_at timestamptz not null default now(),
+        primary key (month, employee_name)
+      )
+    `)
+      .then(() => query(`
       create table if not exists project_cost_allocations (
         id bigserial primary key,
         month text not null,
@@ -314,7 +352,7 @@ function ensureTable() {
         updated_at timestamptz not null default now(),
         unique (month, employee_name, project_name)
       )
-    `)
+    `))
       .then(() => query(`create index if not exists project_cost_allocations_month_idx on project_cost_allocations(month)`))
       .then(() => undefined)
       .catch((e) => {
@@ -423,4 +461,96 @@ export async function saveAllocations(month: string, rows: AllocationInput[], de
   });
 
   return listAllocations(month);
+}
+
+/* ------------------------------------------------------------------ */
+/* Salary history (copy of each month's salary sheet in Postgres)      */
+/* ------------------------------------------------------------------ */
+
+async function saveSalarySnapshot(month: string, sheet: SalarySheet) {
+  await ensureTable();
+  await withTransaction(async (db) => {
+    await db.query(`delete from project_cost_salary_snapshots where month = $1`, [month]);
+    for (const e of sheet.employees) {
+      await db.query(
+        `insert into project_cost_salary_snapshots
+           (month, employee_name, designation, department, gross_salary, file_name, tab_name, has_department)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [month, e.name, e.designation, e.department, e.grossSalary, sheet.fileName, sheet.tabName, sheet.hasDepartment]
+      );
+    }
+  });
+}
+
+/** The saved copy of a month's salary sheet. null when there is no copy. */
+export async function loadSalarySnapshot(month: string): Promise<SalarySheet | null> {
+  await ensureTable();
+  const { rows } = await query<{
+    employee_name: string;
+    designation: string;
+    department: string;
+    gross_salary: string;
+    file_name: string;
+    tab_name: string;
+    has_department: boolean;
+    saved_at: Date;
+  }>(
+    `select employee_name, designation, department, gross_salary, file_name, tab_name, has_department, saved_at
+     from project_cost_salary_snapshots where month = $1 order by employee_name`,
+    [month]
+  );
+  if (!rows.length) return null;
+  return {
+    fileName: rows[0].file_name,
+    tabName: rows[0].tab_name,
+    hasDepartment: rows[0].has_department,
+    savedAt: new Date(rows[0].saved_at).toISOString(),
+    employees: rows.map((r) => ({
+      name: r.employee_name,
+      designation: r.designation,
+      department: r.department,
+      grossSalary: Number(r.gross_salary),
+    })),
+  };
+}
+
+const snapshotSavedAt = new Map<string, number>();
+
+/**
+ * Salary data of one month. Reads Google Sheets and saves a copy in the
+ * database, so the month stays available when the sheet is changed, moved or
+ * deleted later. When Google Sheets cannot be read, the saved copy is used.
+ */
+export async function readSalarySheet(month: string): Promise<SalarySheet> {
+  try {
+    const sheet = await readSalarySheetFromGoogle(month);
+    // Save at most once in 5 minutes for each month (the sheet read is cached for the same time).
+    const last = snapshotSavedAt.get(month) ?? 0;
+    if (Date.now() - last > CACHE_MS) {
+      await saveSalarySnapshot(month, sheet);
+      snapshotSavedAt.set(month, Date.now());
+    }
+    return sheet;
+  } catch (e) {
+    const saved = await loadSalarySnapshot(month).catch(() => null);
+    if (saved) return saved;
+    throw e;
+  }
+}
+
+/** All months that have allocations, newest first. */
+export async function listAllocationMonths(): Promise<string[]> {
+  await ensureTable();
+  const { rows } = await query<{ month: string }>(`select distinct month from project_cost_allocations order by month desc`);
+  return rows.map((r) => r.month);
+}
+
+/** All allocations of all months. */
+export async function listAllAllocations(): Promise<Allocation[]> {
+  await ensureTable();
+  const { rows } = await query<AllocationRow>(
+    `select id, month, employee_name, project_name, percentage, updated_by, updated_at
+     from project_cost_allocations order by month, employee_name, project_name`
+  );
+  return rows.map(toAllocation);
 }

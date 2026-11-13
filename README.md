@@ -98,7 +98,8 @@ Page: `/dashboard/project-costing` (tab "Project Costing" on the dashboard).
 
 Data sources:
 
-- **Employees** come from the Google Sheet named `RTC League Salary Sheet <Mon> <YYYY>` (for example `RTC League Salary Sheet Oct 2026`), tab `Employees`, columns `Employee Name`, `Designation`, `Gross Salary`. The app finds the sheet of the selected month by its name in Google Drive.
+- **Employees** come from the Google Sheet named `RTC League Salary Sheet <Mon> <YYYY>` (for example `RTC League Salary Sheet Oct 2026`), tab `Employees`, columns `Employee Name`, `Designation`, `Department`, `Gross Salary`. Only employees with Department = `Technical` are used. The app finds the sheet of the selected month by its name in Google Drive.
+- **History:** each time a month's salary sheet is read, a copy is saved in the table `project_cost_salary_snapshots`. When the sheet is changed or deleted later, the saved copy is used. The History tab shows all months that have allocations, at one USD → PKR rate.
 - **Projects** are the `Team` values of the Revenue Analytics sheet for the selected month.
 - **Allocations** are kept in the table `project_cost_allocations` (made automatically).
 
@@ -112,4 +113,5 @@ Setup:
 SALARY_SHEET_NAME_PREFIX="RTC League Salary Sheet"   # name before "<Mon> <YYYY>"
 SALARY_SHEET_TAB_NAME="Employees"                     # tab with the employee list
 SALARY_SHEET_FOLDER_ID="..."                          # search only in this Drive folder
+SALARY_SHEET_DEPARTMENT="Technical"                   # department allocated to projects
 ```
