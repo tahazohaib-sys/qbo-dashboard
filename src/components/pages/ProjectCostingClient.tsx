@@ -69,7 +69,7 @@ function initials(name: string) {
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
-export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) {
+export default function ProjectCostingClient({ isAdmin, costingOnly = false }: { isAdmin: boolean; costingOnly?: boolean }) {
   const [view, setView] = useState<View>(isAdmin ? "overview" : "entry");
   const [month, setMonth] = useState("");
   const [data, setData] = useState<ApiData | null>(null);
@@ -274,9 +274,11 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
         {/* Header */}
         <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <Link href="/dashboard" prefetch={false} className="text-xs font-semibold text-slate-400 transition hover:text-white">
-              ← Back to Dashboard
-            </Link>
+            {costingOnly ? null : (
+              <Link href="/dashboard" prefetch={false} className="text-xs font-semibold text-slate-400 transition hover:text-white">
+                ← Back to Dashboard
+              </Link>
+            )}
             <div className="mt-3 flex items-center gap-3">
               <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#3987e5] via-[#2a8fb8] to-[#199e70] text-white shadow-[0_12px_36px_rgba(57,135,229,0.45)] ring-1 ring-white/20">
                 <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -315,6 +317,17 @@ export default function ProjectCostingClient({ isAdmin }: { isAdmin: boolean }) 
             >
               {loading ? "Loading…" : "↻ Refresh"}
             </button>
+            {costingOnly ? (
+              // A plain form, so Logout works even before the page scripts have loaded.
+              <form method="post" action="/api/auth/logout">
+                <button
+                  type="submit"
+                  className="h-[38px] rounded-xl border border-white/10 bg-white/[0.06] px-4 text-sm font-semibold transition hover:border-rose-300/25 hover:bg-rose-400/10"
+                >
+                  Logout
+                </button>
+              </form>
+            ) : null}
           </div>
         </header>
 

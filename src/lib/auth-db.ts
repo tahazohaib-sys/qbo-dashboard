@@ -11,7 +11,19 @@ export type DashboardUser = {
   status: DashboardUserStatus;
   email_verified_at: Date | null;
   project_costing_access: boolean;
+  /** "all": all dashboard modules. "costing_only": only Project Costing data entry. */
+  access_scope: AccessScope;
 };
+
+export type AccessScope = "all" | "costing_only";
+
+/** What the admin selects on Manage Access. */
+export type AccessLevel = "all" | "all_costing" | "costing_only";
+
+export function accessLevelOf(user: { project_costing_access: boolean; access_scope: AccessScope }): AccessLevel {
+  if (user.access_scope === "costing_only") return "costing_only";
+  return user.project_costing_access ? "all_costing" : "all";
+}
 
 export type DashboardAccessUser = DashboardUser & {
   approved_at: Date | null;
@@ -73,6 +85,7 @@ async function createAuthTables() {
   await query(`alter table dashboard_auth_tokens add column if not exists pending_password_hash text`);
   // Admin gives this to the people who enter Project Costing data.
   await query(`alter table dashboard_users add column if not exists project_costing_access boolean not null default false`);
+  await query(`alter table dashboard_users add column if not exists access_scope text not null default 'all'`);
 }
 
 export async function ensureAdminUser(email: string) {
@@ -90,7 +103,7 @@ export async function ensureAdminUser(email: string) {
         approved_at = coalesce(dashboard_users.approved_at, now()),
         rejected_at = null,
         updated_at = now()
-      returning id, email, password_hash, status, email_verified_at, project_costing_access
+      returning id, email, password_hash, status, email_verified_at, project_costing_access, access_scope
     `,
     [id, email]
   );
@@ -100,7 +113,7 @@ export async function ensureAdminUser(email: string) {
 export async function findUserByEmail(email: string): Promise<DashboardUser | null> {
   await ensureAuthTables();
   const { rows } = await query<DashboardUser>(
-    `select id, email, password_hash, status, email_verified_at, project_costing_access from dashboard_users where lower(email) = lower($1) limit 1`,
+    `select id, email, password_hash, status, email_verified_at, project_costing_access, access_scope from dashboard_users where lower(email) = lower($1) limit 1`,
     [email]
   );
   return rows[0] ?? null;
@@ -109,7 +122,7 @@ export async function findUserByEmail(email: string): Promise<DashboardUser | nu
 export async function findUserById(id: string): Promise<DashboardUser | null> {
   await ensureAuthTables();
   const { rows } = await query<DashboardUser>(
-    `select id, email, password_hash, status, email_verified_at, project_costing_access from dashboard_users where id = $1 limit 1`,
+    `select id, email, password_hash, status, email_verified_at, project_costing_access, access_scope from dashboard_users where id = $1 limit 1`,
     [id]
   );
   return rows[0] ?? null;
@@ -119,7 +132,7 @@ export async function listDashboardAccessUsers() {
   await ensureAuthTables();
   const { rows } = await query<DashboardAccessUser>(
     `
-      select id, email, password_hash, status, email_verified_at, project_costing_access, approved_at, rejected_at, created_at, updated_at
+      select id, email, password_hash, status, email_verified_at, project_costing_access, access_scope, approved_at, rejected_at, created_at, updated_at
       from dashboard_users
       order by
         case status when 'approval_pending' then 0 when 'approved' then 1 else 2 end,
@@ -140,24 +153,27 @@ export async function setDashboardUserStatus(userId: string, status: DashboardUs
           rejected_at = case when $2 = 'rejected' then now() else null end,
           updated_at = now()
       where id = $1
-      returning id, email, password_hash, status, email_verified_at, project_costing_access, approved_at, rejected_at, created_at, updated_at
+      returning id, email, password_hash, status, email_verified_at, project_costing_access, access_scope, approved_at, rejected_at, created_at, updated_at
     `,
     [userId, status]
   );
   return rows[0] ?? null;
 }
 
-export async function setProjectCostingAccess(userId: string, allowed: boolean) {
+export async function setUserAccessLevel(userId: string, level: AccessLevel) {
   await ensureAuthTables();
+  const scope: AccessScope = level === "costing_only" ? "costing_only" : "all";
+  const costing = level !== "all";
   const { rows } = await query<DashboardAccessUser>(
     `
       update dashboard_users
       set project_costing_access = $2,
+          access_scope = $3,
           updated_at = now()
       where id = $1
-      returning id, email, password_hash, status, email_verified_at, project_costing_access, approved_at, rejected_at, created_at, updated_at
+      returning id, email, password_hash, status, email_verified_at, project_costing_access, access_scope, approved_at, rejected_at, created_at, updated_at
     `,
-    [userId, allowed]
+    [userId, costing, scope]
   );
   return rows[0] ?? null;
 }
@@ -178,7 +194,7 @@ export async function upsertAccessRequest(email: string) {
         end,
         rejected_at = null,
         updated_at = now()
-      returning id, email, password_hash, status, email_verified_at, project_costing_access
+      returning id, email, password_hash, status, email_verified_at, project_costing_access, access_scope
     `,
     [id, email]
   );
@@ -193,7 +209,7 @@ export async function setUserPassword(userId: string, passwordHash: string) {
       set password_hash = $2,
           updated_at = now()
       where id = $1
-      returning id, email, password_hash, status, email_verified_at, project_costing_access
+      returning id, email, password_hash, status, email_verified_at, project_costing_access, access_scope
     `,
     [userId, passwordHash]
   );
@@ -298,7 +314,7 @@ export async function decideUserApproval(userId: string, decision: "approve" | "
           rejected_at = case when $2 = 'rejected' then now() else null end,
           updated_at = now()
       where id = $1
-      returning id, email, password_hash, status, email_verified_at, project_costing_access
+      returning id, email, password_hash, status, email_verified_at, project_costing_access, access_scope
     `,
     [userId, nextStatus]
   );

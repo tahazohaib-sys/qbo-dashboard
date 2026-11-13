@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import AdminAccessClient from "./AdminAccessClient";
 import { getCurrentSession, isAdminEmail } from "@/lib/auth";
-import { findUserById, listDashboardAccessUsers } from "@/lib/auth-db";
+import { accessLevelOf, findUserById, listDashboardAccessUsers } from "@/lib/auth-db";
 
 function serializeUser(user: Awaited<ReturnType<typeof listDashboardAccessUsers>>[number]) {
   return {
@@ -10,7 +10,7 @@ function serializeUser(user: Awaited<ReturnType<typeof listDashboardAccessUsers>
     status: user.status,
     isAdmin: isAdminEmail(user.email),
     hasPassword: Boolean(user.password_hash),
-    projectCostingAccess: Boolean(user.project_costing_access),
+    accessLevel: accessLevelOf(user),
     emailVerifiedAt: user.email_verified_at?.toISOString() ?? null,
     approvedAt: user.approved_at?.toISOString() ?? null,
     rejectedAt: user.rejected_at?.toISOString() ?? null,

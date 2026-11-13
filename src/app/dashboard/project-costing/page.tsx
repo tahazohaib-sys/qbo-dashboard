@@ -7,5 +7,5 @@ export const dynamic = "force-dynamic";
 export default async function ProjectCostingPage() {
   const access = await getProjectCostingAccess();
   if (!access) redirect("/dashboard");
-  return <ProjectCostingClient isAdmin={access.isAdmin} />;
+  return <ProjectCostingClient isAdmin={access.isAdmin} costingOnly={access.costingOnly} />;
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentSession, isAdminEmail } from "@/lib/auth";
-import { findUserById, listDashboardAccessUsers, setDashboardUserStatus, setProjectCostingAccess } from "@/lib/auth-db";
+import { accessLevelOf, findUserById, listDashboardAccessUsers, setDashboardUserStatus, setUserAccessLevel, type AccessLevel } from "@/lib/auth-db";
 
 async function requireAdmin() {
   const session = await getCurrentSession();
@@ -18,7 +18,7 @@ function serializeUser(user: Awaited<ReturnType<typeof listDashboardAccessUsers>
     status: user.status,
     isAdmin: isAdminEmail(user.email),
     hasPassword: Boolean(user.password_hash),
-    projectCostingAccess: Boolean(user.project_costing_access),
+    accessLevel: accessLevelOf(user),
     emailVerifiedAt: user.email_verified_at,
     approvedAt: user.approved_at,
     rejectedAt: user.rejected_at,
@@ -51,8 +51,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Admin access cannot be revoked here." }, { status: 400 });
     }
 
-    if (action === "grant_costing" || action === "remove_costing") {
-      const updated = await setProjectCostingAccess(userId, action === "grant_costing");
+    if (action === "set_access") {
+      const level = String(body?.level ?? "") as AccessLevel;
+      if (!["all", "all_costing", "costing_only"].includes(level)) {
+        return NextResponse.json({ ok: false, error: "Invalid access level." }, { status: 400 });
+      }
+      const updated = await setUserAccessLevel(userId, level);
       if (!updated) return NextResponse.json({ ok: false, error: "Could not update this user." }, { status: 500 });
       const nextUsers = await listDashboardAccessUsers();
       return NextResponse.json({ ok: true, user: serializeUser(updated), users: nextUsers.map(serializeUser) });

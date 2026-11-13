@@ -22,7 +22,7 @@ import { findUserById } from "@/lib/auth-db";
  */
 
 type Session = NonNullable<ReturnType<typeof verifySessionToken>>;
-type Access = { ok: true; isAdmin: boolean; session: Session } | { ok: false };
+type Access = { ok: true; isAdmin: boolean; costingOnly: boolean; session: Session } | { ok: false };
 
 async function checkAccess(req: NextRequest): Promise<Access> {
   try {
@@ -30,7 +30,8 @@ async function checkAccess(req: NextRequest): Promise<Access> {
     if (!session) return { ok: false };
     const user = await findUserById(session.sub);
     if (!user || user.status !== "approved") return { ok: false };
-    return { ok: true, isAdmin: isAdminEmail(user.email), session };
+    const isAdmin = isAdminEmail(user.email);
+    return { ok: true, isAdmin, costingOnly: !isAdmin && user.access_scope === "costing_only", session };
   } catch {
     return { ok: false };
   }
@@ -58,6 +59,16 @@ function isProtectedApi(pathname: string) {
   );
 }
 
+/**
+ * A "Project Costing entry only" user can open only the Project Costing page
+ * and the APIs it calls. All other modules and APIs are closed for this user.
+ */
+const COSTING_ONLY_PAGE = "/dashboard/project-costing";
+
+function costingOnlyMayUseApi(pathname: string) {
+  return pathname === "/api/project-costing" || pathname === "/api/auth/keepalive";
+}
+
 /** Connecting QuickBooks replaces the company the whole dashboard reads, so only the admin may do it. */
 function isAdminOnlyApi(pathname: string) {
   return pathname === "/api/qbo/start" || pathname === "/api/qbo/callback";
@@ -78,6 +89,9 @@ export async function proxy(req: NextRequest) {
 
   if (pathname.startsWith("/dashboard")) {
     const access = await checkAccess(req);
+    if (access.ok && access.costingOnly && pathname !== COSTING_ONLY_PAGE && !pathname.startsWith(`${COSTING_ONLY_PAGE}/`)) {
+      return NextResponse.redirect(new URL(COSTING_ONLY_PAGE, req.url));
+    }
     if (access.ok) return allow(access);
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("next", pathname);
@@ -92,6 +106,9 @@ export async function proxy(req: NextRequest) {
 
   if (isProtectedApi(pathname)) {
     const access = await checkAccess(req);
+    if (access.ok && access.costingOnly && !costingOnlyMayUseApi(pathname)) {
+      return NextResponse.json({ ok: false, error: "Your access is limited to Project Costing data entry." }, { status: 403 });
+    }
     if (access.ok) return allow(access);
     return NextResponse.json({ ok: false, error: "Authentication required." }, { status: 401 });
   }
